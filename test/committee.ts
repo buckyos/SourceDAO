@@ -59,7 +59,7 @@ describe("Committee", () => {
 
   });
 
-  it("propose support test", async () => {
+  it("proposal support test", async () => {
     const {signers, committees, committee} = await loadFixture(deployContracts);
 
     let params = [];
