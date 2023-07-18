@@ -2,6 +2,7 @@
 pragma solidity ^0.8.18;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
@@ -10,8 +11,9 @@ import "./Interface.sol";
 import "./SourceDaoUpgradeable.sol";
 
 contract MarketingContract is
-    IMarketingGroup ,
+    IMarketingGroup,
     Initializable,
+    ReentrancyGuardUpgradeable,
     SourceDaoContractUpgradeable {
 
     struct ContributionInfo {
@@ -69,7 +71,7 @@ contract MarketingContract is
      * If the `budget` is 0, it's necessary to call `pay` to confirm the votes from committee.
      * This interface is called by the `principal` after it's accepted by committee.
      * */
-    function pay(uint activityId) external {
+    function pay(uint activityId) external nonReentrant {
         Activity storage activity = activities[activityId];
 
         require(activity.state == ActivityState.WaitPay, "Activity has paid");
@@ -81,6 +83,8 @@ contract MarketingContract is
         ISourceDaoCommittee.ProposalResult proposalResult = committee.takeResult(activityId, new bytes32[](0));
         require(proposalResult == ISourceDaoCommittee.ProposalResult.Accept, "Proposal not accepted");
         
+        activity.state = ActivityState.Paid;
+        
         if (activity.budget > 0) {
             ISourceDAOToken token = sourceDao.token();
             token.releaseTokensToSelf(activity.budget);
@@ -90,7 +94,6 @@ contract MarketingContract is
             }
         }
 
-        activity.state = ActivityState.Paid;
         committee.setProposalExecuted(activityId);
 
         emit ActivityStateChange(activityId, ActivityState.WaitPay, ActivityState.Paid);
@@ -178,7 +181,7 @@ contract MarketingContract is
     /**
     * @dev withdraw tokens which caller's earned from contribution to all ended activities.
     */
-    function withdrawReward(uint[] calldata activityIds) external returns(uint) {
+    function withdrawReward(uint[] calldata activityIds) external nonReentrant returns(uint) {
         uint claimAmount = 0;
         for (uint j = 0; j < activityIds.length; j++) {
             uint activityId = activityIds[j];
