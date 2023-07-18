@@ -179,7 +179,7 @@ contract MarketingContract is
     }
 
     /**
-    * @dev withdraw tokens which caller's earned from contribution to all ended activities.
+    * @dev withdraw tokens which caller's earned from contribution from ended activities.
     */
     function withdrawReward(uint[] calldata activityIds) external nonReentrant returns(uint) {
         uint claimAmount = 0;

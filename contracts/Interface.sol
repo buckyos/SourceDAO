@@ -382,11 +382,7 @@ interface IMarketingGroup {
         Paid,
         // evaluating by committee
         Evaluating,
-        /**
-         *  activity end.
-         * if `reward` is 0, the activity will be `End` when it's paid.
-         * otherwise, it will be `End` with the evaluate by committee.
-         *  */
+        // activity end.
         End
     }
 
@@ -412,16 +408,16 @@ interface IMarketingGroup {
 
     struct Contribution {
         address contributor;
-        // contribution in percent
+        // contribution
         uint64 value;
     }
 
     /**
-     * @dev a project started, in preparing state
+     * @dev an activity created, in `WaitPay` state
      */
     event ActivityCreate(uint indexed activityId);
     /**
-     * @dev a project state changed
+     * @dev an activity state changed
      */
     event ActivityStateChange(
         uint indexed activityId,
@@ -469,19 +465,19 @@ interface IMarketingGroup {
     function evaluate(uint activityId, uint evaluatePercent) external;
 
     /**
-     * @dev withdraw tokens which caller's earned from contribution to all ended activities.
+     * @dev the committee has evaluated the activity, the `principal` take the reward in this contract.
      */
     function takeReward(uint activityId) external;
 
     /**
-     * @dev withdraw tokens which caller's earned from contribution to all finished projects
+     * @dev withdraw tokens which caller's earned from contribution from ended activities.
      */
     function withdrawReward(
         uint[] calldata activityIds
     ) external returns (uint);
 
     /**
-     * @dev query some one's contribution percent on a project
+     * @dev query some one's contribution percent on an activity
      */
     function contributionOf(
         uint activityId,
