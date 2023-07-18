@@ -86,6 +86,7 @@ contract ProjectManagement is
 
             getMainContractAddress().token().releaseTokensToSelf(reward);
         }
+        getMainContractAddress().committee().setProposalExecuted(project.proposalId);
         emit ProjectChange(projectId, project.proposalId, oldState, project.state);
     }
 
