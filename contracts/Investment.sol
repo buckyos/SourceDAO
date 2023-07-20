@@ -307,7 +307,7 @@ contract Investment is
     }
 
     // WithdrawDaoToken，can only be made upon successful investment.
-    function withdrawTokens(uint investmentId) external {
+    function withdrawTokens(uint investmentId) external nonReentrant {
         InvestmentDetail storage investment = investmentList[investmentId];
         InvestmentParams storage params = investment.params;
         Investor storage investor = investment.investors[msg.sender];
@@ -371,7 +371,7 @@ contract Investment is
     }
 
     // Refund asset, can be refund only in the case of investment failure.
-    function refundAsset(uint investmentId) external {
+    function refundAsset(uint investmentId) external nonReentrant {
         InvestmentDetail storage investment = investmentList[investmentId];
         Investor storage investor = investment.investors[msg.sender];
         address assetAddress = investment.params.assetAddress;
@@ -686,7 +686,7 @@ contract Investment is
     // Burn the remaining tokens, which can be due to either a failed investment or the surplus after a successful fixed-price investment.
     function burnUnAllocatedTokens(
         uint investmentId
-    ) public onlyCommitteeMember {
+    ) public onlyCommitteeMember nonReentrant {
         InvestmentDetail storage investment = investmentList[investmentId];
         InvestmentParams storage params = investment.params;
         require(
@@ -719,7 +719,7 @@ contract Investment is
     }
 
     // Withdraw to the asset wallet.
-    function withdrawAsset(uint investmentId) external {
+    function withdrawAsset(uint investmentId) external nonReentrant {
         InvestmentDetail storage investment = investmentList[investmentId];
         require(
             investment.state == InvestmentState.Successful,
