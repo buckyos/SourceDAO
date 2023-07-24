@@ -399,7 +399,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
 
     function cancelContractUpgrade(address proxyContractAddress) external override {
         require(isCommitteeMember[msg.sender], "only committee can cancel upgrade");
-        uint id = contractUpgradeProposals[msg.sender];
+        uint id = contractUpgradeProposals[proxyContractAddress];
 
         require(id != 0, "not found upgrade proposal");
         ProposalResult result = _settleProposal(id);
