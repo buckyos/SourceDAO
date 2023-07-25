@@ -94,11 +94,13 @@ describe("MarketingContract", () => {
 
       {
         let contributions = [];
+        let contribution = 10;
         for (let signer of signers) {
           contributions.push({
             contributor: signer.address,
-            value: 10,
+            value: contribution,
           });
+          contribution *= 2;
         }
         const tx = await marketingContract.updateContribute(
           activityId,
@@ -107,7 +109,7 @@ describe("MarketingContract", () => {
         await tx.wait();
 
         {
-          contributions.forEach((con) => (con.value *= 2));
+          contributions.forEach((con) => (con.value = 10));
           const tx = await marketingContract.updateContribute(
             activityId,
             contributions
@@ -127,7 +129,7 @@ describe("MarketingContract", () => {
               activityId,
               signer.address
             );
-            expect(contribution).to.equal(20);
+            expect(contribution).to.equal(10);
             sumContribution += contribution.toNumber();
           }
         }
@@ -144,7 +146,7 @@ describe("MarketingContract", () => {
               activityId,
               signer.address
             );
-            expect(contribution).to.equal(20);
+            expect(contribution).to.equal(10);
           }
         }
 
@@ -173,7 +175,7 @@ describe("MarketingContract", () => {
           let ret = await tx.wait();
           let balance = await daoToken.balanceOf(signers[0].address);
           expect(balance).to.equal(
-            Math.floor((100 * 20 * 60) / 100 / sumContribution) + 10000
+            Math.floor((100 * 10 * 60) / 100 / sumContribution) + 10000
           );
         }
 
@@ -185,7 +187,7 @@ describe("MarketingContract", () => {
           let ret = await tx.wait();
           let balance = await daoToken.balanceOf(signer.address);
           expect(balance).to.equal(
-            Math.floor((100 * 20 * 60) / 100 / sumContribution)
+            Math.floor((100 * 10 * 60) / 100 / sumContribution)
           );
         }
       }
@@ -561,7 +563,7 @@ describe("MarketingContract", () => {
           await tx.wait();
 
           {
-            let tx = await marketingContract.evaluate(activityId1, 60);
+            let tx = await marketingContract.evaluate(activityId1, 30);
             await tx.wait();
           }
         }
@@ -582,7 +584,7 @@ describe("MarketingContract", () => {
           await tx.wait();
 
           {
-            let tx = await marketingContract.evaluate(activityId2, 120);
+            let tx = await marketingContract.evaluate(activityId2, 60);
             await tx.wait();
           }
         }
@@ -656,7 +658,7 @@ describe("MarketingContract", () => {
             let ret = await tx.wait();
             let balance = await daoToken.balanceOf(signers[0].address);
             expect(balance).to.equal(
-              Math.floor((100 * 10 * 60) / 100 / sumContribution1) +
+              Math.floor((100 * 10 * 30) / 100 / sumContribution1) +
                 10000 +
                 10000
             );
@@ -670,7 +672,7 @@ describe("MarketingContract", () => {
             let ret = await tx.wait();
             let balance = await daoToken.balanceOf(signer.address);
             expect(balance).to.equal(
-              Math.floor((100 * 10 * 60) / 100 / sumContribution1)
+              Math.floor((100 * 10 * 30) / 100 / sumContribution1)
             );
           }
         }
@@ -682,8 +684,8 @@ describe("MarketingContract", () => {
             let ret = await tx.wait();
             let balance = await daoToken.balanceOf(signers[0].address);
             expect(balance).to.equal(
-              Math.floor((100 * 10 * 60) / 100 / sumContribution1) +
-                Math.floor((200 * 20 * 120) / 100 / sumContribution2) +
+              Math.floor((100 * 10 * 30) / 100 / sumContribution1) +
+                Math.floor((200 * 20 * 60) / 100 / sumContribution2) +
                 10000 +
                 10000
             );
@@ -697,8 +699,8 @@ describe("MarketingContract", () => {
             let ret = await tx.wait();
             let balance = await daoToken.balanceOf(signer.address);
             expect(balance).to.equal(
-              Math.floor((100 * 10 * 60) / 100 / sumContribution1) +
-                Math.floor((200 * 20 * 120) / 100 / sumContribution2)
+              Math.floor((100 * 10 * 30) / 100 / sumContribution1) +
+                Math.floor((200 * 20 * 60) / 100 / sumContribution2)
             );
           }
         }
