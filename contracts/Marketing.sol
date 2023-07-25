@@ -197,8 +197,11 @@ contract MarketingContract is
                 }
             }
         }
-        IERC20(address(getMainContractAddress().token())).transfer(msg.sender, claimAmount);
 
+        if (claimAmount > 0) {
+            IERC20(address(getMainContractAddress().token())).transfer(msg.sender, claimAmount);
+        }
+    
         emit WithdrawContributionToken(msg.sender, claimAmount);
         
         return claimAmount;
