@@ -34,6 +34,13 @@ async function main() {
         kind: "uups"
     })).deployed() as SourceDaoToken;
 
+    // Deploying the TokenDividend contract
+    const tokenDividendFactory = await ethers.getContractFactory('TokenDividend')
+    const tokenDividend = await (await upgrades.deployProxy(tokenlockupFactory, undefined, {
+        initializer: 'initialize',
+        kind: "uups"
+    })).deployed() as SourceDaoToken;
+
     // Deploying the ProjectManagement contract
     const projectFactory = await ethers.getContractFactory('ProjectManagement')
     const project = await (await upgrades.deployProxy(projectFactory, undefined, {
@@ -75,6 +82,9 @@ async function main() {
     // Setup TokenLockup Contract Address into Master Contract
     await (await dao.setTokenLockupAddress(tokenlockup.address)).wait();
 
+    // Setup TokenDividend Contract Address into Master Contract
+    await (await dao.setTokenDividendAddress(tokenDividend.address)).wait();
+
     // Setup Investment Contract Address into Master Contract
     await (await dao.setInvestmentAddress(investment.address)).wait();
 
@@ -95,6 +105,9 @@ async function main() {
 
     // Init Master Contract address for TokenLockup Contract
     await (await tokenlockup.setMainContractAddress(dao.address)).wait();
+
+    // Init Master Contract address for TokenDividend Contract
+    await (await tokenDividend.setMainContractAddress(dao.address)).wait();
 
     // Init Master Contract address for Investment Contract
     await (await investment.setMainContractAddress(dao.address)).wait();

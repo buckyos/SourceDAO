@@ -1068,6 +1068,8 @@ interface ISourceDao {
      */
     function lockup() external view returns (ISourceTokenLockup);
 
+    function dividend() external view returns (ISourceDAOTokenDividend);
+
     function investment() external view returns (IInvestment);
 
     function committeeWallet() external view returns (address);
