@@ -23,8 +23,8 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
         _disableInitializers();
     }
 
-    function initialize() public initializer {
-        __SourceDaoContractUpgradable_init();
+    function initialize(address mainAddr) public initializer {
+        __SourceDaoContractUpgradable_init(mainAddr);
         __ReentrancyGuard_init();
     }
 

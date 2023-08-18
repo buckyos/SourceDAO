@@ -35,8 +35,8 @@ contract ProjectManagement is
         _disableInitializers();
     }
 
-    function initialize() initializer public {
-        __SourceDaoContractUpgradable_init();
+    function initialize(address mainAddr) initializer public {
+        __SourceDaoContractUpgradable_init(mainAddr);
         projectIdCounter = 0;
     }
 

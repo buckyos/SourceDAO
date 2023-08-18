@@ -26,8 +26,8 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
         stateEnableBlockNumber = 0;
     }
 
-    function initialize() public initializer {
-        __SourceDaoContractUpgradable_init();
+    function initialize(address mainAddr) public initializer {
+        __SourceDaoContractUpgradable_init(mainAddr);
         __ReentrancyGuard_init();
     }
 

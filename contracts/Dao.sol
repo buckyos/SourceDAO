@@ -14,9 +14,10 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
     address assetWalletAddress;
     address incomeWalletAddress;
     address tokenDividend;
+    address marketingAddress;
 
     function initialize() public initializer {
-        __SourceDaoContractUpgradable_init();
+        __SourceDaoContractUpgradable_init(address(0));
     }
 
     function setTokenAddress(
@@ -55,6 +56,12 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
         investmentAddress = newAddress;
     }
 
+    function setMarketingAddress(
+        address newAddress
+    ) external onlySetOnce(marketingAddress) {
+        marketingAddress = newAddress;
+    }
+
     function token() external view override returns (ISourceDAOToken) {
         return ISourceDAOToken(tokenAddress);
     }
@@ -79,6 +86,10 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
         return ISourceDAOTokenDividend(payable(tokenDividend));
     }
 
+    function marketing() external view returns (IMarketingGroup) {
+        return IMarketingGroup(payable(marketingAddress));
+    }
+
     function isAuthorizedAddress(
         address addr
     ) external view override returns (bool) {
@@ -87,7 +98,8 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
             addr == tokenLockup ||
             addr == devAddress ||
             addr == committeeAddress ||
-            addr == investmentAddress;
+            addr == investmentAddress ||
+            addr == marketingAddress;
     }
 
     function committeeWallet() external view override returns (address) {

@@ -34,13 +34,14 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         _disableInitializers();
     }
 
-    function initialize(address[] memory initialCommittees) public initializer {
-        __SourceDaoContractUpgradable_init();
+    function initialize(address[] memory initialCommittees, address mainAddr) public initializer {
+        __SourceDaoContractUpgradable_init(mainAddr);
 
         curProposalId = 1;
         committees = initialCommittees;
         for (uint i = 0; i < committees.length; i++) {
             isCommitteeMember[committees[i]] = true;
+            emit MemberAdded(committees[i]);
         }
     }
 

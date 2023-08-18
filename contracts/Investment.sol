@@ -96,8 +96,8 @@ contract Investment is
         _disableInitializers();
     }
 
-    function initialize() public initializer {
-        __SourceDaoContractUpgradable_init();
+    function initialize(address mainAddr) public initializer {
+        __SourceDaoContractUpgradable_init(mainAddr);
         investmentCount = 0;
     }
 

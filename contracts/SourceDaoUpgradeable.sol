@@ -14,8 +14,11 @@ abstract contract SourceDaoContractUpgradeable is Initializable, UUPSUpgradeable
 
     address mainContractAddress;
 
-    function __SourceDaoContractUpgradable_init() internal onlyInitializing {
+    function __SourceDaoContractUpgradable_init(address mainAddr) internal onlyInitializing {
         __UUPSUpgradeable_init();
+        if (mainAddr != address(0)) {
+            mainContractAddress = mainAddr;
+        }
     }
 
     function getMainContractAddress() internal view returns(ISourceDao) {

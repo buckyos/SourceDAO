@@ -17,8 +17,8 @@ contract MultiSigWallet is IMultiSigWallet, SourceDaoContractUpgradeable, Reentr
         _disableInitializers();
     }
 
-    function initialize(string memory __name) public initializer {
-        __SourceDaoContractUpgradable_init();
+    function initialize(string memory __name, address mainAddr) public initializer {
+        __SourceDaoContractUpgradable_init(mainAddr);
         __ReentrancyGuard_init();
         _name = __name;
     }
