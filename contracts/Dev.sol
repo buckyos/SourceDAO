@@ -41,21 +41,21 @@ contract ProjectManagement is
     }
 
     function createProject(uint budget, uint64 issueId, uint64 startDate, uint64 endDate) external returns(uint ProjectId) {
-        ProjectBrief storage project = projects[projectIdCounter];
+        uint projectId = projectIdCounter++;
+        ProjectBrief storage project = projects[projectId];
         project.manager = msg.sender;
         project.budget = budget;
         project.issueId = issueId;
         bytes32[] memory params;
-        project.proposalId = getMainContractAddress().committee().propose(2592000, params);
+        project.proposalId = getMainContractAddress().committee().propose(30 days, params);
         project.startDate = startDate;
         project.endDate = endDate;
         project.state = ProjectState.Preparing;
         project.result = ProjectResult.Inprogress;
 
-        emit ProjectCreate(projectIdCounter, project.proposalId);
+        emit ProjectCreate(projectId, project.proposalId);
 
-        ProjectId = projectIdCounter;
-        projectIdCounter++;
+        return projectId;
     }
 
     function promoteProject(uint projectId) external {
