@@ -27,33 +27,33 @@ describe("FixedPriceInvestment", () => {
     const SourceDao = await hre.ethers.getContractFactory("SourceDao");
     let sourceDao = await SourceDao.deploy();
     const SourceDaoToken = await hre.ethers.getContractFactory("SourceDaoToken");
-    const daoToken = (await hre.upgrades.deployProxy(SourceDaoToken, [1000000], {kind: "uups"})) as SourceDaoToken;
-    await daoToken.setMainContractAddress(sourceDao.address);
+    const daoToken = (await hre.upgrades.deployProxy(SourceDaoToken, [1000000, sourceDao.address], {kind: "uups"})) as SourceDaoToken;
+    // await daoToken.setMainContractAddress(sourceDao.address);
     await sourceDao.setTokenAddress(daoToken.address);
 
     const ProjectManager = await hre.ethers.getContractFactory("ProjectManagement");
-    const projectManager = (await hre.upgrades.deployProxy(ProjectManager, { kind: "uups" })) as ProjectManagement;
+    const projectManager = (await hre.upgrades.deployProxy(ProjectManager, [sourceDao.address], { kind: "uups" })) as ProjectManagement;
     await projectManager.deployed();
     await sourceDao.setDevAddress(projectManager.address);
-    await projectManager.setMainContractAddress(sourceDao.address);
+    // await projectManager.setMainContractAddress(sourceDao.address);
 
     const Committee = await hre.ethers.getContractFactory("SourceDaoCommittee");
-    const committee = (await hre.upgrades.deployProxy(Committee, [committees], { kind: "uups" })) as SourceDaoCommittee;
+    const committee = (await hre.upgrades.deployProxy(Committee, [committees, sourceDao.address], { kind: "uups" })) as SourceDaoCommittee;
     await committee.deployed();
-    await committee.setMainContractAddress(sourceDao.address);
+    // await committee.setMainContractAddress(sourceDao.address);
     await sourceDao.setCommitteeAddress(committee.address);
 
     const Investment = await hre.ethers.getContractFactory("Investment");
-    const investment = (await hre.upgrades.deployProxy(Investment, { kind: "uups" })) as Investment;
-    await investment.setMainContractAddress(sourceDao.address);
+    const investment = (await hre.upgrades.deployProxy(Investment, [sourceDao.address], { kind: "uups" })) as Investment;
+    // await investment.setMainContractAddress(sourceDao.address);
     await sourceDao.setInvestmentAddress(investment.address);
 
     const TestToken = await hre.ethers.getContractFactory("TestToken");
     const testToken = await TestToken.deploy(10000000);
 
     const MultiSigWallet = await hre.ethers.getContractFactory("MultiSigWallet");
-    const multiSigWallet = (await hre.upgrades.deployProxy(MultiSigWallet, ["test"], {kind: "uups"})) as MultiSigWallet;
-    await multiSigWallet.setMainContractAddress(sourceDao.address);
+    const multiSigWallet = (await hre.upgrades.deployProxy(MultiSigWallet, ["test", sourceDao.address], {kind: "uups"})) as MultiSigWallet;
+    // await multiSigWallet.setMainContractAddress(sourceDao.address);
     await sourceDao.setAssetWallet(multiSigWallet.address, 0);
 
     return {signers, investment, committee, daoToken, committees, testToken, multiSigWallet};

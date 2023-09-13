@@ -13,22 +13,22 @@ describe("MultiSigWallet", () => {
     const CyfsDao = await hre.ethers.getContractFactory("SourceDao");
     let cyfsDao = await CyfsDao.deploy();
     const CyfsDaoToken = await hre.ethers.getContractFactory("SourceDaoToken");
-    const daoToken = (await hre.upgrades.deployProxy(CyfsDaoToken, [1000000], {kind: "uups"})) as SourceDaoToken;
-    await daoToken.setMainContractAddress(cyfsDao.address);
+    const daoToken = (await hre.upgrades.deployProxy(CyfsDaoToken, [1000000, cyfsDao.address], {kind: "uups"})) as SourceDaoToken;
+    // await daoToken.setMainContractAddress(cyfsDao.address);
     await cyfsDao.setTokenAddress(daoToken.address);
 
     const Committee = await hre.ethers.getContractFactory("SourceDaoCommittee");
-    const committee = (await hre.upgrades.deployProxy(Committee, [committees], { kind: "uups" })) as SourceDaoCommittee;
+    const committee = (await hre.upgrades.deployProxy(Committee, [committees, cyfsDao.address], { kind: "uups" })) as SourceDaoCommittee;
     await committee.deployed();
-    await committee.setMainContractAddress(cyfsDao.address);
+    // await committee.setMainContractAddress(cyfsDao.address);
     await cyfsDao.setCommitteeAddress(committee.address);
 
     const TestToken = await hre.ethers.getContractFactory("TestToken");
     const testToken = await TestToken.deploy(10000000);
 
     const MultiSigWallet = await hre.ethers.getContractFactory("MultiSigWallet");
-    const multiSigWallet = (await hre.upgrades.deployProxy(MultiSigWallet, ["test"], {kind: "uups"})) as MultiSigWallet;
-    await multiSigWallet.setMainContractAddress(cyfsDao.address);
+    const multiSigWallet = (await hre.upgrades.deployProxy(MultiSigWallet, ["test", cyfsDao.address], {kind: "uups"})) as MultiSigWallet;
+    // await multiSigWallet.setMainContractAddress(cyfsDao.address);
     await cyfsDao.setAssetWallet(multiSigWallet.address, 0);
 
     return {signers, committee, daoToken, committees, testToken, multiSigWallet};

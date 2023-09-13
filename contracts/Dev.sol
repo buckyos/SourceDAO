@@ -46,7 +46,10 @@ contract ProjectManagement is
         project.manager = msg.sender;
         project.budget = budget;
         project.issueId = issueId;
-        bytes32[] memory params;
+        bytes32[] memory params = new bytes32[](3);
+        params[0] = bytes32(bytes20(msg.sender));
+        params[1] = bytes32(projectId);
+        params[2] = bytes32(budget);
         project.proposalId = getMainContractAddress().committee().propose(30 days, params);
         project.startDate = startDate;
         project.endDate = endDate;
@@ -65,7 +68,11 @@ contract ProjectManagement is
         require(project.manager == msg.sender, "Must be called by the project manager");
         require(project.state == ProjectState.Preparing || project.state == ProjectState.Accepting, "state error");
 
-        ISourceDaoCommittee.ProposalResult result = getMainContractAddress().committee().takeResult(project.proposalId, new bytes32[](0));
+        bytes32[] memory params = new bytes32[](3);
+        params[0] = bytes32(bytes20(msg.sender));
+        params[1] = bytes32(projectId);
+        params[2] = bytes32(project.budget);
+        ISourceDaoCommittee.ProposalResult result = getMainContractAddress().committee().takeResult(project.proposalId, params);
         require(result == ISourceDaoCommittee.ProposalResult.Accept, "Proposal status is not accept");
 
         ProjectState oldState = project.state;
@@ -109,7 +116,11 @@ contract ProjectManagement is
         }
 
         project.state = ProjectState.Accepting;
-        project.proposalId = getMainContractAddress().committee().propose(2592000, new bytes32[](0));
+        bytes32[] memory params = new bytes32[](3);
+        params[0] = bytes32(bytes20(msg.sender));
+        params[1] = bytes32(projectId);
+        params[2] = bytes32(project.budget);
+        project.proposalId = getMainContractAddress().committee().propose(30 days, params);
         emit ProjectChange(projectId, project.proposalId, ProjectState.Developing, ProjectState.Accepting);
     }
 

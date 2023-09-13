@@ -2,7 +2,7 @@ import hre from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
 import { BigNumber } from "ethers";
-import { SourceDaoCommittee, ProjectManagement } from "../typechain-types";
+import { SourceDaoCommittee, ProjectManagement, SourceDaoToken } from "../typechain-types";
 
 describe("ProjectManager", () => {
   async function deployContracts() {
@@ -14,20 +14,20 @@ describe("ProjectManager", () => {
     const SourceDao = await hre.ethers.getContractFactory("SourceDao");
     let sourceDao = await SourceDao.deploy();
     const SourceDaoToken = await hre.ethers.getContractFactory("SourceDaoToken");
-    const daoToken = (await hre.upgrades.deployProxy(SourceDaoToken, [1000000], {kind: "uups"}));
-    await daoToken.setMainContractAddress(sourceDao.address);
+    const daoToken = (await hre.upgrades.deployProxy(SourceDaoToken, [1000000, sourceDao.address], {kind: "uups"})) as SourceDaoToken;
+    // await daoToken.setMainContractAddress(sourceDao.address);
     await sourceDao.setTokenAddress(daoToken.address);
 
     const ProjectManager = await hre.ethers.getContractFactory("ProjectManagement");
-    const projectManager = (await hre.upgrades.deployProxy(ProjectManager, {kind: "uups"})) as ProjectManagement;
+    const projectManager = (await hre.upgrades.deployProxy(ProjectManager, [sourceDao.address], {kind: "uups"})) as ProjectManagement;
     await projectManager.deployed();
     await sourceDao.setDevAddress(projectManager.address);
-    await projectManager.setMainContractAddress(sourceDao.address);
+    // await projectManager.setMainContractAddress(sourceDao.address);
 
     const Committee = await hre.ethers.getContractFactory("SourceDaoCommittee");
-    const committee = (await hre.upgrades.deployProxy(Committee, [committees], {kind: "uups"})) as SourceDaoCommittee;
+    const committee = (await hre.upgrades.deployProxy(Committee, [committees, sourceDao.address], {kind: "uups"})) as SourceDaoCommittee;
     await committee.deployed();
-    await committee.setMainContractAddress(sourceDao.address);
+    // await committee.setMainContractAddress(sourceDao.address);
     await sourceDao.setCommitteeAddress(committee.address);
 
     return {signers, projectManager, committee, daoToken};

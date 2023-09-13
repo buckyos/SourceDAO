@@ -16,31 +16,31 @@ describe("MarketingContract", () => {
     const SourceDaoToken = await hre.ethers.getContractFactory(
       "SourceDaoToken"
     );
-    const daoToken = await hre.upgrades.deployProxy(SourceDaoToken, [1000000], {
+    const daoToken = await hre.upgrades.deployProxy(SourceDaoToken, [1000000, sourceDao.address], {
       kind: "uups",
     });
-    await daoToken.setMainContractAddress(sourceDao.address);
+    // await daoToken.setMainContractAddress(sourceDao.address);
     await sourceDao.setTokenAddress(daoToken.address);
 
     const MarketingContract = await hre.ethers.getContractFactory(
       "MarketingContract"
     );
     const marketingContract = (await hre.upgrades.deployProxy(
-      MarketingContract,
+      MarketingContract, [sourceDao.address],
       {
         kind: "uups",
       }
     )) as MarketingContract;
     await marketingContract.deployed();
     await sourceDao.setDevAddress(marketingContract.address);
-    await marketingContract.setMainContractAddress(sourceDao.address);
+    // await marketingContract.setMainContractAddress(sourceDao.address);
 
     const Committee = await hre.ethers.getContractFactory("SourceDaoCommittee");
-    const committee = (await hre.upgrades.deployProxy(Committee, [committees], {
+    const committee = (await hre.upgrades.deployProxy(Committee, [committees, sourceDao.address], {
       kind: "uups",
     })) as SourceDaoCommittee;
     await committee.deployed();
-    await committee.setMainContractAddress(sourceDao.address);
+    // await committee.setMainContractAddress(sourceDao.address);
     await sourceDao.setCommitteeAddress(committee.address);
 
     return { signers, marketingContract, committee, daoToken };

@@ -13,10 +13,16 @@ describe("token", () => {
         }
         console.log(`comittees ${JSON.stringify(committees)}`);
 
+        console.log('deploy main contract')
+        const MainFactory = await ethers.getContractFactory("SourceDao");
+
+        const dao = await (await upgrades.deployProxy(MainFactory, undefined, { kind: "uups" })).deployed() as SourceDao;
+        console.log('main proxy address', dao.address);
+
         console.log('deploy committee contract')
         const CommitteeFactory = await ethers.getContractFactory("SourceDaoCommittee");
 
-        const committee = await (await upgrades.deployProxy(CommitteeFactory, [committees], { kind: "uups" })).deployed() as SourceDaoCommittee;
+        const committee = await (await upgrades.deployProxy(CommitteeFactory, [committees, dao.address], { kind: "uups" })).deployed() as SourceDaoCommittee;
         console.log('committee proxy address', committee.address);
 
         console.log('deploy SourceDaoToken contract')
@@ -25,35 +31,29 @@ describe("token", () => {
         // 转化为 BigNumber 类型
         let initialSupply = ethers.BigNumber.from("2100000000");
 
-        const token = await (await upgrades.deployProxy(TokenFactory, [initialSupply.toString()], { kind: "uups" })).deployed() as SourceDaoToken;
+        const token = await (await upgrades.deployProxy(TokenFactory, [initialSupply.toString(), dao.address], { kind: "uups" })).deployed() as SourceDaoToken;
         console.log('token proxy address', token.address);
 
         console.log('deploy SourceTokenLockup contract')
         const TokenLockupFactory = await ethers.getContractFactory("SourceTokenLockup");
 
-        const tokenLockup = await (await upgrades.deployProxy(TokenLockupFactory, [], { kind: "uups" })).deployed() as SourceTokenLockup;
+        const tokenLockup = await (await upgrades.deployProxy(TokenLockupFactory, [dao.address], { kind: "uups" })).deployed() as SourceTokenLockup;
         console.log('SourceTokenLockup proxy address', tokenLockup.address);
 
         const DividendContract = await ethers.getContractFactory("DividendContract");
-        const dividend = await (await upgrades.deployProxy(DividendContract, { kind: "uups" })).deployed() as DividendContract;
-
-        console.log('deploy main contract')
-        const MainFactory = await ethers.getContractFactory("SourceDao");
-
-        const dao = await (await upgrades.deployProxy(MainFactory, undefined, { kind: "uups" })).deployed() as SourceDao;
-        console.log('main proxy address', dao.address);
+        const dividend = await (await upgrades.deployProxy(DividendContract, [dao.address], { kind: "uups" })).deployed() as DividendContract;
 
         console.log('set committee address to main');
         await (await dao.setCommitteeAddress(committee.address)).wait();
         await (await dao.setTokenAddress(token.address)).wait();
         await (await dao.setTokenLockupAddress(tokenLockup.address)).wait();
 
-        console.log('set main address to committee');
-        await (await committee.setMainContractAddress(dao.address)).wait();
-
-        await (await token.setMainContractAddress(dao.address)).wait();
-        await (await tokenLockup.setMainContractAddress(dao.address)).wait();
-        await dividend.setMainContractAddress(dao.address);
+        // console.log('set main address to committee');
+        // await (await committee.setMainContractAddress(dao.address)).wait();
+        //
+        // await (await token.setMainContractAddress(dao.address)).wait();
+        // await (await tokenLockup.setMainContractAddress(dao.address)).wait();
+        // await dividend.setMainContractAddress(dao.address);
 
         const TestToken = await hre.ethers.getContractFactory("TestToken");
         const testToken = await TestToken.deploy(10000000);

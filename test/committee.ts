@@ -19,9 +19,11 @@ describe("Committee", () => {
     for (let i = 1; i < 6; i++) {
       committees.push(signers[i].address);
     }
+    const SourceDao = await hre.ethers.getContractFactory("SourceDao");
+    let sourceDao = await SourceDao.deploy();
 
     const Committee = await hre.ethers.getContractFactory("SourceDaoCommittee");
-    const committee = (await hre.upgrades.deployProxy(Committee, [committees], {kind: "uups"})) as SourceDaoCommittee;
+    const committee = (await hre.upgrades.deployProxy(Committee, [committees, sourceDao.address], {kind: "uups"})) as SourceDaoCommittee;
     await committee.deployed();
 
     return {signers, committees, committee};

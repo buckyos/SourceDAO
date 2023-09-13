@@ -13,23 +13,23 @@ describe("upgrade", () => {
         }
         console.log(`comittees ${JSON.stringify(committees)}`);
 
-        console.log('deploy committee contract')
-        const CommitteeFactory = await ethers.getContractFactory("SourceDaoCommittee");
-
-        const committee = await (await upgrades.deployProxy(CommitteeFactory, [committees], {kind: "uups"})).deployed() as SourceDaoCommittee;
-        console.log('committee proxy address', committee.address);
-
         console.log('deploy main contract')
         const MainFactory = await ethers.getContractFactory("SourceDao");
 
         const dao = await (await upgrades.deployProxy(MainFactory, undefined, {kind: "uups"})).deployed() as SourceDao;
         console.log('main proxy address', dao.address);
 
+        console.log('deploy committee contract')
+        const CommitteeFactory = await ethers.getContractFactory("SourceDaoCommittee");
+
+        const committee = await (await upgrades.deployProxy(CommitteeFactory, [committees, dao.address], {kind: "uups"})).deployed() as SourceDaoCommittee;
+        console.log('committee proxy address', committee.address);
+
         console.log('set committee address to main');
         await (await dao.setCommitteeAddress(committee.address)).wait();
 
-        console.log('set main address to committee');
-        await (await committee.setMainContractAddress(dao.address)).wait();
+        // console.log('set main address to committee');
+        // await (await committee.setMainContractAddress(dao.address)).wait();
 
         return {signers, committees, committee, dao};
     }
@@ -37,7 +37,7 @@ describe("upgrade", () => {
 
     it("deploy and committee and upgrade", async function () {
         const {signers, committees, committee, dao} = await loadFixture(deployContracts);
-        
+
         console.log("begin upgrade");
         console.log("deploy new impl contract first");
 
@@ -60,5 +60,5 @@ describe("upgrade", () => {
         await (await committee.upgradeTo(newProxyAddress as string)).wait();
         console.log('upgrade complete')
     })
-    
+
 })
