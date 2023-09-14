@@ -121,6 +121,8 @@ interface ISourceDaoCommittee {
     struct Proposal {
         // propose from which group
         address fromGroup;
+        // propose from who's address
+        address origin;
         // when proposal expired
         uint expired;
         // members who support
@@ -193,13 +195,13 @@ interface ISourceDaoCommittee {
      * @dev support a propose
      * call from a member
      */
-    function support(uint proposalId) external returns (bool);
+    function support(uint proposalId, bytes32[] memory params) external returns (bool);
 
     /**
      * @dev reject a propose
      * call from a member
      */
-    function reject(uint proposalId) external returns (bool);
+    function reject(uint proposalId, bytes32[] memory params) external returns (bool);
 
     /**
      * @dev take result of a proposal, and then remove it

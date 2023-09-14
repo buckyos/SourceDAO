@@ -51,10 +51,11 @@ contract SourceDaoToken is ERC20BurnableUpgradeable, ISourceDAOToken, Reentrancy
     function prepareProposalParams(address[] memory owners, uint256[] memory amounts) internal pure returns (bytes32[] memory) {
         require(owners.length == amounts.length, "Input arrays must be of same length");
 
-        bytes32[] memory params = new bytes32[](owners.length);
+        bytes32[] memory params = new bytes32[](owners.length+1);
         for (uint i = 0; i < owners.length; i++) {
             params[i] = keccak256(abi.encodePacked(owners[i], amounts[i]));
         }
+        params[owners.length] = bytes32("releaseTokens");
 
         return params;
     }

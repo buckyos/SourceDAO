@@ -3,6 +3,7 @@ pragma solidity ^0.8.9;
 
 import "./SourceDaoUpgradeable.sol";
 import "./Interface.sol";
+import "./util.sol";
 
 contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
     address tokenAddress;
@@ -116,15 +117,15 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
 
     function _makeSetAddressParams(address addr, bytes32 name) internal pure returns (bytes32[] memory) {
         bytes32[] memory params = new bytes32[](2);
-        params[0] = bytes32(bytes20(addr));
-        params[1] = name;
+        params[0] = util.AddressToBytes32(addr);
+        params[2] = name;
 
         return params;
     }
 
     function perpareSetCommitteeWallet(address walletAddress) external {
         require(ISourceDaoCommittee(committeeAddress).isMember(msg.sender), "only member can set wallet");
-        bytes32[] memory params = _makeSetAddressParams(walletAddress, "committee");
+        bytes32[] memory params = _makeSetAddressParams(walletAddress, "committeeWallet");
         ISourceDaoCommittee(committeeAddress).propose(7 days, params);
     }
 
@@ -135,7 +136,7 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
         if (committeeWalletAddress == address(0)) {
             committeeWalletAddress = walletAddress;
         } else {
-            bytes32[] memory params = _makeSetAddressParams(walletAddress, "committee");
+            bytes32[] memory params = _makeSetAddressParams(walletAddress, "committeeWallet");
             require(ISourceDaoCommittee(committeeAddress).takeResult(proposalId, params) == ISourceDaoCommittee.ProposalResult.Accept, "not accept");
             committeeWalletAddress = walletAddress;
             ISourceDaoCommittee(committeeAddress).setProposalExecuted(proposalId);
@@ -144,7 +145,7 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
 
     function perpareSetAssetWallet(address walletAddress) external {
         require(ISourceDaoCommittee(committeeAddress).isMember(msg.sender), "only member can set wallet");
-        bytes32[] memory params = _makeSetAddressParams(walletAddress, "asset");
+        bytes32[] memory params = _makeSetAddressParams(walletAddress, "assetWallet");
         ISourceDaoCommittee(committeeAddress).propose(7 days, params);
     }
 
@@ -155,7 +156,7 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
         if (assetWalletAddress == address(0)) {
             assetWalletAddress = walletAddress;
         } else {
-            bytes32[] memory params = _makeSetAddressParams(walletAddress, "asset");
+            bytes32[] memory params = _makeSetAddressParams(walletAddress, "assetWallet");
             require(ISourceDaoCommittee(committeeAddress).takeResult(proposalId, params) == ISourceDaoCommittee.ProposalResult.Accept, "not accept");
             assetWalletAddress = walletAddress;
             ISourceDaoCommittee(committeeAddress).setProposalExecuted(proposalId);
@@ -164,7 +165,7 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
 
     function perpareSetIncomeWallet(address walletAddress) external {
         require(ISourceDaoCommittee(committeeAddress).isMember(msg.sender), "only member can set wallet");
-        bytes32[] memory params = _makeSetAddressParams(walletAddress, "income");
+        bytes32[] memory params = _makeSetAddressParams(walletAddress, "incomeWallet");
         ISourceDaoCommittee(committeeAddress).propose(7 days, params);
     }
 
@@ -175,7 +176,7 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
         if (incomeWalletAddress == address(0)) {
             incomeWalletAddress = walletAddress;
         } else {
-            bytes32[] memory params = _makeSetAddressParams(walletAddress, "income");
+            bytes32[] memory params = _makeSetAddressParams(walletAddress, "incomeWallet");
             require(ISourceDaoCommittee(committeeAddress).takeResult(proposalId, params) == ISourceDaoCommittee.ProposalResult.Accept, "not accept");
             incomeWalletAddress = walletAddress;
             ISourceDaoCommittee(committeeAddress).setProposalExecuted(proposalId);

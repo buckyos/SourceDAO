@@ -42,25 +42,41 @@ contract MarketingContract is
         __SourceDaoContractUpgradable_init(mainAddr);
     }
 
+    function _makeProposalParams(Activity memory activity, bytes32 proposalType) pure internal returns (bytes32[] memory) {
+        bytes32[] memory params = new bytes32[](6);
+        params[0] = bytes32(activity.budget);
+        params[1] = bytes32(activity.reward);
+        params[2] = bytes32(uint256(activity.startDate));
+        params[3] = bytes32(uint256(activity.endDate));
+        params[4] = activity.description;
+        params[5] = proposalType;
+
+        return params;
+    }
+
     /**
      * @dev create a new activity; and return a new `activityId`
     */
     function createActivity(uint budget, uint reward, uint64 startDate, uint64 endDate, bytes32 description) external returns (uint ActivityId) {
         ISourceDaoCommittee committee = getMainContractAddress().committee();
 
+        Activity memory activity = Activity(
+            ActivityState.WaitPay,
+            budget,
+            reward,
+            0,
+            startDate,
+            endDate,
+            msg.sender,
+            description,
+            0
+        );
+
+        bytes32[] memory params = _makeProposalParams(activity, "createActivity");
+
         // use proposal id for activity id;
-        uint activityId = committee.propose(14 days, new bytes32[](0));
-
-        Activity storage activity = activities[activityId];
-
-        activity.state = ActivityState.WaitPay;
-        activity.budget = budget;
-        activity.reward = reward;
-        activity.startDate = startDate;
-        activity.endDate = endDate;
-        activity.principal = msg.sender;
-        activity.description = description;
-
+        uint activityId = committee.propose(14 days, params);
+        activities[activityId] = activity;
         emit ActivityCreate(activityId);
 
         return activityId;
@@ -80,7 +96,15 @@ contract MarketingContract is
         ISourceDao sourceDao = getMainContractAddress();
         ISourceDaoCommittee committee = sourceDao.committee();
 
-        ISourceDaoCommittee.ProposalResult proposalResult = committee.takeResult(activityId, new bytes32[](0));
+        bytes32[] memory params = new bytes32[](6);
+        params[0] = bytes32(activity.budget);
+        params[1] = bytes32(activity.reward);
+        params[2] = bytes32(uint256(activity.startDate));
+        params[3] = bytes32(uint256(activity.endDate));
+        params[4] = activity.description;
+        params[5] = bytes32("createActivity");
+
+        ISourceDaoCommittee.ProposalResult proposalResult = committee.takeResult(activityId, params);
         require(proposalResult == ISourceDaoCommittee.ProposalResult.Accept, "Proposal not accepted");
         
         activity.state = ActivityState.Paid;
@@ -145,8 +169,10 @@ contract MarketingContract is
 
         ISourceDao sourceDao = getMainContractAddress();
         ISourceDaoCommittee committee = sourceDao.committee();
+
+        bytes32[] memory params = _makeProposalParams(activity, "evaluateActivity");
         
-        activity.proposalId = committee.propose(14 days, new bytes32[](0));
+        activity.proposalId = committee.propose(14 days, params);
         activity.evaluatePercent = evaluatePercent;
 
         ActivityState oldState = activity.state;

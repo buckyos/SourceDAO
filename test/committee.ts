@@ -19,11 +19,9 @@ describe("Committee", () => {
     for (let i = 1; i < 6; i++) {
       committees.push(signers[i].address);
     }
-    const SourceDao = await hre.ethers.getContractFactory("SourceDao");
-    let sourceDao = await SourceDao.deploy();
 
     const Committee = await hre.ethers.getContractFactory("SourceDaoCommittee");
-    const committee = (await hre.upgrades.deployProxy(Committee, [committees, sourceDao.address], {kind: "uups"})) as SourceDaoCommittee;
+    const committee = (await hre.upgrades.deployProxy(Committee, [committees, hre.ethers.constants.AddressZero], {kind: "uups"})) as SourceDaoCommittee;
     await committee.deployed();
 
     return {signers, committees, committee};
@@ -98,7 +96,7 @@ describe("Committee", () => {
         }
 
         if (isMember) {
-          let tx = await committee.connect(signer).support(proposalId);
+          let tx = await committee.connect(signer).support(proposalId, params);
           await tx.wait();
         }
       }
@@ -154,7 +152,7 @@ describe("Committee", () => {
         }
 
         if (isMember) {
-          let tx = await committee.connect(signer).reject(proposalId);
+          let tx = await committee.connect(signer).reject(proposalId, params);
           await tx.wait();
         }
       }
@@ -212,10 +210,10 @@ describe("Committee", () => {
 
         if (isMember) {
           if (i < 3) {
-            let tx = await committee.connect(signer).reject(proposalId);
+            let tx = await committee.connect(signer).reject(proposalId, params);
             await tx.wait();
           } else {
-            let tx = await committee.connect(signer).support(proposalId);
+            let tx = await committee.connect(signer).support(proposalId, params);
             await tx.wait();
           }
           i += 1;
@@ -275,10 +273,10 @@ describe("Committee", () => {
 
         if (isMember) {
           if (i < 3) {
-            let tx = await committee.connect(signer).support(proposalId);
+            let tx = await committee.connect(signer).support(proposalId, params);
             await tx.wait();
           } else {
-            let tx = await committee.connect(signer).reject(proposalId);
+            let tx = await committee.connect(signer).reject(proposalId, params);
             await tx.wait();
           }
           i += 1;
@@ -298,7 +296,7 @@ describe("Committee", () => {
       expect(info.state).to.equal(2);
     }
   });
-
+  
   it("propose expire test", async () => {
     const {signers, committees, committee} = await loadFixture(deployContracts);
 
@@ -378,7 +376,7 @@ describe("Committee", () => {
         if (!isMember) {
           let error = false;
           try {
-            let tx = await committee.connect(signer).reject(proposalId);
+            let tx = await committee.connect(signer).reject(proposalId, params);
             await tx.wait();
           } catch (e) {
             error = true;
@@ -447,11 +445,10 @@ describe("Committee", () => {
         }
 
         if (isMember) {
-          try {
-            let tx = await committee.connect(signer).support(proposalId);
+            let tx = await committee.connect(signer).support(proposalId, [
+                hre.ethers.utils.zeroPad(signers[7].address, 32),
+                hre.ethers.utils.formatBytes32String("addMember")]);
             await tx.wait();
-          } catch (e) {
-          }
         }
       }
     }
@@ -527,11 +524,10 @@ describe("Committee", () => {
         }
 
         if (isMember) {
-          try {
-            let tx = await committee.connect(signer).support(proposalId);
+            let tx = await committee.connect(signer).support(proposalId, [
+                hre.ethers.utils.zeroPad(committees[0], 32), 
+                hre.ethers.utils.formatBytes32String("removeMember")]);
             await tx.wait();
-          } catch (e) {
-          }
         }
       }
     }

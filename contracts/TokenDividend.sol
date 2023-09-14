@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -146,8 +147,10 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
         require(_state != DividendState.Disable);
         require(state != _state, "State is the same");
 
-        bytes32[] memory params = new bytes32[](1);
-        params[0] = keccak256(abi.encodePacked(_state, blockNumber));
+        bytes32[] memory params = new bytes32[](3);
+        params[0] = bytes32(uint256(_state));
+        params[1] = bytes32(blockNumber);
+        params[2] = bytes32("dividendChangeState");
 
         return params;
     }

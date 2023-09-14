@@ -6,6 +6,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "./SourceDaoUpgradeable.sol";
 import "./Interface.sol";
+import "./util.sol";
 
 contract Investment is
     IInvestment,
@@ -173,7 +174,7 @@ contract Investment is
         uint investmentId,
         InvestmentParams memory params
     ) internal pure returns (bytes32[] memory) {
-        bytes32[] memory packParams = new bytes32[](11);
+        bytes32[] memory packParams = new bytes32[](12);
         packParams[0] = bytes32(uint(investmentId));
         packParams[1] = bytes32(uint256(params.totalTokenAmount));
         packParams[2] = bytes32(uint(params.priceType));
@@ -184,8 +185,9 @@ contract Investment is
         packParams[6] = bytes32(uint256(params.goalAssetAmount));
         packParams[7] = bytes32(uint256(params.minAssetPerInvestor));
         packParams[8] = bytes32(uint256(params.maxAssetPerInvestor));
-        packParams[9] = bytes32(bytes20(params.assetAddress));
+        packParams[9] = util.AddressToBytes32(params.assetAddress);
         packParams[10] = _boolToBytes32(params.onlyWhitelist);
+        packParams[11] = bytes32("createInvestment");
         return packParams;
     }
 
@@ -498,9 +500,10 @@ contract Investment is
         require(block.timestamp < params.endTime, "Already closed");
         require(proposalDuration > 0, "Proposal duration <= 0");
 
-        bytes32[] memory proposalParams = new bytes32[](2);
+        bytes32[] memory proposalParams = new bytes32[](3);
         proposalParams[0] = bytes32(uint(investmentId));
         proposalParams[1] = _boolToBytes32(refund);
+        proposalParams[2] = bytes32("abortInvestment");
         uint abortProposalId = getMainContractAddress().committee().propose(
             proposalDuration,
             proposalParams
@@ -529,9 +532,11 @@ contract Investment is
         );
         require(block.timestamp < investment.params.endTime, "Already closed");
 
-        bytes32[] memory params = new bytes32[](2);
+        bytes32[] memory params = new bytes32[](4);
         params[0] = bytes32(uint(investmentId));
         params[1] = _boolToBytes32(refund);
+        params[2] = util.AddressToBytes32(tx.origin);
+        params[3] = bytes32("abortInvestment");
 
         ISourceDaoCommittee.ProposalResult result = getMainContractAddress()
             .committee()

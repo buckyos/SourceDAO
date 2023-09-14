@@ -6,6 +6,7 @@ import "./Interface.sol";
 import {MerkleProofUpgradeable as MerkleProof} from "@openzeppelin/contracts-upgradeable/utils/cryptography/MerkleProofUpgradeable.sol";
 
 import "hardhat/console.sol";
+import "./util.sol";
 
 // 委员会
 contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable {
@@ -60,9 +61,10 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         bool isFull
     ) internal returns (uint) {
         uint _proposalId = curProposalId++;
-        bytes32 root = MerkleProof.processProof(params, bytes32(0));
+        bytes32 root = MerkleProof.processProof(params, util.AddressToBytes32(tx.origin));
         _proposals[_proposalId] = Proposal(
             from,
+            tx.origin,
             block.timestamp + duration,
             new address[](0),
             new address[](0),
@@ -157,7 +159,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         return _propose(msg.sender, duration, params, false);
     }
 
-    function support(uint proposalId) external override returns (bool) {
+    function support(uint proposalId, bytes32[] memory params) external override returns (bool) {
         Proposal storage proposal = _proposals[proposalId];
         require(
             proposal.state == ProposalState.Inprogress,
@@ -165,6 +167,9 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         );
         require(block.timestamp < proposal.expired, "proposal expired");
         require(proposalVotes[proposalId][msg.sender] == 0, "already voted");
+
+        require(MerkleProof.verify(params, proposal.paramroot, util.AddressToBytes32(proposal.origin)), "invalid params");
+
         proposal.support.push(msg.sender);
 
         proposalVotes[proposalId][msg.sender] = 1;
@@ -174,7 +179,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         return true;
     }
 
-    function reject(uint proposalId) external override returns (bool) {
+    function reject(uint proposalId, bytes32[] memory params) external override returns (bool) {
         Proposal storage proposal = _proposals[proposalId];
         require(
             proposal.state == ProposalState.Inprogress,
@@ -182,6 +187,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         );
         require(block.timestamp < proposal.expired, "proposal expired");
         require(proposalVotes[proposalId][msg.sender] == 0, "already voted");
+        require(MerkleProof.verify(params, proposal.paramroot, util.AddressToBytes32(proposal.origin)), "invalid params");
+        
         proposal.reject.push(msg.sender);
 
         proposalVotes[proposalId][msg.sender] = -1;
@@ -249,7 +256,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         bytes32[] memory params
     ) internal returns (ProposalResult) {
         Proposal memory proposal = _proposals[proposalId];
-        if (!MerkleProof.verify(params, proposal.paramroot, bytes32(0))) {
+        if (!MerkleProof.verify(params, proposal.paramroot, util.AddressToBytes32(proposal.origin))) {
             return ProposalResult.NotMatch;
         }
 
@@ -274,8 +281,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         bool isAdd
     ) internal pure returns (bytes32[] memory) {
         bytes32[] memory params = new bytes32[](2);
-        params[0] = bytes32(bytes20(member));
-        params[1] = isAdd ? bytes32("add") : bytes32("remove");
+        params[0] = bytes32(uint256(uint160(member)));
+        params[1] = isAdd ? bytes32("addMember") : bytes32("removeMember");
         return params;
     }
 
@@ -358,9 +365,10 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             contractUpgradeProposals[proxyContractAddress] == 0,
             "already has upgrade proposal"
         );
-        bytes32[] memory params = new bytes32[](2);
-        params[0] = bytes32(bytes20(proxyContractAddress));
-        params[1] = bytes32(bytes20(newImplementAddress));
+        bytes32[] memory params = new bytes32[](3);
+        params[0] = util.AddressToBytes32(proxyContractAddress);
+        params[1] = util.AddressToBytes32(newImplementAddress);
+        params[2] = bytes32("upgradeContract");
 
         uint id = _propose(proxyContractAddress, 7 days, params, false);
 
@@ -376,9 +384,10 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
 
         require(id != 0, "not found upgrade proposal");
 
-        bytes32[] memory params = new bytes32[](2);
-        params[0] = bytes32(bytes20(msg.sender));
-        params[1] = bytes32(bytes20(newImplementAddress));
+        bytes32[] memory params = new bytes32[](3);
+        params[0] = util.AddressToBytes32(msg.sender);
+        params[1] = util.AddressToBytes32(newImplementAddress);
+        params[2] = bytes32("upgradeContract");
 
         ProposalResult result = _takeResult(id, params);
 

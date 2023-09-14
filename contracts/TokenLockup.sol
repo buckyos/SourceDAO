@@ -28,13 +28,14 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
         __ReentrancyGuard_init();
     }
 
-    function prepareProposalParams(address[] memory owners, uint256[] memory amounts) internal pure returns (bytes32[] memory) {
+    function prepareProposalParams(address[] memory owners, uint256[] memory amounts, bytes32 proposalType) internal pure returns (bytes32[] memory) {
         require(owners.length == amounts.length, "Input arrays must be of same length");
 
-        bytes32[] memory params = new bytes32[](owners.length);
+        bytes32[] memory params = new bytes32[](owners.length+1);
         for (uint i = 0; i < owners.length; i++) {
             params[i] = keccak256(abi.encodePacked(owners[i], amounts[i]));
         }
+        params[owners.length] = proposalType;
 
         return params;
     }
@@ -43,7 +44,7 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
         ISourceDaoCommittee committee = getMainContractAddress().committee();
         require(committee.isMember(msg.sender), "Only committee members can call this");
 
-        bytes32[] memory params = prepareProposalParams(owners, amounts);
+        bytes32[] memory params = prepareProposalParams(owners, amounts, "depositTokens");
 
         uint proposalId = committee.propose(duration, params);
 
@@ -56,7 +57,7 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
         ISourceDaoCommittee committee = getMainContractAddress().committee();
         require(committee.isMember(msg.sender), "Only committee members can call this");
 
-        bytes32[] memory params = prepareProposalParams(owners, amounts);
+        bytes32[] memory params = prepareProposalParams(owners, amounts, "depositTokens");
 
         require(committee.takeResult(proposalId, params) == ISourceDaoCommittee.ProposalResult.Accept, "Proposal must be passed");
 
@@ -86,7 +87,7 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
             require(info.totalAssigned >= info.totalUnlocked + amounts[i], "Insufficient locked tokens");
         }
 
-        bytes32[] memory params = prepareProposalParams(owners, amounts);
+        bytes32[] memory params = prepareProposalParams(owners, amounts, "unlockTokens");
 
         uint256 proposalId = committee.propose(duration, params);
 
@@ -99,7 +100,7 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
         ISourceDaoCommittee committee = getMainContractAddress().committee();
         require(committee.isMember(msg.sender), "Only committee members can call this");
 
-        bytes32[] memory params = prepareProposalParams(owners, amounts);
+        bytes32[] memory params = prepareProposalParams(owners, amounts, "unlockTokens");
 
         require(committee.takeResult(proposalId, params) == ISourceDaoCommittee.ProposalResult.Accept, "Proposal must be passed");
 

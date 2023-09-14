@@ -2,7 +2,7 @@ import hre from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
 import { BigNumber } from "ethers";
-import { SourceDaoCommittee, ProjectManagement, SourceDaoToken } from "../typechain-types";
+import { SourceDaoCommittee, ProjectManagement } from "../typechain-types";
 
 describe("ProjectManager", () => {
   async function deployContracts() {
@@ -14,20 +14,17 @@ describe("ProjectManager", () => {
     const SourceDao = await hre.ethers.getContractFactory("SourceDao");
     let sourceDao = await SourceDao.deploy();
     const SourceDaoToken = await hre.ethers.getContractFactory("SourceDaoToken");
-    const daoToken = (await hre.upgrades.deployProxy(SourceDaoToken, [1000000, sourceDao.address], {kind: "uups"})) as SourceDaoToken;
-    // await daoToken.setMainContractAddress(sourceDao.address);
+    const daoToken = (await hre.upgrades.deployProxy(SourceDaoToken, [1000000, sourceDao.address], {kind: "uups"}));
     await sourceDao.setTokenAddress(daoToken.address);
 
     const ProjectManager = await hre.ethers.getContractFactory("ProjectManagement");
     const projectManager = (await hre.upgrades.deployProxy(ProjectManager, [sourceDao.address], {kind: "uups"})) as ProjectManagement;
     await projectManager.deployed();
     await sourceDao.setDevAddress(projectManager.address);
-    // await projectManager.setMainContractAddress(sourceDao.address);
 
     const Committee = await hre.ethers.getContractFactory("SourceDaoCommittee");
     const committee = (await hre.upgrades.deployProxy(Committee, [committees, sourceDao.address], {kind: "uups"})) as SourceDaoCommittee;
     await committee.deployed();
-    // await committee.setMainContractAddress(sourceDao.address);
     await sourceDao.setCommitteeAddress(committee.address);
 
     return {signers, projectManager, committee, daoToken};
@@ -49,7 +46,13 @@ describe("ProjectManager", () => {
       expect(project.state).to.equal(0);
       const proposalId = project.proposalId;
       for (let i = 1; i < 6; i++) {
-        const tx = await committee.connect(signers[i]).support(proposalId);
+        const tx = await committee.connect(signers[i]).support(proposalId, [
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
+            hre.ethers.utils.formatBytes32String("createProject")
+        ]);
         await tx.wait();
       }
       await projectManager.promoteProject(projectId);
@@ -90,7 +93,13 @@ describe("ProjectManager", () => {
         const proposalId = project.proposalId;
 
         for (let i = 1; i < 6; i++) {
-          const tx = await committee.connect(signers[i]).support(proposalId);
+          const tx = await committee.connect(signers[i]).support(proposalId, [
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
+            hre.ethers.utils.formatBytes32String("acceptProject")
+          ]);
           await tx.wait();
         }
         await projectManager.promoteProject(projectId);
@@ -127,7 +136,13 @@ describe("ProjectManager", () => {
       expect(project.state).to.equal(0);
       const proposalId = project.proposalId;
       for (let i = 1; i < 6; i++) {
-        const tx = await committee.connect(signers[i]).support(proposalId);
+        const tx = await committee.connect(signers[i]).support(proposalId, [
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
+            hre.ethers.utils.formatBytes32String("createProject")
+        ]);
         await tx.wait();
       }
       await projectManager.promoteProject(projectId);
@@ -179,7 +194,13 @@ describe("ProjectManager", () => {
         const proposalId = project.proposalId;
 
         for (let i = 1; i < 6; i++) {
-          const tx = await committee.connect(signers[i]).support(proposalId);
+          const tx = await committee.connect(signers[i]).support(proposalId, [
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
+            hre.ethers.utils.formatBytes32String("acceptProject")
+          ]);
           await tx.wait();
         }
         await projectManager.promoteProject(projectId);
@@ -246,7 +267,13 @@ describe("ProjectManager", () => {
         expect(project.state).to.equal(0);
         const proposalId = project.proposalId;
         for (let i = 1; i < 6; i++) {
-          const tx = await committee.connect(signers[i]).support(proposalId);
+          const tx = await committee.connect(signers[i]).support(proposalId, [
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId1), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
+            hre.ethers.utils.formatBytes32String("createProject")
+          ]);
           await tx.wait();
         }
         await projectManager.promoteProject(projectId1);
@@ -257,7 +284,13 @@ describe("ProjectManager", () => {
         expect(project.state).to.equal(0);
         const proposalId = project.proposalId;
         for (let i = 1; i < 6; i++) {
-          const tx = await committee.connect(signers[i]).support(proposalId);
+          const tx = await committee.connect(signers[i]).support(proposalId, [
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId2), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
+            hre.ethers.utils.formatBytes32String("createProject")
+          ]);
           await tx.wait();
         }
         await projectManager.promoteProject(projectId2);
@@ -335,7 +368,13 @@ describe("ProjectManager", () => {
           const proposalId = project.proposalId;
 
           for (let i = 1; i < 6; i++) {
-            const tx = await committee.connect(signers[i]).support(proposalId);
+            const tx = await committee.connect(signers[i]).support(proposalId, [
+                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId1), 32),
+                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
+                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
+                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
+                hre.ethers.utils.formatBytes32String("acceptProject")
+            ]);
             await tx.wait();
           }
           await projectManager.promoteProject(projectId1);
@@ -346,7 +385,13 @@ describe("ProjectManager", () => {
           const proposalId = project.proposalId;
 
           for (let i = 1; i < 6; i++) {
-            const tx = await committee.connect(signers[i]).support(proposalId);
+            const tx = await committee.connect(signers[i]).support(proposalId, [
+                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId2), 32),
+                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
+                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
+                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
+                hre.ethers.utils.formatBytes32String("acceptProject")
+            ]);
             await tx.wait();
           }
           await projectManager.promoteProject(projectId2);
@@ -399,7 +444,13 @@ describe("ProjectManager", () => {
       expect(project.state).to.equal(0);
       const proposalId = project.proposalId;
       for (let i = 1; i < 6; i++) {
-        const tx = await committee.connect(signers[i]).support(proposalId);
+        const tx = await committee.connect(signers[i]).support(proposalId, [
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
+            hre.ethers.utils.formatBytes32String("createProject")
+        ]);
         await tx.wait();
       }
       {
@@ -490,7 +541,13 @@ describe("ProjectManager", () => {
         const proposalId = project.proposalId;
 
         for (let i = 1; i < 6; i++) {
-          const tx = await committee.connect(signers[i]).support(proposalId);
+          const tx = await committee.connect(signers[i]).support(proposalId, [
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
+            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
+            hre.ethers.utils.formatBytes32String("acceptProject")
+          ]);
           await tx.wait();
         }
         {
