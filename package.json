@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "directories": {
+    "abi": "npx hardhat compile",
     "doc": "docs",
     "test": "tests"
   },
