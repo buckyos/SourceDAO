@@ -96,13 +96,7 @@ contract MarketingContract is
         ISourceDao sourceDao = getMainContractAddress();
         ISourceDaoCommittee committee = sourceDao.committee();
 
-        bytes32[] memory params = new bytes32[](6);
-        params[0] = bytes32(activity.budget);
-        params[1] = bytes32(activity.reward);
-        params[2] = bytes32(uint256(activity.startDate));
-        params[3] = bytes32(uint256(activity.endDate));
-        params[4] = activity.description;
-        params[5] = bytes32("createActivity");
+        bytes32[] memory params = _makeProposalParams(activity, bytes32("createActivity"));
 
         ISourceDaoCommittee.ProposalResult proposalResult = committee.takeResult(activityId, params);
         require(proposalResult == ISourceDaoCommittee.ProposalResult.Accept, "Proposal not accepted");
@@ -194,7 +188,9 @@ contract MarketingContract is
         ISourceDao sourceDao = getMainContractAddress();
         ISourceDaoCommittee committee = sourceDao.committee();
 
-        ISourceDaoCommittee.ProposalResult proposalResult = committee.takeResult(activity.proposalId, new bytes32[](0));
+        bytes32[] memory params = _makeProposalParams(activity, "evaluateActivity");
+
+        ISourceDaoCommittee.ProposalResult proposalResult = committee.takeResult(activity.proposalId, params);
         require(proposalResult == ISourceDaoCommittee.ProposalResult.Accept, "Proposal not accepted");
 
         sourceDao.token().releaseTokensToSelf(activity.reward * activity.evaluatePercent / 100);

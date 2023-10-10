@@ -174,20 +174,20 @@ contract Investment is
         uint investmentId,
         InvestmentParams memory params
     ) internal pure returns (bytes32[] memory) {
-        bytes32[] memory packParams = new bytes32[](12);
+        bytes32[] memory packParams = new bytes32[](13);
         packParams[0] = bytes32(uint(investmentId));
         packParams[1] = bytes32(uint256(params.totalTokenAmount));
         packParams[2] = bytes32(uint(params.priceType));
-        packParams[2] = bytes32(uint256(params.tokenExchangeRate));
-        packParams[3] = bytes32(uint256(params.assetExchangeRate));
-        packParams[4] = bytes32(uint256(params.startTime));
-        packParams[5] = bytes32(uint256(params.endTime));
-        packParams[6] = bytes32(uint256(params.goalAssetAmount));
-        packParams[7] = bytes32(uint256(params.minAssetPerInvestor));
-        packParams[8] = bytes32(uint256(params.maxAssetPerInvestor));
-        packParams[9] = util.AddressToBytes32(params.assetAddress);
-        packParams[10] = _boolToBytes32(params.onlyWhitelist);
-        packParams[11] = bytes32("createInvestment");
+        packParams[3] = bytes32(uint256(params.tokenExchangeRate));
+        packParams[4] = bytes32(uint256(params.assetExchangeRate));
+        packParams[5] = bytes32(uint256(params.startTime));
+        packParams[6] = bytes32(uint256(params.endTime));
+        packParams[7] = bytes32(uint256(params.goalAssetAmount));
+        packParams[8] = bytes32(uint256(params.minAssetPerInvestor));
+        packParams[9] = bytes32(uint256(params.maxAssetPerInvestor));
+        packParams[10] = util.AddressToBytes32(params.assetAddress);
+        packParams[11] = _boolToBytes32(params.onlyWhitelist);
+        packParams[12] = bytes32("createInvestment");
         return packParams;
     }
 

@@ -1,7 +1,8 @@
 import hre from "hardhat";
-import { SourceDaoCommittee, ProjectManagement, Investment, MultiSigWallet, ReentrancyGuardUpgradeable__factory } from "../typechain-types";
+import { SourceDaoCommittee, ProjectManagement, Investment, MultiSigWallet, ReentrancyGuardUpgradeable__factory, IInvestment } from "../typechain-types";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
+import { BytesLike } from "ethers";
 
 const BigNumber = hre.ethers.BigNumber;
 
@@ -11,6 +12,24 @@ let assetAddress = "0x0000000000000000000000000000000000000000";
 let testEth = false;
 
 console.log('testEth:', testEth);
+
+function packCreateInvestmentParams(info: IInvestment.InvestmentBriefStructOutput, investmentId: number): BytesLike[] {
+    return [
+        hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(investmentId), 32),
+        hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(info.params.totalTokenAmount), 32),
+        hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(info.params.priceType), 32),
+        hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(info.params.tokenExchangeRate), 32),
+        hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(info.params.assetExchangeRate), 32),
+        hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(info.params.startTime), 32),
+        hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(info.params.endTime), 32),
+        hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(info.params.goalAssetAmount), 32),
+        hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(info.params.minAssetPerInvestor), 32),
+        hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(info.params.maxAssetPerInvestor), 32),  
+        hre.ethers.utils.zeroPad(info.params.assetAddress, 32), 
+        hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(info.params.onlyWhitelist?1:0), 32),  
+        hre.ethers.utils.formatBytes32String("createInvestment")
+    ]
+}
 
 describe("Investment", () => {
     async function deployContracts() {
@@ -116,6 +135,7 @@ describe("Investment", () => {
         }
 
         {
+            let info = await investment.viewInvestment(investmentId);
             for (let signer of signers) {
                 let isMember = false;
                 for (let member of committees) {
@@ -126,7 +146,7 @@ describe("Investment", () => {
                 }
 
                 if (isMember) {
-                    let tx = await committee.connect(signer).support(proposalId);
+                    let tx = await committee.connect(signer).support(proposalId, packCreateInvestmentParams(info, investmentId));
                     await tx.wait();
                 }
             }
@@ -279,6 +299,7 @@ describe("Investment", () => {
         }
 
         {
+            let info = await investment.viewInvestment(investmentId);
             for (let signer of signers) {
                 let isMember = false;
                 for (let member of committees) {
@@ -289,7 +310,7 @@ describe("Investment", () => {
                 }
 
                 if (isMember) {
-                    let tx = await committee.connect(signer).support(proposalId);
+                    let tx = await committee.connect(signer).support(proposalId, packCreateInvestmentParams(info, investmentId));
                     await tx.wait();
                 }
             }
@@ -480,6 +501,7 @@ describe("Investment", () => {
         }
 
         {
+            let info = await investment.viewInvestment(investmentId);
             for (let signer of signers) {
                 let isMember = false;
                 for (let member of committees) {
@@ -490,7 +512,7 @@ describe("Investment", () => {
                 }
 
                 if (isMember) {
-                    let tx = await committee.connect(signer).support(proposalId);
+                    let tx = await committee.connect(signer).support(proposalId, packCreateInvestmentParams(info, investmentId));
                     await tx.wait();
                 }
             }

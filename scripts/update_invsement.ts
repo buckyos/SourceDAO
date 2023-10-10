@@ -1,6 +1,6 @@
 import { ethers, upgrades } from "hardhat";
 
-const MAIN_ADDRESS = "0xb28e23E1A949cBF716d2d412D3e841FbE03F08C8"
+const MAIN_ADDRESS = "0x235B40E7a51f58Ab4761FB046B9c283E1D500EcB"
 
 async function main() {
     const mainDao = (await ethers.getContractFactory("SourceDao")).attach(MAIN_ADDRESS);
@@ -21,8 +21,12 @@ async function main() {
 
     let signers = await ethers.getSigners();
     for (const signer of signers) {
-        console.log(`committee ${signer.address} support upgrade`);
-        await (await committee.connect(signer).support(proposalId)).wait();
+        console.log(`invsement ${signer.address} support upgrade`);
+        await (await committee.connect(signer).support(proposalId, [
+            ethers.utils.zeroPad(invsementProxyAddress, 32),
+            ethers.utils.zeroPad(implAddress, 32),
+            ethers.utils.formatBytes32String("upgradeContract")
+        ])).wait();
     }
 
     console.log('execute upgrade');

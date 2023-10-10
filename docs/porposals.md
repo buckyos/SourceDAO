@@ -65,10 +65,10 @@ tokenExchangeRate|uint
 assetExchangeRate|uint
 startTime|uint
 endTime|uint
-startTime|uint|endTime|uint
+goalAssetAmount|uint|
 minAssetPerInvestor|uint
 maxAssetPerInvestor|uint
-assetAddress|uint|
+assetAddress|address|
 onlyWhitelist|uint|
 ProposalType|bytes32|"createInvestment"
 
