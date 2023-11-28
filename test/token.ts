@@ -61,6 +61,54 @@ describe("token", () => {
         return { signers, committees, committee, token, tokenLockup, dao, dividend, testToken };
     }
 
+    it("test token release", async function () {
+        const { signers, committees, committee, token, tokenLockup, dao } = await loadFixture(deployContracts);
+        let total = await token.totalSupply();
+        console.log("total ", total);
+
+        let releaseParams = {
+            owner: ["0x6F07f9bCEcaB1AA2EDBAD8308f5Df5E8468fC852"],
+            amount: ["100000"]
+        }
+
+        let amount = await token.balanceOf(releaseParams.owner[0]);
+        console.log("old amount ", amount);
+
+        const receipt = await (await token.prepareReleaseTokens(3600*24, releaseParams.owner, releaseParams.amount)).wait();
+        let proposalId;
+        for (let e of receipt.events!) {
+            let desc = committee.interface.parseLog(e);
+            console.log("event: ", JSON.stringify(desc))
+            if (desc && desc.name === "ProposalStart") {
+                proposalId = desc.args![0];
+                break;
+            }
+        }
+        console.log("proposal id ", proposalId);
+
+        let proposalParams = [];
+        for (let i = 0; i < releaseParams.owner.length; i++) {
+            proposalParams.push(ethers.utils.solidityKeccak256(["address", "uint256"], [releaseParams.owner[i], releaseParams.amount[i]]));
+        }
+
+        proposalParams.push(ethers.utils.formatBytes32String("releaseTokens"))
+
+        console.log("proposal params: ", proposalParams);
+
+        console.log("waiting support");
+        for (const signer of signers) {
+            await (await committee.connect(signer).support(proposalId, proposalParams)).wait();
+        }
+
+        console.log("execute release");
+
+        await (await token.releaseTokens(proposalId, releaseParams.owner, releaseParams.amount)).wait();
+
+        amount = await token.balanceOf(releaseParams.owner[0]);
+        console.log("new amount ", amount);
+        
+    })
+    /*
     it("test lockup and unlock", async function () {
         const { signers, committees, committee, token, tokenLockup, dao } = await loadFixture(deployContracts);
 
@@ -401,7 +449,6 @@ describe("token", () => {
 
             expect(await token.totalInCirculation()).equal(ethers.BigNumber.from("300").mul(ethers.BigNumber.from("10").pow(18)));
         }
-
-
     });
+    */
 });

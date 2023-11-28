@@ -189,6 +189,10 @@ contract ProjectManagement is
         return project;
     }
 
+    function projectDetailOf(uint projectId) public view returns(ProjectDetail memory) {
+        return projectDetails[projectId];
+    }
+
     function contributionOf(uint projectId, address who) external view returns(uint) {
         ProjectDetail memory projectDetail = projectDetails[projectId];
         for (uint i = 0; i < projectDetail.contributions.length; i++) {
