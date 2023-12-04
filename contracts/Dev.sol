@@ -30,6 +30,10 @@ contract ProjectManagement is
     event ChangeCommittee(address oldAddress, address newAddress);
     event WithdrawContributionToken(address owner, uint amount);
 
+    function version() external pure override returns (string memory) {
+        return "1.0.1";
+    }
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();

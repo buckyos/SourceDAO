@@ -35,6 +35,10 @@ abstract contract SourceDaoContractUpgradeable is Initializable, UUPSUpgradeable
         require(getMainContractAddress().committee().verifyContractUpgrade(newImplementation), "verify proposal fail");
     }
 
+    function version() external pure virtual returns (string memory) {
+        return "1.0.0";
+    }
+
     /**
      * @dev This empty reserved space is put in place to allow future versions to add new
      * variables without shifting down storage in the inheritance chain.
