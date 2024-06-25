@@ -11,7 +11,7 @@ import "hardhat/console.sol";
 contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoContractUpgradeable {
     struct startInvestmentParam {
         address[] whitelist;
-        uint256[] firstPercent;
+        uint8[] firstPercent;
         address tokenAddress;
         uint256 tokenAmount;
         TokenRatio tokenRatio;
@@ -32,6 +32,17 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
         uint256 step2EndTime;
     }
 
+    struct InvestmentInfo {
+        address investor;
+        address tokenAddress;
+        TokenRatio tokenRatio;
+        uint256 totalAmount;
+        uint256 investedAmount;
+        uint256 daoTokenAmount;
+        uint256 step1EndTime;
+        uint256 step2EndTime;
+    }
+
     struct TokenRatio {
         uint256 tokenAmount;
         uint256 daoTokenAmount;
@@ -41,7 +52,9 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
 
     uint256 investmentCount;
 
-    event InvestmentStart(uint256 indexed investmentId, address indexed investor, address tokenAddress, uint256 tokenAmount, TokenRatio tokenRatio, uint256 step1EndTime, uint256 step2EndTime);
+    event InvestmentStart(uint256 indexed investmentId, address indexed investor, address[] whitelist, uint8[] amounts);
+    event InvestmentEnd(uint256 indexed investmentId, address indexed investor);
+    event Invest(uint256 indexed investmentId, address indexed people, uint256 daoAmount, uint256 tokenAmount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -57,6 +70,7 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
 
     function startInvestment(startInvestmentParam calldata param) public payable nonReentrant {
         require(param.whitelist.length == param.firstPercent.length, "whitelist and firstPercent length not equal");
+        require(param.tokenAddress != address(getMainContractAddress().token()), "cannot invest dao token");
         uint256 totalPercents = 0;
         for (uint i = 0; i < param.firstPercent.length; i++) {
             totalPercents += param.firstPercent[i];
@@ -81,9 +95,10 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
             investments[investmentCount].firstPercents[param.whitelist[i]] = param.firstPercent[i];
         }
 
-        emit InvestmentStart(investmentCount, msg.sender, param.tokenAddress, param.tokenAmount, param.tokenRatio, investments[investmentCount].step1EndTime, investments[investmentCount].step2EndTime);
+        emit InvestmentStart(investmentCount, msg.sender, param.whitelist, param.firstPercent);
         investmentCount++;
     }
+
     function endInventment(uint256 investmentId) public nonReentrant {
         Investment storage investment = investments[investmentId];
 
@@ -101,6 +116,8 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
         }
 
         delete investments[investmentId];
+
+        emit InvestmentEnd(investmentId, msg.sender);
     }
 
     function invest(uint256 investmentId, uint256 amount) public nonReentrant {
@@ -133,6 +150,42 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
             IERC20(investment.tokenAddress).transfer(msg.sender, tokenAmount);
         }
 
-        
+        emit Invest(investmentId, msg.sender, amount, tokenAmount);
+    }
+
+    function getInvestmentInfo(uint256 investmentId) public view returns (InvestmentInfo memory) {
+        Investment storage investment = investments[investmentId];
+        return InvestmentInfo(
+            investment.investor,
+            investment.tokenAddress,
+            investment.tokenRatio,
+            investment.totalAmount,
+            investment.investedAmount,
+            investment.daoTokenAmount,
+            investment.step1EndTime,
+            investment.step2EndTime
+        );
+    }
+
+    function isInWhiteList(uint256 investmentId, address addr) public view returns (bool) {
+        return investments[investmentId].firstPercents[addr] > 0;
+    }
+
+    function getAddressPercent(uint256 investmentId, address addr) public view returns (uint256) {
+        return investments[investmentId].firstPercents[addr];
+    }
+
+    function getAddressInvestedAmount(uint256 investmentId, address addr) public view returns (uint256) {
+        return investments[investmentId].investedAmounts[addr];
+    }
+
+    // if investment not exists or not in step1, return 0
+    function getAddressLeftAmount(uint256 investmentId, address addr) public view returns (uint256) {
+        Investment storage investment = investments[investmentId];
+        if (block.timestamp > investment.step1EndTime) {
+            return 0;
+        }
+        uint256 selfTotalAmount = investment.totalAmount * investment.firstPercents[addr] / 100;
+        return selfTotalAmount - investment.investedAmounts[addr];
     }
 }

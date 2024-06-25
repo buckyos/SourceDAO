@@ -85,6 +85,16 @@ describe("TwoStepInvestment", () => {
             step2Duration: 24*60*60,
         }, {value: 5})).to.be.revertedWith("main token not enough");
 
+        await expect(investment.startInvestment({
+            whitelist: [signers[0].address, signers[1].address],
+            firstPercent: [10, 90],
+            tokenAddress: daoToken.address,
+            tokenAmount: 10,
+            tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
+            step1Duration: 24*60*60,
+            step2Duration: 24*60*60,
+        }, {value: 5})).to.be.revertedWith("cannot invest main token");
+
         await expect(investment.invest(1, 10)).to.be.revertedWith("investment not exist");
     })
 
