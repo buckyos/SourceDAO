@@ -8,17 +8,7 @@ import "./Interface.sol";
 
 import "hardhat/console.sol";
 
-contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoContractUpgradeable {
-    struct startInvestmentParam {
-        address[] whitelist;
-        uint8[] firstPercent;
-        address tokenAddress;
-        uint256 tokenAmount;
-        TokenRatio tokenRatio;
-        uint256 step1Duration;
-        uint256 step2Duration;
-    }
-
+contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGuardUpgradeable, SourceDaoContractUpgradeable {
     struct Investment {
         address investor;
         mapping(address => uint256) firstPercents;
@@ -30,22 +20,6 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
         uint256 daoTokenAmount;
         uint256 step1EndTime;
         uint256 step2EndTime;
-    }
-
-    struct InvestmentInfo {
-        address investor;
-        address tokenAddress;
-        TokenRatio tokenRatio;
-        uint256 totalAmount;
-        uint256 investedAmount;
-        uint256 daoTokenAmount;
-        uint256 step1EndTime;
-        uint256 step2EndTime;
-    }
-
-    struct TokenRatio {
-        uint256 tokenAmount;
-        uint256 daoTokenAmount;
     }
 
     mapping (uint256 => Investment) investments;
@@ -68,7 +42,7 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
         investmentCount = 1;
     }
 
-    function startInvestment(startInvestmentParam calldata param) public payable nonReentrant {
+    function startInvestment(startInvestmentParam calldata param) external payable nonReentrant {
         require(param.whitelist.length == param.firstPercent.length, "whitelist and firstPercent length not equal");
         require(param.tokenAddress != address(getMainContractAddress().token()), "cannot invest dao token");
         uint256 totalPercents = 0;
@@ -99,7 +73,7 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
         investmentCount++;
     }
 
-    function endInventment(uint256 investmentId) public nonReentrant {
+    function endInventment(uint256 investmentId) external nonReentrant {
         Investment storage investment = investments[investmentId];
 
         require(msg.sender == investment.investor, "only investor can end investment");
@@ -120,7 +94,7 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
         emit InvestmentEnd(investmentId, msg.sender);
     }
 
-    function invest(uint256 investmentId, uint256 amount) public nonReentrant {
+    function invest(uint256 investmentId, uint256 amount) external nonReentrant {
         Investment storage investment = investments[investmentId];
         require(investment.investor != address(0), "investment not exist");
         require(investment.firstPercents[msg.sender] > 0, "not in whitelist");
@@ -153,7 +127,7 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
         emit Invest(investmentId, msg.sender, amount, tokenAmount);
     }
 
-    function getInvestmentInfo(uint256 investmentId) public view returns (InvestmentInfo memory) {
+    function getInvestmentInfo(uint256 investmentId) external view returns (InvestmentInfo memory) {
         Investment storage investment = investments[investmentId];
         return InvestmentInfo(
             investment.investor,
@@ -167,20 +141,20 @@ contract TwoStepWhitelistInvestment is ReentrancyGuardUpgradeable, SourceDaoCont
         );
     }
 
-    function isInWhiteList(uint256 investmentId, address addr) public view returns (bool) {
+    function isInWhiteList(uint256 investmentId, address addr) external view returns (bool) {
         return investments[investmentId].firstPercents[addr] > 0;
     }
 
-    function getAddressPercent(uint256 investmentId, address addr) public view returns (uint256) {
+    function getAddressPercent(uint256 investmentId, address addr) external view returns (uint256) {
         return investments[investmentId].firstPercents[addr];
     }
 
-    function getAddressInvestedAmount(uint256 investmentId, address addr) public view returns (uint256) {
+    function getAddressInvestedAmount(uint256 investmentId, address addr) external view returns (uint256) {
         return investments[investmentId].investedAmounts[addr];
     }
 
     // if investment not exists or not in step1, return 0
-    function getAddressLeftAmount(uint256 investmentId, address addr) public view returns (uint256) {
+    function getAddressLeftAmount(uint256 investmentId, address addr) external view returns (uint256) {
         Investment storage investment = investments[investmentId];
         if (block.timestamp > investment.step1EndTime) {
             return 0;

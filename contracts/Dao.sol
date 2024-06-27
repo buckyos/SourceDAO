@@ -16,6 +16,7 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
     address incomeWalletAddress;
     address tokenDividend;
     address marketingAddress;
+    address twostepInvestmentAddress;
 
     function initialize() public initializer {
         __SourceDaoContractUpgradable_init(address(0));
@@ -63,6 +64,12 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
         marketingAddress = newAddress;
     }
 
+    function setTwoStepInvestmentAddress(
+        address newAddress
+    ) external onlySetOnce(twostepInvestmentAddress) {
+        twostepInvestmentAddress = newAddress;
+    }
+
     function token() external view override returns (ISourceDAOToken) {
         return ISourceDAOToken(tokenAddress);
     }
@@ -89,6 +96,10 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
 
     function marketing() external view returns (IMarketingGroup) {
         return IMarketingGroup(payable(marketingAddress));
+    }
+
+    function twostepInvestment() external view returns (ITwoStepWhitelistInvestment) {
+        return ITwoStepWhitelistInvestment(twostepInvestmentAddress);
     }
 
     function isAuthorizedAddress(

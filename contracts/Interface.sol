@@ -1044,6 +1044,43 @@ interface ISourceDAOTokenDividend {
     ) external;
 }
 
+interface ITwoStepWhitelistInvestment {
+    struct TokenRatio {
+        uint256 tokenAmount;
+        uint256 daoTokenAmount;
+    }
+
+    struct startInvestmentParam {
+        address[] whitelist;
+        uint8[] firstPercent;
+        address tokenAddress;
+        uint256 tokenAmount;
+        TokenRatio tokenRatio;
+        uint256 step1Duration;
+        uint256 step2Duration;
+    }
+
+    struct InvestmentInfo {
+        address investor;
+        address tokenAddress;
+        TokenRatio tokenRatio;
+        uint256 totalAmount;
+        uint256 investedAmount;
+        uint256 daoTokenAmount;
+        uint256 step1EndTime;
+        uint256 step2EndTime;
+    }
+
+    function startInvestment(startInvestmentParam calldata param) external payable;
+    function endInventment(uint256 investmentId) external;
+    function invest(uint256 investmentId, uint256 amount) external;
+    function getInvestmentInfo(uint256 investmentId) external view returns (InvestmentInfo memory);
+    function isInWhiteList(uint256 investmentId, address addr) external view returns (bool);
+    function getAddressPercent(uint256 investmentId, address addr) external view returns (uint256);
+    function getAddressInvestedAmount(uint256 investmentId, address addr) external view returns (uint256);
+    function getAddressLeftAmount(uint256 investmentId, address addr) external view returns (uint256);
+}
+
 /**
  * @dev dao dev group
  */
@@ -1079,6 +1116,8 @@ interface ISourceDao {
     function assetWallet() external view returns (IMultiSigWallet);
 
     function incomeWallet() external view returns (IMultiSigWallet);
+
+    function twostepInvestment() external view returns (ITwoStepWhitelistInvestment); 
 
     function perpareSetCommitteeWallet(address walletAddress) external;
 
