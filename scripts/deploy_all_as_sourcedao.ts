@@ -1,7 +1,8 @@
 import { ethers, upgrades } from "hardhat";
-import { SourceDao, SourceDaoCommittee, SourceDaoToken, Investment, MultiSigWallet, ProjectManagement } from "../typechain-types";
+import { SourceDao, SourceDaoCommittee, SourceDaoToken, Investment, MultiSigWallet, ProjectManagement, SourceTokenLockup, DividendContract, TwoStepWhitelistInvestment } from "../typechain-types";
 
 async function main() {
+    let signers = await ethers.getSigners();
     console.log("prepareing contract...");
     const daoFactory = await ethers.getContractFactory('SourceDao')
     const committeeFactory = await ethers.getContractFactory('SourceDaoCommittee');
@@ -12,81 +13,102 @@ async function main() {
     const investmentFactory = await ethers.getContractFactory('Investment')
     const marketingFactory = await ethers.getContractFactory('MarketingContract')
     const multiWalletFactory = await ethers.getContractFactory('MultiSigWallet')
-
+    const twoStepInvestmentFactory = await ethers.getContractFactory('TwoStepWhitelistInvestment')
+    
     // Deploying the master contract
     console.log("Deploying main contract...");
     const dao = await (await upgrades.deployProxy(daoFactory, undefined, {
         initializer: 'initialize',
-        kind: "uups"
+        kind: "uups",
+        timeout: 0,
     })).deployed() as SourceDao;
 
     // Deploying committee contract
     console.log("Deploying committee contract...");
     // Preparation of initial committee members
-    const committees = ["0xF481382d745581F0129979CD6766C834c5530594", "0x6F07f9bCEcaB1AA2EDBAD8308f5Df5E8468fC852", "0xF21DF293B951207dDb773Fb0774e001fBDdB40Db"];
-    const committee = await (await upgrades.deployProxy(committeeFactory, [committees, dao.address], {
+    
+    const committee = await (await upgrades.deployProxy(committeeFactory, [[signers[0], ""], dao.address], {
         initializer: 'initialize',
-        kind: "uups"
+        kind: "uups",
+        timeout: 0
     })).deployed() as SourceDaoCommittee;
 
     // Deploying the Token contract
     console.log("Deploying token contract...");
-    const token = await (await upgrades.deployProxy(tokenFactory, ["2100000000", dao.address], {
+    const token = await (await upgrades.deployProxy(tokenFactory, [
+        ethers.utils.parseEther("10000000000"), [signers[0], ""], [ethers.utils.parseEther("10000"), ethers.utils.parseEther("10000")], dao.address
+    ], {
         initializer: 'initialize',
-        kind: "uups"
+        kind: "uups",
+        timeout: 0
     })).deployed() as SourceDaoToken;
 
     // Deploying the TokenLockup contract
     console.log("Deploying token lockup contract...");
     const tokenlockup = await (await upgrades.deployProxy(tokenlockupFactory, [dao.address], {
         initializer: 'initialize',
-        kind: "uups"
-    })).deployed() as SourceDaoToken;
+        kind: "uups",
+        timeout: 0
+    })).deployed() as SourceTokenLockup;
 
     // Deploying the TokenDividend contract
     console.log("Deploying token devidend contract...");
     const tokenDividend = await (await upgrades.deployProxy(tokenDividendFactory, [dao.address], {
         initializer: 'initialize',
-        kind: "uups"
-    })).deployed() as SourceDaoToken;
+        kind: "uups",
+        timeout: 0
+    })).deployed() as DividendContract;
 
     // Deploying the ProjectManagement contract
     console.log("Deploying project contract...");
     const project = await (await upgrades.deployProxy(projectFactory, [dao.address], {
         initializer: 'initialize',
-        kind: "uups"
+        kind: "uups",
+        timeout: 0
     })).deployed() as ProjectManagement;
 
     // Deploying the Investment contract
     console.log("Deploying investment contract...");
     const investment = await (await upgrades.deployProxy(investmentFactory, [dao.address], {
         initializer: 'initialize',
-        kind: "uups"
+        kind: "uups",
+        timeout: 0
     })).deployed() as Investment;
 
     // Deploying the Income contract
     console.log("Deploying marketing contract...");
     const marketing = await (await upgrades.deployProxy(marketingFactory, [dao.address], {
         initializer: 'initialize',
-        kind: "uups"
+        kind: "uups",
+        timeout: 0
     })).deployed() as MultiSigWallet;
 
     // Deploying the MultiSigWallet contract
     console.log("Deploying asset wallet contract...");
     const assetWallet = await (await upgrades.deployProxy(multiWalletFactory, ["asset", dao.address], {
         initializer: 'initialize',
-        kind: "uups"
+        kind: "uups",
+        timeout: 0
     })).deployed() as MultiSigWallet;
 
     // Deploying the Income contract
     console.log("Deploying asset income contract...");
     const incomeWallet = await (await upgrades.deployProxy(multiWalletFactory, ["income", dao.address], {
         initializer: 'initialize',
-        kind: "uups"
+        kind: "uups",
+        timeout: 0
     })).deployed() as MultiSigWallet;
 
-    // After all contracts are deployed, perform the following steps:
+    console.log("Deploying asset income contract...");
+    const twostep = await (await upgrades.deployProxy(twoStepInvestmentFactory, [dao.address], {
+        initializer: 'initialize',
+        kind: "uups",
+        timeout: 0
+    })).deployed() as TwoStepWhitelistInvestment;
 
+    // After all contracts are deployed, perform the following steps:
+    
+    //let dao = daoFactory.attach("0x05F2E406606f82Ec96DcE822B295278795c5053B"); 
     // Setup Committee Contract Address into Master Contract
     console.log("Set committee address to main...");
     await (await dao.setCommitteeAddress(committee.address)).wait();
@@ -101,7 +123,8 @@ async function main() {
 
     // Setup TokenLockup Contract Address into Master Contract
     console.log("Set token lockup address to main...");
-    await (await dao.setTokenLockupAddress(tokenlockup.address)).wait();
+    await (await dao.setDevAddress(project.address)).wait();
+    // {nonce: (await ethers.getSigners())[0].getTransactionCount("latest")}
 
     // Setup TokenDividend Contract Address into Master Contract
     console.log("Set token dividend address to main...");
@@ -123,6 +146,9 @@ async function main() {
     console.log("Set income address to main...");
     await (await dao.setIncomeWallet(incomeWallet.address, 0)).wait();
 
+    console.log("Set two step investment address to main...");
+    await (await dao.setTwoStepInvestmentAddress(twostep.address)).wait();
+    
     // Display all the contract addresses
     console.log("depolyed main contract address:", dao.address);
 }
