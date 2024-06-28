@@ -22,6 +22,10 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
         __SourceDaoContractUpgradable_init(address(0));
     }
 
+    function version() external pure override returns (string memory) {
+        return "1.1.0";
+    }
+
     function setTokenAddress(
         address newAddress
     ) external onlySetOnce(tokenAddress) {
