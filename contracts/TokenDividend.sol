@@ -3,14 +3,14 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
-import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./Interface.sol";
 import "./SourceDaoUpgradeable.sol";
 
 
 contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeable, ReentrancyGuardUpgradeable {
-    using SafeERC20 for IERC20Upgradeable;
+    using SafeERC20 for IERC20;
     using Address for address payable;
 
     mapping(address => uint256) public tokenBalances;
@@ -53,7 +53,7 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
         require(token != address(getMainContractAddress().token()), "Cannot deposit Source token");
         require(token != address(0), "Use native transfer to deposit ETH");
 
-        IERC20Upgradeable(token).transferFrom(msg.sender, address(this), amount);
+        IERC20(token).transferFrom(msg.sender, address(this), amount);
 
         if (!isTokenInList(token)) {
             tokens.push(token);
@@ -77,7 +77,7 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
             balance = address(this).balance;
         } else {
             // If the token address is not 0, return the ERC20 token balance of the contract
-            balance = IERC20Upgradeable(token).balanceOf(address(this));
+            balance = IERC20(token).balanceOf(address(this));
         }
 
         tokenBalances[token] = balance;
@@ -123,7 +123,7 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
                     (bool sent, ) = msg.sender.call{value: claimableAmount}("");
                     require(sent, "Failed to send Ether");
                 } else {
-                    IERC20Upgradeable(tokens[i]).transfer(msg.sender, claimableAmount);
+                    IERC20(tokens[i]).transfer(msg.sender, claimableAmount);
                 }
             }
         }

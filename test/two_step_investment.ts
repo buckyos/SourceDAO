@@ -1,7 +1,7 @@
 import {ethers, upgrades} from "hardhat";
 import { mine } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
-import { SignerWithAddress } from '@nomiclabs/hardhat-ethers/signers';
+import { HardhatEthersSigner } from '@nomicfoundation/hardhat-ethers/signers';
 import { SourceDao, SourceDaoToken, TestToken, TwoStepWhitelistInvestment } from "../typechain-types";
 
 
@@ -11,7 +11,7 @@ describe("TwoStepInvestment", () => {
     let investment: TwoStepWhitelistInvestment;
     let testToken: TestToken;
 
-    let signers: SignerWithAddress[];
+    let signers: HardhatEthersSigner[];
     
     before(async () => {
         signers = await ethers.getSigners();
@@ -20,12 +20,12 @@ describe("TwoStepInvestment", () => {
 
         // deploy dao token
         const SourceDaoToken = await ethers.getContractFactory("SourceDaoToken");
-        daoToken = (await upgrades.deployProxy(SourceDaoToken, [1000000, [signers[1].address, signers[2].address], [10000, 10000], sourceDao.address], {kind: "uups"})) as unknown as SourceDaoToken;
-        await sourceDao.setTokenAddress(daoToken.address);
+        daoToken = (await upgrades.deployProxy(SourceDaoToken, [1000000, [signers[1].address, signers[2].address], [10000, 10000], await sourceDao.getAddress()], {kind: "uups"})) as unknown as SourceDaoToken;
+        await sourceDao.setTokenAddress(await daoToken.getAddress());
 
         // depoly two step investment
         const TwoStepWhitelistInvestment = await ethers.getContractFactory("TwoStepWhitelistInvestment");
-        investment = (await upgrades.deployProxy(TwoStepWhitelistInvestment, [sourceDao.address], {kind: "uups"})) as unknown as TwoStepWhitelistInvestment;
+        investment = (await upgrades.deployProxy(TwoStepWhitelistInvestment, [await sourceDao.getAddress()], {kind: "uups"})) as unknown as TwoStepWhitelistInvestment;
 
         // depoly a test token
         const TestToken = await ethers.getContractFactory("TestToken");
@@ -38,7 +38,7 @@ describe("TwoStepInvestment", () => {
         await expect(investment.startInvestment({
             whitelist: [signers[0].address, signers[1].address],
             firstPercent: [10],
-            tokenAddress: testToken.address,
+            tokenAddress: await testToken.getAddress(),
             tokenAmount: 1000,
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
             step1Duration: 24*60*60,
@@ -48,7 +48,7 @@ describe("TwoStepInvestment", () => {
         await expect(investment.startInvestment({
             whitelist: [signers[0].address, signers[1].address],
             firstPercent: [10, 100],
-            tokenAddress: testToken.address,
+            tokenAddress: await testToken.getAddress(),
             tokenAmount: 1000,
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
             step1Duration: 24*60*60,
@@ -58,7 +58,7 @@ describe("TwoStepInvestment", () => {
         await expect(investment.startInvestment({
             whitelist: [signers[0].address, signers[1].address],
             firstPercent: [10, 90],
-            tokenAddress: testToken.address,
+            tokenAddress: await testToken.getAddress(),
             tokenAmount: 0,
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
             step1Duration: 24*60*60,
@@ -68,7 +68,7 @@ describe("TwoStepInvestment", () => {
         await expect(investment.startInvestment({
             whitelist: [signers[0].address, signers[1].address],
             firstPercent: [10, 90],
-            tokenAddress: testToken.address,
+            tokenAddress: await testToken.getAddress(),
             tokenAmount: 1000,
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 0},
             step1Duration: 24*60*60,
@@ -78,7 +78,7 @@ describe("TwoStepInvestment", () => {
         await expect(investment.startInvestment({
             whitelist: [signers[0].address, signers[1].address],
             firstPercent: [10, 90],
-            tokenAddress: ethers.constants.AddressZero,
+            tokenAddress: ethers.ZeroAddress,
             tokenAmount: 10,
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
             step1Duration: 24*60*60,
@@ -88,22 +88,22 @@ describe("TwoStepInvestment", () => {
         await expect(investment.startInvestment({
             whitelist: [signers[0].address, signers[1].address],
             firstPercent: [10, 90],
-            tokenAddress: daoToken.address,
+            tokenAddress: await daoToken.getAddress(),
             tokenAmount: 10,
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
             step1Duration: 24*60*60,
             step2Duration: 24*60*60,
-        }, {value: 5})).to.be.revertedWith("cannot invest main token");
+        }, {value: 5})).to.be.revertedWith("cannot invest dao token");
 
         await expect(investment.invest(1, 10)).to.be.revertedWith("investment not exist");
     })
 
     it("normal token investment", async() => {
-        await testToken.approve(investment.address, 500);
+        await testToken.approve(await investment.getAddress(), 500);
         let createTx = await investment.startInvestment({
             whitelist: [signers[1].address, signers[2].address],
             firstPercent: [40, 60],
-            tokenAddress: testToken.address,
+            tokenAddress: await testToken.getAddress(),
             tokenAmount: 500,
             tokenRatio: {tokenAmount: 5, daoTokenAmount: 1},
             step1Duration: 24*60*60,
@@ -116,8 +116,8 @@ describe("TwoStepInvestment", () => {
         // step 1 invest
         // signer 1 max invest 40，get 200
         // signer 2 max invest 60, get 300
-        await daoToken.connect(signers[1]).approve(investment.address, 40);
-        await daoToken.connect(signers[2]).approve(investment.address, 80);
+        await daoToken.connect(signers[1]).approve(await investment.getAddress(), 40);
+        await daoToken.connect(signers[2]).approve(await investment.getAddress(), 80);
         console.log("signers 1 invest 20")
         let invest1Tx = await investment.connect(signers[1]).invest(1, 20);
         await expect(invest1Tx).to.be.changeTokenBalance(daoToken, signers[1], -20);
@@ -158,7 +158,7 @@ describe("TwoStepInvestment", () => {
         let createTx = await investment.startInvestment({
             whitelist: [signers[1].address, signers[2].address],
             firstPercent: [40, 60],
-            tokenAddress: ethers.constants.AddressZero,
+            tokenAddress: ethers.ZeroAddress,
             tokenAmount: 20,
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 5},
             step1Duration: 24*60*60,
@@ -171,8 +171,8 @@ describe("TwoStepInvestment", () => {
         // step 1 invest
         // signer 1 max invest 40, get 8
         // signer 2 max invest 60, get 12
-        await daoToken.connect(signers[1]).approve(investment.address, 40);
-        await daoToken.connect(signers[2]).approve(investment.address, 80);
+        await daoToken.connect(signers[1]).approve(await investment.getAddress(), 40);
+        await daoToken.connect(signers[2]).approve(await investment.getAddress(), 80);
         console.log("signers 1 invest 20")
         let invest1Tx = await investment.connect(signers[1]).invest(2, 20);
         await expect(invest1Tx).to.be.changeTokenBalance(daoToken, signers[1], -20);

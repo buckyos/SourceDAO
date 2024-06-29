@@ -3,7 +3,7 @@ pragma solidity ^0.8.9;
 
 import "./SourceDaoUpgradeable.sol";
 import "./Interface.sol";
-import {MerkleProofUpgradeable as MerkleProof} from "@openzeppelin/contracts-upgradeable/utils/cryptography/MerkleProofUpgradeable.sol";
+import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import "hardhat/console.sol";
 import "./util.sol";

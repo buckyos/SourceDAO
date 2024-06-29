@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.0 <0.9.0;
 
-import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./Interface.sol";
 import "./SourceDaoUpgradeable.sol";
 import "./util.sol";
@@ -71,7 +71,7 @@ contract MultiSigWallet is IMultiSigWallet, SourceDaoContractUpgradeable, Reentr
             (bool sent, ) = to.call{value: amount}("");
             require(sent, "Failed to send Ether");
         } else {
-            IERC20Upgradeable(token).transfer(to, amount);
+            IERC20(token).transfer(to, amount);
         }
 
         emit TransferExecuted(proposalId, token, to, amount);
@@ -83,14 +83,14 @@ contract MultiSigWallet is IMultiSigWallet, SourceDaoContractUpgradeable, Reentr
             return address(this).balance;
         } else {
             // If the token address is not 0, return the ERC20 token balance of the contract
-            return IERC20Upgradeable(token).balanceOf(address(this));
+            return IERC20(token).balanceOf(address(this));
         }
     }
 
     function updateTokenList(address token) public override {
         require(token != address(0), "token address can not be 0");
 
-        uint256 balance = IERC20Upgradeable(token).balanceOf(address(this));
+        uint256 balance = IERC20(token).balanceOf(address(this));
 
         if (balance > 0 && !isTokenInList(token)) {
             tokenList.push(token);

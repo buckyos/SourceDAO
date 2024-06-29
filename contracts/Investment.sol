@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./SourceDaoUpgradeable.sol";
 import "./Interface.sol";
 import "./util.sol";
@@ -296,7 +296,7 @@ contract Investment is
             //(bool result, ) = address(this).call{value: assetAmount}("");
             //require(result, "Failed to invest");
         } else {
-            IERC20Upgradeable(params.assetAddress).transferFrom(
+            IERC20(params.assetAddress).transferFrom(
                 msg.sender,
                 address(this),
                 assetAmount
@@ -392,7 +392,7 @@ contract Investment is
             (bool success, ) = msg.sender.call{value: assetInvested}("");
             require(success, "Failed to withdraw");
         } else {
-            bool result = IERC20Upgradeable(assetAddress).transfer(
+            bool result = IERC20(assetAddress).transfer(
                 msg.sender,
                 assetInvested
             );
@@ -742,7 +742,7 @@ contract Investment is
             (bool success, ) = to.call{value: raisedAssetAmount}("");
             require(success, "Failed to withdraw");
         } else {
-            bool result = IERC20Upgradeable(investment.params.assetAddress)
+            bool result = IERC20(investment.params.assetAddress)
                 .transfer(to, raisedAssetAmount);
             require(result, "Failed to withdraw");
         }

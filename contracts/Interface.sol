@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.9;
-import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title ISourceDAOToken interface
  * @dev Describes the public methods available for the SourceDAOToken
  */
-interface ISourceDAOToken is IERC20Upgradeable {
+interface ISourceDAOToken is IERC20 {
     /**
      * @dev Create proposal for release tokens to an array of addresses (owners).
      * This function can only be called by the committee after the proposal passed.
