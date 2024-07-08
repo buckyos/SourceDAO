@@ -10,6 +10,7 @@ import "hardhat/console.sol";
 
 contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGuardUpgradeable, SourceDaoContractUpgradeable {
     struct Investment {
+        bool canEndEarly;
         address investor;
         mapping(address => uint256) firstPercents;
         mapping(address => uint256) investedAmounts;
@@ -65,6 +66,7 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
         investments[investmentCount].totalAmount = param.tokenAmount;
         investments[investmentCount].step1EndTime = block.timestamp + param.step1Duration;
         investments[investmentCount].step2EndTime = block.timestamp + param.step1Duration + param.step2Duration;
+        investments[investmentCount].canEndEarly = param.canEndEarly;
         for (uint i = 0; i < param.whitelist.length; i++) {
             investments[investmentCount].firstPercents[param.whitelist[i]] = param.firstPercent[i];
         }
@@ -77,7 +79,10 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
         Investment storage investment = investments[investmentId];
 
         require(msg.sender == investment.investor, "only investor can end investment");
-        require(investment.step2EndTime < block.timestamp, "investment not end");
+        if (!investment.canEndEarly && block.timestamp < investment.step2EndTime) {
+            // if all token sold out but not pass step2EndTime, end investment
+            require(investment.investedAmount == 0 || investment.totalAmount == investment.investedAmount, "not all token sold out");
+        }
 
         getMainContractAddress().token().transfer(investment.investor, investment.daoTokenAmount);
         uint256 remainAmount = investment.totalAmount - investment.investedAmount;

@@ -43,6 +43,7 @@ describe("TwoStepInvestment", () => {
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
             step1Duration: 24*60*60,
             step2Duration: 24*60*60,
+            canEndEarly: false,
         })).to.be.revertedWith("whitelist and firstPercent length not equal");
 
         await expect(investment.startInvestment({
@@ -53,6 +54,7 @@ describe("TwoStepInvestment", () => {
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
             step1Duration: 24*60*60,
             step2Duration: 24*60*60,
+            canEndEarly: false,
         })).to.be.revertedWith("total percents over 100");
 
         await expect(investment.startInvestment({
@@ -63,6 +65,7 @@ describe("TwoStepInvestment", () => {
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
             step1Duration: 24*60*60,
             step2Duration: 24*60*60,
+            canEndEarly: false,
         })).to.be.revertedWith("invalid tokenAmount");
 
         await expect(investment.startInvestment({
@@ -73,6 +76,7 @@ describe("TwoStepInvestment", () => {
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 0},
             step1Duration: 24*60*60,
             step2Duration: 24*60*60,
+            canEndEarly: false,
         })).to.be.revertedWith("invalid tokenRatio");
 
         await expect(investment.startInvestment({
@@ -83,6 +87,7 @@ describe("TwoStepInvestment", () => {
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
             step1Duration: 24*60*60,
             step2Duration: 24*60*60,
+            canEndEarly: false,
         }, {value: 5})).to.be.revertedWith("main token not enough");
 
         await expect(investment.startInvestment({
@@ -93,6 +98,7 @@ describe("TwoStepInvestment", () => {
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
             step1Duration: 24*60*60,
             step2Duration: 24*60*60,
+            canEndEarly: false,
         }, {value: 5})).to.be.revertedWith("cannot invest dao token");
 
         await expect(investment.invest(1, 10)).to.be.revertedWith("investment not exist");
@@ -108,6 +114,7 @@ describe("TwoStepInvestment", () => {
             tokenRatio: {tokenAmount: 5, daoTokenAmount: 1},
             step1Duration: 24*60*60,
             step2Duration: 24*60*60,
+            canEndEarly: false,
         });
 
         await expect(createTx).to.be.emit(investment, "InvestmentStart");
@@ -125,7 +132,7 @@ describe("TwoStepInvestment", () => {
 
         await expect(investment.connect(signers[1]).invest(1, 30)).to.be.revertedWith("over limit");
         await expect(investment.connect(signers[3]).invest(1, 30)).to.be.revertedWith("not in whitelist");
-        await expect(investment.connect(signers[0]).endInventment(1)).to.be.revertedWith("investment not end");
+        await expect(investment.connect(signers[0]).endInventment(1)).to.be.revertedWith("not all token sold out");
 
         console.log("signers 2 invest 60")
         let invest2Tx = await investment.connect(signers[2]).invest(1, 60);
@@ -141,7 +148,7 @@ describe("TwoStepInvestment", () => {
         let invest3Tx = await investment.connect(signers[2]).invest(1, 10);
         await expect(invest3Tx).to.be.changeTokenBalance(daoToken, signers[2], -10);
         await expect(invest3Tx).to.changeTokenBalance(testToken, signers[2], 50);
-        await expect(investment.connect(signers[0]).endInventment(1)).to.be.revertedWith("investment not end");
+        await expect(investment.connect(signers[0]).endInventment(1)).to.be.revertedWith("not all token sold out");
 
         // end invest
         mine(2, {interval: 24*60*60});
@@ -163,6 +170,7 @@ describe("TwoStepInvestment", () => {
             tokenRatio: {tokenAmount: 1, daoTokenAmount: 5},
             step1Duration: 24*60*60,
             step2Duration: 24*60*60,
+            canEndEarly: false,
         }, {value: 20});
 
         await expect(createTx).to.be.emit(investment, "InvestmentStart");
@@ -180,7 +188,7 @@ describe("TwoStepInvestment", () => {
 
         await expect(investment.connect(signers[1]).invest(2, 30)).to.be.revertedWith("over limit");
         await expect(investment.connect(signers[3]).invest(2, 30)).to.be.revertedWith("not in whitelist");
-        await expect(investment.connect(signers[0]).endInventment(2)).to.be.revertedWith("investment not end");
+        await expect(investment.connect(signers[0]).endInventment(2)).to.be.revertedWith("not all token sold out");
 
         console.log("signers 2 invest 60")
         let invest2Tx = await investment.connect(signers[2]).invest(2, 60);
@@ -197,7 +205,7 @@ describe("TwoStepInvestment", () => {
         let invest3Tx = await investment.connect(signers[2]).invest(2, 10);
         await expect(invest3Tx).to.be.changeTokenBalance(daoToken, signers[2], -10);
         await expect(invest3Tx).to.changeEtherBalance(signers[2], 2);
-        await expect(investment.connect(signers[0]).endInventment(2)).to.be.revertedWith("investment not end");
+        await expect(investment.connect(signers[0]).endInventment(2)).to.be.revertedWith("not all token sold out");
 
         // end invest
         mine(2, {interval: 24*60*60});
@@ -208,5 +216,49 @@ describe("TwoStepInvestment", () => {
         await expect(investEndTx).to.changeTokenBalance(daoToken, signers[0], 90);
 
         await expect(investment.connect(signers[1]).invest(2, 10)).to.be.revertedWith("investment not exist");
+    })
+
+    it("test end", async () => {
+        await testToken.approve(await investment.getAddress(), 200);
+        let createTx = await investment.startInvestment({
+            whitelist: [signers[1].address, signers[2].address],
+            firstPercent: [40, 60],
+            tokenAddress: await testToken.getAddress(),
+            tokenAmount: 100,
+            tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
+            step1Duration: 24*60*60,
+            step2Duration: 24*60*60,
+            canEndEarly: false,
+        });
+
+        await expect(createTx).to.be.emit(investment, "InvestmentStart");
+        await expect(createTx).to.changeTokenBalance(testToken, signers[0], -100);
+
+        await daoToken.connect(signers[1]).approve(await investment.getAddress(), 100);
+        await daoToken.connect(signers[2]).approve(await investment.getAddress(), 200);
+
+        await (await investment.connect(signers[1]).invest(3, 40)).wait();
+        await (await investment.connect(signers[2]).invest(3, 60)).wait();
+
+        let endTx = await investment.endInventment(3);
+
+        await expect(endTx).to.be.changeTokenBalance(daoToken, signers[0], 100);
+
+        await (await investment.startInvestment({
+            whitelist: [signers[1].address, signers[2].address],
+            firstPercent: [40, 60],
+            tokenAddress: await testToken.getAddress(),
+            tokenAmount: 100,
+            tokenRatio: {tokenAmount: 1, daoTokenAmount: 1},
+            step1Duration: 24*60*60,
+            step2Duration: 24*60*60,
+            canEndEarly: true,
+        })).wait();
+
+        await (await investment.connect(signers[1]).invest(4, 40)).wait();
+        let endTx2 = await investment.endInventment(4);
+
+        await expect(endTx2).to.be.changeTokenBalance(daoToken, signers[0], 40);
+        await expect(endTx2).to.be.changeTokenBalance(testToken, signers[0], 60);
     })
 });

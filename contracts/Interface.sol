@@ -1058,6 +1058,7 @@ interface ITwoStepWhitelistInvestment {
         TokenRatio tokenRatio;
         uint256 step1Duration;
         uint256 step2Duration;
+        bool canEndEarly;
     }
 
     struct InvestmentInfo {
