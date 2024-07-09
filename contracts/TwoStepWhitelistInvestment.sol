@@ -142,7 +142,8 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
             investment.investedAmount,
             investment.daoTokenAmount,
             investment.step1EndTime,
-            investment.step2EndTime
+            investment.step2EndTime,
+            investment.canEndEarly
         );
     }
 

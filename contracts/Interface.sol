@@ -1070,6 +1070,7 @@ interface ITwoStepWhitelistInvestment {
         uint256 daoTokenAmount;
         uint256 step1EndTime;
         uint256 step2EndTime;
+        bool canEndEarly;
     }
 
     function startInvestment(startInvestmentParam calldata param) external payable;
