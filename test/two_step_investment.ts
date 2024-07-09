@@ -158,7 +158,7 @@ describe("TwoStepInvestment", () => {
         await expect(investEndTx).to.be.changeTokenBalance(testToken, signers[0], 50);
         await expect(investEndTx).to.changeTokenBalance(daoToken, signers[0], 90);
 
-        await expect(investment.connect(signers[1]).invest(1, 10)).to.be.revertedWith("investment not exist");
+        await expect(investment.connect(signers[1]).invest(1, 10)).to.be.revertedWith("investment end");
     })
 
     it("eth token investment", async() => {
@@ -215,7 +215,7 @@ describe("TwoStepInvestment", () => {
         await expect(investEndTx).to.be.changeEtherBalance(signers[0], 2);
         await expect(investEndTx).to.changeTokenBalance(daoToken, signers[0], 90);
 
-        await expect(investment.connect(signers[1]).invest(2, 10)).to.be.revertedWith("investment not exist");
+        await expect(investment.connect(signers[1]).invest(2, 10)).to.be.revertedWith("investment end");
     })
 
     it("test end", async () => {

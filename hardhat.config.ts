@@ -1,6 +1,7 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import 'hardhat-abi-exporter';
+import "hardhat-gas-reporter";
 import '@openzeppelin/hardhat-upgrades';
 
 const config: HardhatUserConfig = {
@@ -17,9 +18,15 @@ const config: HardhatUserConfig = {
         runOnCompile: true,
         clear: true,
     },
+    gasReporter: {
+        enabled: false,
+    },
     networks: {
         
     },
+    mocha: {
+        bail: true,
+    }
 };
 
 export default config;

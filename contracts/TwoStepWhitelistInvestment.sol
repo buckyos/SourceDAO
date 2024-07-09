@@ -11,6 +11,7 @@ import "hardhat/console.sol";
 contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGuardUpgradeable, SourceDaoContractUpgradeable {
     struct Investment {
         bool canEndEarly;
+        bool end;
         address investor;
         mapping(address => uint256) firstPercents;
         mapping(address => uint256) investedAmounts;
@@ -94,7 +95,8 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
             }
         }
 
-        delete investments[investmentId];
+        //delete investments[investmentId];
+        investment.end = true;
 
         emit InvestmentEnd(investmentId, msg.sender);
     }
@@ -103,19 +105,19 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
         Investment storage investment = investments[investmentId];
         require(investment.investor != address(0), "investment not exist");
         require(investment.firstPercents[msg.sender] > 0, "not in whitelist");
+        require(investment.end == false, "investment end");
+        require(block.timestamp <= investment.step2EndTime, "investment end");
 
         uint256 tokenAmount = amount * investment.tokenRatio.tokenAmount / investment.tokenRatio.daoTokenAmount;
         require(tokenAmount > 0, "invalid amount");
         require(investment.totalAmount - investment.investedAmount >= tokenAmount, "not enough token");
 
-        if (block.timestamp > investment.step2EndTime) {
-            revert("investment end");
-        }
-
         if (block.timestamp < investment.step1EndTime) {
+            // still in step 1, check limit first.
             uint256 limit = investment.totalAmount * investment.firstPercents[msg.sender] / 100;
             require(limit - investment.investedAmounts[msg.sender] >= tokenAmount, "over limit");
         }
+        // in step 2, only need to check enough token
 
         getMainContractAddress().token().transferFrom(msg.sender, address(this), amount);
 
