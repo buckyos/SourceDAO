@@ -1071,6 +1071,7 @@ interface ITwoStepWhitelistInvestment {
         uint256 step1EndTime;
         uint256 step2EndTime;
         bool canEndEarly;
+        bool end;
     }
 
     function startInvestment(startInvestmentParam calldata param) external payable;
