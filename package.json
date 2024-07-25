@@ -37,6 +37,8 @@
     "@types/mocha": "^10.0.7",
     "chai": "^4.4.1",
     "ethers": "^6.13.1",
+    "@types/deep-equal-in-any-order": "^1.0.3",
+    "deep-equal-in-any-order": "^2.0.6",
     "hardhat": "^2.22.5",
     "hardhat-abi-exporter": "^2.10.1",
     "hardhat-gas-reporter": "^2.2.0",
@@ -44,5 +46,8 @@
     "ts-node": "^10.9.2",
     "typechain": "^8.3.2",
     "typescript": "^5.5.2"
+  },
+  "overrides": {
+    "hardhat-gas-reporter": "^2.2.0"
   }
 }

@@ -22,7 +22,6 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
 
     uint curProposalId;
     address[] committees;
-    mapping(address => bool) isCommitteeMember;
 
     mapping(uint => Proposal) _proposals;
     mapping(uint => PorposalExtra) _extras;
@@ -35,22 +34,24 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         _disableInitializers();
     }
 
+    function version() external pure virtual override returns (string memory) {
+        return "1.1.0";
+    }
+
     function initialize(address[] memory initialCommittees, address mainAddr) public initializer {
         __SourceDaoContractUpgradable_init(mainAddr);
 
         curProposalId = 1;
+
         committees = initialCommittees;
-        for (uint i = 0; i < committees.length; i++) {
-            isCommitteeMember[committees[i]] = true;
-            emit MemberAdded(committees[i]);
-        }
+        emit MemberChanged(new address[](0), initialCommittees);
     }
 
-    function isMember(address someOne) external view override returns (bool) {
-        return isCommitteeMember[someOne];
+    function isMember(address someOne) public view override returns (bool) {
+        return util.isExist(committees, someOne);
     }
 
-    function members() external view override returns (address[] memory) {
+    function members() public view override returns (address[] memory) {
         return committees;
     }
 
@@ -287,17 +288,14 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     }
 
     function perpareAddMember(address member) external returns (uint) {
-        require(isCommitteeMember[msg.sender], "only committee can add member");
+        require(isMember(msg.sender), "only committee can add member");
         bytes32[] memory params = _perpareParams(member, true);
 
         return _propose(address(this), 7 days, params, false);
     }
 
     function perpareRemoveMember(address member) external returns (uint) {
-        require(
-            isCommitteeMember[msg.sender],
-            "only committee can remove member"
-        );
+        require(isMember(msg.sender), "only committee can remove member");
         bytes32[] memory params = _perpareParams(member, false);
 
         return _propose(address(this), 7 days, params, false);
@@ -313,12 +311,11 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
 
         // Check if member are already on the committee
         require(
-            !isCommitteeMember[member],
+            !isMember(member),
             "The member is already in the committee."
         );
 
         committees.push(member);
-        isCommitteeMember[member] = true;
 
         _setProposalExecuted(proposalId, true);
 
@@ -332,18 +329,11 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             "proposal not accepted"
         );
 
-        // Check if member are already on the committee
-        require(
-            isCommitteeMember[member],
-            "The member is not in the committee."
-        );
-
         // Find and delete member
         for (uint i = 0; i < committees.length; i++) {
             if (committees[i] == member) {
                 committees[i] = committees[committees.length - 1];
                 committees.pop();
-                isCommitteeMember[member] = false;
                 break;
             }
         }
@@ -352,12 +342,46 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         emit MemberRemoved(member);
     }
 
+    function _prepareSetComitteesParam(address[] calldata newCommittees) pure internal returns(bytes32[] memory) {
+        bytes32[] memory params = new bytes32[](newCommittees.length + 1);
+        for (uint i = 0; i < newCommittees.length; i++) {
+            params[i] = bytes32(uint256(uint160(newCommittees[i])));
+        }
+        params[newCommittees.length] = bytes32("setCommittees");
+        return params;
+    }
+
+    function prepareSetCommittees(address[] calldata newCommittees) public returns (uint) {
+        require(
+            isMember(msg.sender),
+            "only committee can set member"
+        );
+
+        bytes32[] memory params = _prepareSetComitteesParam(newCommittees);
+
+        return _propose(address(this), 7 days, params, false);
+    }
+
+    function setCommittees(address[] calldata newCommittees, uint256 proposalId) public {
+        bytes32[] memory params = _prepareSetComitteesParam(newCommittees);
+        require(
+            _takeResult(proposalId, params) == ProposalResult.Accept,
+            "proposal not accepted"
+        );
+
+        emit MemberChanged(committees, newCommittees);
+
+        committees = newCommittees;
+
+        _setProposalExecuted(proposalId, true);
+    }
+
     function perpareContractUpgrade(
         address proxyContractAddress,
         address newImplementAddress
     ) external override returns (uint) {
         require(
-            isCommitteeMember[msg.sender],
+            isMember(msg.sender),
             "only committee can upgrade contract"
         );
 
@@ -408,7 +432,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     }
 
     function cancelContractUpgrade(address proxyContractAddress) external override {
-        require(isCommitteeMember[msg.sender], "only committee can cancel upgrade");
+        require(isMember(msg.sender), "only committee can cancel upgrade");
         uint id = contractUpgradeProposals[proxyContractAddress];
 
         require(id != 0, "not found upgrade proposal");

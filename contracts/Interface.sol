@@ -156,6 +156,7 @@ interface ISourceDaoCommittee {
 
     event MemberAdded(address indexed member);
     event MemberRemoved(address indexed member);
+    event MemberChanged(address[] oldMembers, address[] newMembers);
 
     event ProposalVoted(
         address indexed user,
