@@ -232,6 +232,9 @@ interface ISourceDaoCommittee {
 
     function removeCommitteeMember(address member, uint proposalId) external;
 
+    function prepareSetCommittees(address[] calldata newCommittees) external returns (uint);
+    function setCommittees(address[] calldata newCommittees, uint256 proposalId) external;
+
     function perpareContractUpgrade(
         address proxyContractAddress,
         address newImplementAddress
@@ -1053,7 +1056,7 @@ interface ITwoStepWhitelistInvestment {
 
     struct startInvestmentParam {
         address[] whitelist;
-        uint8[] firstPercent;
+        uint16[] firstPercent;
         address tokenAddress;
         uint256 tokenAmount;
         TokenRatio tokenRatio;

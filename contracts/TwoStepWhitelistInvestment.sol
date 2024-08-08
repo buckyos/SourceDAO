@@ -28,7 +28,7 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
 
     uint256 investmentCount;
 
-    event InvestmentStart(uint256 indexed investmentId, address indexed investor, address[] whitelist, uint8[] amounts);
+    event InvestmentStart(uint256 indexed investmentId, address indexed investor, address[] whitelist, uint16[] amounts);
     event InvestmentEnd(uint256 indexed investmentId, address indexed investor);
     event Invest(uint256 indexed investmentId, address indexed people, uint256 daoAmount, uint256 tokenAmount);
 
@@ -51,7 +51,7 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
         for (uint i = 0; i < param.firstPercent.length; i++) {
             totalPercents += param.firstPercent[i];
         }
-        require(totalPercents <= 100, "total percents over 100");
+        require(totalPercents <= 10000, "total percents over 100");
         require(param.tokenAmount > 0, "invalid tokenAmount");
         require(param.tokenRatio.tokenAmount > 0 && param.tokenRatio.daoTokenAmount > 0, "invalid tokenRatio");
 
@@ -114,7 +114,7 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
 
         if (block.timestamp < investment.step1EndTime) {
             // still in step 1, check limit first.
-            uint256 limit = investment.totalAmount * investment.firstPercents[msg.sender] / 100;
+            uint256 limit = investment.totalAmount * investment.firstPercents[msg.sender] / 10000;
             require(limit - investment.investedAmounts[msg.sender] >= tokenAmount, "over limit");
         }
         // in step 2, only need to check enough token
@@ -168,7 +168,7 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
         if (block.timestamp > investment.step1EndTime) {
             return 0;
         }
-        uint256 selfTotalAmount = investment.totalAmount * investment.firstPercents[addr] / 100;
+        uint256 selfTotalAmount = investment.totalAmount * investment.firstPercents[addr] / 10000;
         return selfTotalAmount - investment.investedAmounts[addr];
     }
 }

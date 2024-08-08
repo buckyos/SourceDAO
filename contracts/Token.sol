@@ -17,8 +17,8 @@ contract SourceDaoToken is ERC20BurnableUpgradeable, ISourceDAOToken, Reentrancy
         _disableInitializers();
     }
 
-    function initialize(uint256 __totalSupply, address[]calldata initAddress, uint256[] calldata initAmount, address mainAddr) public initializer {
-        __ERC20_init("SourceDAOToken", "CDT");
+    function initialize(string memory name, string memory symbol, uint256 __totalSupply, address[]calldata initAddress, uint256[] calldata initAmount, address mainAddr) public initializer {
+        __ERC20_init(name, symbol);
         __ERC20Burnable_init();
         __ReentrancyGuard_init();
         __SourceDaoContractUpgradable_init(mainAddr);

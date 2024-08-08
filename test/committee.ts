@@ -1,5 +1,5 @@
 import { ethers, upgrades } from "hardhat";
-import { SourceDaoCommittee } from "../typechain-types";
+import { SourceDao, SourceDaoCommittee } from "../typechain-types";
 import { mine } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
 import { normalizeToBigInt } from "hardhat/common";
@@ -23,10 +23,23 @@ describe("Committee", () => {
             committeeSigners.push(signers[i]);
         }
 
+        const daoFactory = await ethers.getContractFactory('SourceDao')
+        const sourceDao = await (await upgrades.deployProxy(daoFactory, undefined, {
+            initializer: 'initialize',
+            kind: "uups"
+        })).waitForDeployment() as unknown as SourceDao;
+        let daoAddr = await sourceDao.getAddress();
+
         committee = (await upgrades.deployProxy(
             await ethers.getContractFactory("SourceDaoCommittee"),
-            [committeeAddrs, ethers.ZeroAddress],
+            [committeeAddrs, daoAddr],
             { kind: "uups" })) as unknown as SourceDaoCommittee;
+        await(await sourceDao.setCommitteeAddress(await committee.getAddress())).wait();
+        console.log("sourceDao address: ", daoAddr);
+        for (let index = 1; index < 8; index++) {
+            console.log(`signer${index} address: ${signers[index].address}`);
+            
+        }
     })
 
     it("member check", async () => {
