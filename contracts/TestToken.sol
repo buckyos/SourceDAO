@@ -7,4 +7,8 @@ contract TestToken is ERC20 {
     constructor(uint256 _totalSupply) ERC20("TestToken", "TT"){
         _mint(msg.sender, _totalSupply);
     }
+
+    function decimals() public view override returns (uint8) {
+        return 6;
+    }
 }

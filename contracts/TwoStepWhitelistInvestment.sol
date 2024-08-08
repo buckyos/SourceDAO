@@ -2,6 +2,7 @@
 pragma solidity ^0.8.18;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./SourceDaoUpgradeable.sol";
 import "./Interface.sol";
@@ -58,6 +59,9 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
         if (param.tokenAddress == address(0)) {
             require(param.tokenAmount == msg.value, "main token not enough");
         } else {
+            uint8 tokenDecimals = IERC20Metadata(param.tokenAddress).decimals();
+            uint8 daoTokenDecimals = getMainContractAddress().token().decimals();
+            require(daoTokenDecimals >= tokenDecimals, "not support token decimals > 18");
             IERC20(param.tokenAddress).transferFrom(msg.sender, address(this), param.tokenAmount);
         }
         
@@ -108,7 +112,20 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
         require(investment.end == false, "investment end");
         require(block.timestamp <= investment.step2EndTime, "investment end");
 
+        
+
+        
+
         uint256 tokenAmount = amount * investment.tokenRatio.tokenAmount / investment.tokenRatio.daoTokenAmount;
+
+        if (investment.tokenAddress != address(0)) {
+            uint8 tokenDecimals = IERC20Metadata(investment.tokenAddress).decimals();
+            uint8 daoTokenDecimals = getMainContractAddress().token().decimals();
+
+            uint8 deltaDecimals = daoTokenDecimals - tokenDecimals;
+            tokenAmount /= 10 ** deltaDecimals;
+        }
+        console.log("token amount %d, total amount %d", tokenAmount, investment.totalAmount);
         require(tokenAmount > 0, "invalid amount");
         require(investment.totalAmount - investment.investedAmount >= tokenAmount, "not enough token");
 
