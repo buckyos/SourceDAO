@@ -1,5 +1,8 @@
 import { ethers, upgrades } from "hardhat";
-import { SourceDao, SourceDaoCommittee, SourceDaoToken, Investment, MultiSigWallet, ProjectManagement, SourceTokenLockup, DividendContract, TwoStepWhitelistInvestment, MarketingContract } from "../typechain-types";
+
+// Polygon amoy main contract: 0x785423901a501bcef29ab2a8cafa25d5a8c027d3
+
+// Polygon main contract: 0xb91d38d7fAc9618A5480309b8b4b5d675D5Ae472
 
 async function main() {
     let signers = await ethers.getSigners();
@@ -17,24 +20,30 @@ async function main() {
 
     // Deploying the master contract
     console.log("Deploying main contract...");
-    //let dao = daoFactory.attach("0x05F2E406606f82Ec96DcE822B295278795c5053B"); 
+    //let dao = daoFactory.attach("0xb91d38d7fAc9618A5480309b8b4b5d675D5Ae472") as unknown as SourceDao;
+    
     const dao = await (await upgrades.deployProxy(daoFactory, undefined, {
         initializer: 'initialize',
         kind: "uups",
         timeout: 0,
     })).waitForDeployment();
-
+    
     // Display all the contract addresses
     console.log("depolyed main contract address:", await dao.getAddress());
 
     // {nonce: (await ethers.getSigners())[0].getTransactionCount("latest")}
+    const initCommittee = [
+        "0xad82A5fb394a525835A3a6DC34C1843e19160CFA",
+        "0x2514d2FEAAC3bFD8361333d1341dC8823595f744",
+        "0x2DFD1FCFC9601E7De871b0BbcBCbB6Cad6901697"
+    ]
 
     if (await dao.committee() == ethers.ZeroAddress) {
         // Deploying committee contract
         console.log("Deploying committee contract...");
         // Preparation of initial committee members
 
-        const committee = await (await upgrades.deployProxy(committeeFactory, [[signers[0].address, ""], await dao.getAddress()], {
+        const committee = await (await upgrades.deployProxy(committeeFactory, [initCommittee, await dao.getAddress()], {
             initializer: 'initialize',
             kind: "uups",
             timeout: 0
@@ -45,11 +54,18 @@ async function main() {
         await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
     }
 
+    const initToken = {
+        addresses: [
+        ],
+        tokenAmounts: [
+        ],
+    }
+
     if (await dao.token() == ethers.ZeroAddress) {
         // Deploying the Token contract
         console.log("Deploying token contract...");
-        const token = await (await upgrades.deployProxy(tokenFactory, [
-            ethers.parseEther("10000000000"), [signers[0].address, ""], [ethers.parseEther("10000"), ethers.parseEther("10000")], await dao.getAddress()
+        const token = await (await upgrades.deployProxy(tokenFactory, ["BuckyOS DAO Token", "BDT",
+            ethers.parseEther("2100000000"), initToken.addresses, initToken.tokenAmounts, await dao.getAddress()
         ], {
             initializer: 'initialize',
             kind: "uups",
@@ -173,7 +189,7 @@ async function main() {
     }
     // After all contracts are deployed, perform the following steps:
     // Display all the contract addresses
-    console.log("depolyed main contract address:", await dao.getAddress());
+    console.log("depolyed finish.");
 }
 
 // We recommend this pattern to be able to use async/await everywhere

@@ -112,10 +112,6 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
         require(investment.end == false, "investment end");
         require(block.timestamp <= investment.step2EndTime, "investment end");
 
-        
-
-        
-
         uint256 tokenAmount = amount * investment.tokenRatio.tokenAmount / investment.tokenRatio.daoTokenAmount;
 
         if (investment.tokenAddress != address(0)) {
