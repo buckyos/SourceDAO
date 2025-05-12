@@ -38,11 +38,11 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
         _disableInitializers();
     }
 
-    function initialize(address _mainContractAddress) public initializer {
+    function initialize(uint initInvestmentCount, address _mainContractAddress) public initializer {
         __SourceDaoContractUpgradable_init(_mainContractAddress);
         __ReentrancyGuard_init();
 
-        investmentCount = 1;
+        investmentCount = initInvestmentCount;
     }
 
     function startInvestment(startInvestmentParam calldata param) external payable nonReentrant {

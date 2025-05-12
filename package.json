@@ -19,9 +19,11 @@
   "license": "ISC",
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.2",
-    "@openzeppelin/contracts-upgradeable": "^5.0.2"
+    "@openzeppelin/contracts-upgradeable": "^5.0.2",
+    "json-bigint": "^1.0.0"
   },
   "devDependencies": {
+    "@enjinstarter/hardhat-oklink-verify": "^0.2.0",
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.7",
     "@nomicfoundation/hardhat-ethers": "^3.0.6",
     "@nomicfoundation/hardhat-ignition": "^0.15.5",
@@ -34,11 +36,12 @@
     "@typechain/ethers-v6": "^0.5.1",
     "@typechain/hardhat": "^9.1.0",
     "@types/chai": "^4.3.16",
+    "@types/deep-equal-in-any-order": "^1.0.3",
+    "@types/json-bigint": "^1.0.4",
     "@types/mocha": "^10.0.7",
     "chai": "^4.4.1",
-    "ethers": "^6.13.1",
-    "@types/deep-equal-in-any-order": "^1.0.3",
     "deep-equal-in-any-order": "^2.0.6",
+    "ethers": "^6.13.1",
     "hardhat": "^2.22.5",
     "hardhat-abi-exporter": "^2.10.1",
     "hardhat-gas-reporter": "^2.2.0",

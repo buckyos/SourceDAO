@@ -38,10 +38,10 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         return "1.1.0";
     }
 
-    function initialize(address[] memory initialCommittees, address mainAddr) public initializer {
+    function initialize(address[] memory initialCommittees, uint initProposalId, address mainAddr) public initializer {
         __SourceDaoContractUpgradable_init(mainAddr);
 
-        curProposalId = 1;
+        curProposalId = initProposalId;
 
         committees = initialCommittees;
         emit MemberChanged(new address[](0), initialCommittees);

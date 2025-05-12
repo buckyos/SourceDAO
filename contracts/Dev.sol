@@ -29,9 +29,10 @@ contract ProjectManagement is
     event ChangeTokenAddress(address oldAddress, address newAddress);
     event ChangeCommittee(address oldAddress, address newAddress);
     event WithdrawContributionToken(address owner, uint amount);
+    event WithdrawContributionToken2(address owner, uint amount, uint[] projectIds);
 
     function version() external pure override returns (string memory) {
-        return "1.0.1";
+        return "1.0.2";
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -39,9 +40,9 @@ contract ProjectManagement is
         _disableInitializers();
     }
 
-    function initialize(address mainAddr) initializer public {
+    function initialize(uint initProjectIdCounter, address mainAddr) initializer public {
         __SourceDaoContractUpgradable_init(mainAddr);
-        projectIdCounter = 0;
+        projectIdCounter = initProjectIdCounter;
     }
 
     function _makeProjectParams(uint projectId, ProjectBrief memory project) pure internal returns (bytes32[] memory) {
@@ -184,7 +185,7 @@ contract ProjectManagement is
             claimAmount = claimAmount + reward * contribution / totalContribution;
         }
         IERC20(address(getMainContractAddress().token())).transfer(msg.sender, claimAmount);
-        emit WithdrawContributionToken(msg.sender, claimAmount);
+        emit WithdrawContributionToken2(msg.sender, claimAmount, projectIds);
         return claimAmount;
     }
 
