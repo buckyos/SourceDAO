@@ -43,6 +43,9 @@ interface ISourceDAOToken is IERC20, IERC20Metadata {
      */
     function releaseTokensToSelf(uint256 amount) external;
 
+    function releaseDevTokensToSelf(uint256 amount) external;
+    function transferDev(address to, uint256 amount) external;
+
     /**
      * @dev Burn tokens from the sender. Only authorized addresses can call this.
      * @param amount The amount of tokens to be burned.
@@ -72,6 +75,9 @@ interface ISourceDAOToken is IERC20, IERC20Metadata {
      * @return Total amount of tokens in circulation.
      */
     function totalInCirculation() external view returns (uint256);
+
+    function balanceOfDev(address account) external view returns (uint256);
+    function balanceOfNormal(address account) external view returns (uint256);
 
     /**
      * @dev Emitted when tokens are released.

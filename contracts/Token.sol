@@ -6,11 +6,17 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "./Interface.sol";
 import "./SourceDaoUpgradeable.sol";
 
+// Token分两种：DevToken和NormalToken
+// DevToken只能通过开发活动得到
+// DevToken只能有限转账
+// DevToken只能单向转换到NormalToken
 
 contract SourceDaoToken is ERC20BurnableUpgradeable, ISourceDAOToken, ReentrancyGuardUpgradeable, SourceDaoContractUpgradeable {
     uint256 public _totalSupply;
     uint256 public _totalReleased;
     uint256 public _totalUnreleased;
+
+    mapping(address account => uint256) _dev_balances;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -110,6 +116,18 @@ contract SourceDaoToken is ERC20BurnableUpgradeable, ISourceDAOToken, Reentrancy
         emit TokensReleased(msg.sender, amount);
     }
 
+    function releaseDevTokensToSelf(uint256 amount) external override nonReentrant {
+        require(msg.sender == address(getMainContractAddress().devGroup()), "only dev group can call this");
+        require(_totalUnreleased >= amount, "Not enough unreleased tokens");
+
+        _totalReleased += amount;
+        _totalUnreleased -= amount;
+
+        _dev_balances[msg.sender] += amount;
+
+        emit TokensReleased(msg.sender, amount);
+    }
+
     function burn(uint256 amount) public override(ISourceDAOToken, ERC20BurnableUpgradeable) nonReentrant {
         require(_totalReleased >= amount, "Not enough released tokens");
 
@@ -119,5 +137,32 @@ contract SourceDaoToken is ERC20BurnableUpgradeable, ISourceDAOToken, Reentrancy
         super.burn(amount);
 
         emit TokensReleased(msg.sender, amount);
+    }
+
+    function dev2normal(uint256 amount) external nonReentrant {
+        require(_dev_balances[msg.sender] >= amount, "Not enough dev tokens");
+        _dev_balances[msg.sender] -= amount;
+        _mint(msg.sender, amount);
+    }
+
+    function balanceOfDev(address account) external view returns (uint256) {
+        return _dev_balances[account];
+    }
+
+    function balanceOf(address account) public view override(ERC20Upgradeable, IERC20) returns (uint256) {
+        return super.balanceOf(account) + _dev_balances[account];
+    }
+
+    function balanceOfNormal(address account) external view returns (uint256) {
+        return super.balanceOf(account);
+    }
+
+    // 只有少数情况下，需要转账DevToken
+    function transferDev(address to, uint256 amount) external override nonReentrant {
+        require(_dev_balances[msg.sender] >= amount, "Not enough dev tokens");
+        require(msg.sender == address(getMainContractAddress().devGroup()), "only dev group can call this");
+        require(false, "Not allowed to transfer dev tokens");
+        _dev_balances[msg.sender] -= amount;
+        _dev_balances[to] += amount;
     }
 }

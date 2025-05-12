@@ -29,6 +29,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
 
     mapping(address => uint) contractUpgradeProposals;
 
+    uint public devTokenRatio;
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -38,12 +40,13 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         return "1.1.0";
     }
 
-    function initialize(address[] memory initialCommittees, uint initProposalId, address mainAddr) public initializer {
+    function initialize(address[] memory initialCommittees, uint initProposalId, uint _devTokenRatio, address mainAddr) public initializer {
         __SourceDaoContractUpgradable_init(mainAddr);
 
         curProposalId = initProposalId;
 
         committees = initialCommittees;
+        devTokenRatio = _devTokenRatio;
         emit MemberChanged(new address[](0), initialCommittees);
     }
 
@@ -120,7 +123,9 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         for (uint i = 0; i < voters.length; i++) {
             int vote = proposalVotes[proposalId][voters[i]];
             if (vote == 1 || vote == -1) {
-                uint balance = getMainContractAddress().token().balanceOf(voters[i]) + getMainContractAddress().lockup().totalAssigned(voters[i]);
+                uint normalBalance = getMainContractAddress().token().balanceOf(voters[i]) + getMainContractAddress().lockup().totalAssigned(voters[i]);
+                uint devBalance = getMainContractAddress().token().balanceOfDev(voters[i]);
+                uint balance = normalBalance + (devBalance * devTokenRatio);
                 if (vote == 1) {
                     agree += balance;
                 } else if (vote == -1) {
@@ -372,6 +377,34 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         emit MemberChanged(committees, newCommittees);
 
         committees = newCommittees;
+
+        _setProposalExecuted(proposalId, true);
+    }
+
+    function _prepareSetDevTokenRatioParam(uint ratio) pure internal returns(bytes32[] memory) {
+        bytes32[] memory params = new bytes32[](2);
+        params[0] = bytes32(ratio);
+        params[1] = bytes32("setDevTokenRatio");
+        return params;
+    }
+
+    function prepareSetDevTokenRatio(uint ratio) public returns (uint) {
+        require(
+            isMember(msg.sender),
+            "only committee can set dev token ratio"
+        );
+
+        bytes32[] memory params = _prepareSetDevTokenRatioParam(ratio);
+
+        return _propose(address(this), 7 days, params, false);
+    }
+
+    function setDevTokenRatio(uint ratio, uint256 proposalId) external {
+        bytes32[] memory params = _prepareSetDevTokenRatioParam(ratio);
+
+        require(_takeResult(proposalId, params) == ProposalResult.Accept, "proposal not accepted");
+
+        devTokenRatio = ratio;
 
         _setProposalExecuted(proposalId, true);
     }

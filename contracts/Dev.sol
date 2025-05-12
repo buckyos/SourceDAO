@@ -109,7 +109,7 @@ contract ProjectManagement is
             }
             uint reward = (project.budget * coefficient) / 100;
 
-            getMainContractAddress().token().releaseTokensToSelf(reward);
+            getMainContractAddress().token().releaseDevTokensToSelf(reward);
         }
         getMainContractAddress().committee().setProposalExecuted(project.proposalId);
         emit ProjectChange(projectId, project.proposalId, oldState, project.state);
@@ -184,7 +184,7 @@ contract ProjectManagement is
             }
             claimAmount = claimAmount + reward * contribution / totalContribution;
         }
-        IERC20(address(getMainContractAddress().token())).transfer(msg.sender, claimAmount);
+        getMainContractAddress().token().transderDev(msg.sender, claimAmount);
         emit WithdrawContributionToken2(msg.sender, claimAmount, projectIds);
         return claimAmount;
     }
