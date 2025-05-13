@@ -36,7 +36,7 @@ abstract contract SourceDaoContractUpgradeable is Initializable, UUPSUpgradeable
     }
 
     function version() external pure virtual returns (string memory) {
-        return "2.0.0";
+        return "1.0.0";
     }
 
     /**

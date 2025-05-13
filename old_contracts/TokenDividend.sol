@@ -50,7 +50,7 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
     }
 
     function deposit(uint256 amount, address token) external override nonReentrant {
-        require(token != address(getMainContractAddress().normalToken()), "Cannot deposit Source token");
+        require(token != address(getMainContractAddress().token()), "Cannot deposit Source token");
         require(token != address(0), "Use native transfer to deposit ETH");
 
         IERC20(token).transferFrom(msg.sender, address(this), amount);
@@ -65,7 +65,7 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
     }
 
     function updateTokenBalance(address token) external override nonReentrant {
-        require(token != address(getMainContractAddress().normalToken()), "Cannot update Source token");
+        require(token != address(getMainContractAddress().token()), "Cannot update Source token");
   
         if (!isTokenInList(token)) {
             tokens.push(token);
@@ -84,11 +84,11 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
     }
 
     function estimate() external view override returns (address[] memory, uint256[] memory) {
-        ISourceDAONormalToken sourceDAOToken = getMainContractAddress().normalToken();
-        uint256 totalSupply = sourceDAOToken.totalInCirculation();
+        ISourceDAOToken SourceDAOToken = getMainContractAddress().token();
+        uint256 totalSupply = SourceDAOToken.totalInCirculation();
         require(totalSupply > 0, "Not enough tokens in circulation");
 
-        uint256 userBalance = sourceDAOToken.balanceOf(msg.sender);
+        uint256 userBalance = SourceDAOToken.balanceOf(msg.sender);
 
         address[] memory estimateTokens = new address[](tokens.length);
         uint256[] memory estimateAmounts = new uint256[](tokens.length);
@@ -104,12 +104,12 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
     function withdraw(uint256 sourceAmount) external override nonReentrant {
         require(isDividendEnable());
 
-        ISourceDAONormalToken sourceDAOToken = getMainContractAddress().normalToken();
-        uint256 totalSupply = sourceDAOToken.totalInCirculation();
+        ISourceDAOToken SourceDAOToken = getMainContractAddress().token();
+        uint256 totalSupply = SourceDAOToken.totalInCirculation();
         require(totalSupply > 0, "Not enough tokens in circulation");
 
-        require(sourceDAOToken.balanceOf(msg.sender) >= sourceAmount, "Not enough Source tokens");
-        sourceDAOToken.transferFrom(msg.sender, address(this), sourceAmount);
+        require(SourceDAOToken.balanceOf(msg.sender) >= sourceAmount, "Not enough Source tokens");
+        SourceDAOToken.transferFrom(msg.sender, address(this), sourceAmount);
 
         for (uint i = 0; i < tokens.length; i++) {
             uint256 claimableAmount = tokenBalances[tokens[i]] * sourceAmount / totalSupply;
@@ -128,8 +128,7 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
             }
         }
 
-        // 这里为什么要burn掉token?
-        // sourceDAOToken.burn(sourceAmount);
+        SourceDAOToken.burn(sourceAmount);
 
         emit Withdraw(msg.sender, sourceAmount);
     }

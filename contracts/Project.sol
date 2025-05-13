@@ -8,7 +8,7 @@ import "./Interface.sol";
 import "./SourceDaoUpgradeable.sol";
 
 contract ProjectManagement is
-    ISourceDevGroup,
+    ISourceProject,
     Initializable,
     SourceDaoContractUpgradeable {
     struct ContributionInfo {
@@ -32,7 +32,7 @@ contract ProjectManagement is
     event WithdrawContributionToken2(address owner, uint amount, uint[] projectIds);
 
     function version() external pure override returns (string memory) {
-        return "1.0.2";
+        return "2.0.0";
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -109,7 +109,7 @@ contract ProjectManagement is
             }
             uint reward = (project.budget * coefficient) / 100;
 
-            getMainContractAddress().token().releaseTokensToSelf(reward);
+            getMainContractAddress().devToken().mintDevToken(reward);
         }
         getMainContractAddress().committee().setProposalExecuted(project.proposalId);
         emit ProjectChange(projectId, project.proposalId, oldState, project.state);
@@ -184,7 +184,7 @@ contract ProjectManagement is
             }
             claimAmount = claimAmount + reward * contribution / totalContribution;
         }
-        IERC20(address(getMainContractAddress().token())).transfer(msg.sender, claimAmount);
+        IERC20(address(getMainContractAddress().devToken())).transfer(msg.sender, claimAmount);
         emit WithdrawContributionToken2(msg.sender, claimAmount, projectIds);
         return claimAmount;
     }

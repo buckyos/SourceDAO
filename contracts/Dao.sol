@@ -6,195 +6,89 @@ import "./Interface.sol";
 import "./util.sol";
 
 contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
-    address tokenAddress;
-    address tokenLockup;
-    address committeeAddress;
-    address devAddress;
-    address investmentAddress;
-    address committeeWalletAddress;
-    address assetWalletAddress;
-    address incomeWalletAddress;
-    address tokenDividend;
-    address marketingAddress;
-    address twostepInvestmentAddress;
+    address _devToken;
+    address _normalToken;
+    address _tokenLockup;
+    address _committee;
+    address _project;
+    address _tokenDividend;
+    address _acquired;
 
     function initialize() public initializer {
         __SourceDaoContractUpgradable_init(address(0));
     }
 
     function version() external pure override returns (string memory) {
-        return "1.1.0";
+        return "2.0.0";
     }
 
-    function setTokenAddress(
+    function setDevTokenAddress(
         address newAddress
-    ) external onlySetOnce(tokenAddress) {
-        tokenAddress = newAddress;
+    ) external onlySetOnce(_devToken) {
+        _devToken = newAddress;
+    }
+
+    function setNormalTokenAddress(
+        address newAddress
+    ) external onlySetOnce(_normalToken) {
+        _normalToken = newAddress;
     }
 
     function setCommitteeAddress(
         address newAddress
-    ) external onlySetOnce(committeeAddress) {
-        committeeAddress = newAddress;
+    ) external onlySetOnce(_committee) {
+        _committee = newAddress;
     }
 
-    function setDevAddress(
+    function setProjectAddress(
         address newAddress
-    ) external onlySetOnce(devAddress) {
-        devAddress = newAddress;
+    ) external onlySetOnce(_project) {
+        _project = newAddress;
     }
 
     function setTokenLockupAddress(
         address newAddress
-    ) external onlySetOnce(tokenLockup) {
-        tokenLockup = newAddress;
+    ) external onlySetOnce(_tokenLockup) {
+        _tokenLockup = newAddress;
     }
 
     function setTokenDividendAddress(
         address newAddress
-    ) external onlySetOnce(tokenDividend) {
-        tokenDividend = newAddress;
+    ) external onlySetOnce(_tokenDividend) {
+        _tokenDividend = newAddress;
     }
 
-    function setInvestmentAddress(
+    function setAcquiredAddress(
         address newAddress
-    ) external onlySetOnce(investmentAddress) {
-        investmentAddress = newAddress;
+    ) external onlySetOnce(_acquired) {
+        _acquired = newAddress;
     }
 
-    function setMarketingAddress(
-        address newAddress
-    ) external onlySetOnce(marketingAddress) {
-        marketingAddress = newAddress;
+    function devToken() external view override returns (ISourceDAODevToken) {
+        return ISourceDAODevToken(_devToken);
     }
 
-    function setTwoStepInvestmentAddress(
-        address newAddress
-    ) external onlySetOnce(twostepInvestmentAddress) {
-        twostepInvestmentAddress = newAddress;
-    }
-
-    function token() external view override returns (ISourceDAOToken) {
-        return ISourceDAOToken(tokenAddress);
+    function normalToken() external view override returns (ISourceDAONormalToken) {
+        return ISourceDAONormalToken(_normalToken);
     }
 
     function committee() external view override returns (ISourceDaoCommittee) {
-        return ISourceDaoCommittee(committeeAddress);
+        return ISourceDaoCommittee(_committee);
     }
 
-    function devGroup() external view override returns (ISourceDevGroup) {
-        return ISourceDevGroup(devAddress);
+    function project() external view override returns (ISourceProject) {
+        return ISourceProject(_project);
     }
 
     function lockup() external view override returns (ISourceTokenLockup) {
-        return ISourceTokenLockup(tokenLockup);
-    }
-
-    function investment() external view override returns (IInvestment) {
-        return IInvestment(investmentAddress);
+        return ISourceTokenLockup(_tokenLockup);
     }
 
     function dividend() external view returns (ISourceDAOTokenDividend) {
-        return ISourceDAOTokenDividend(payable(tokenDividend));
+        return ISourceDAOTokenDividend(payable(_tokenDividend));
     }
 
-    function marketing() external view returns (IMarketingGroup) {
-        return IMarketingGroup(payable(marketingAddress));
-    }
-
-    function twostepInvestment() external view returns (ITwoStepWhitelistInvestment) {
-        return ITwoStepWhitelistInvestment(twostepInvestmentAddress);
-    }
-
-    function isAuthorizedAddress(
-        address addr
-    ) external view override returns (bool) {
-        return
-            addr == tokenAddress ||
-            addr == tokenLockup ||
-            addr == devAddress ||
-            addr == committeeAddress ||
-            addr == investmentAddress ||
-            addr == marketingAddress;
-    }
-
-    function committeeWallet() external view override returns (address) {
-        return committeeWalletAddress;
-    }
-
-    function assetWallet() external view override returns (IMultiSigWallet) {
-        return IMultiSigWallet(assetWalletAddress);
-    }
-
-    function incomeWallet() external view override returns (IMultiSigWallet) {
-        return IMultiSigWallet(incomeWalletAddress);
-    }
-
-    function _makeSetAddressParams(address addr, bytes32 name) internal pure returns (bytes32[] memory) {
-        bytes32[] memory params = new bytes32[](2);
-        params[0] = util.AddressToBytes32(addr);
-        params[2] = name;
-
-        return params;
-    }
-
-    function perpareSetCommitteeWallet(address walletAddress) external {
-        require(ISourceDaoCommittee(committeeAddress).isMember(msg.sender), "only member can set wallet");
-        bytes32[] memory params = _makeSetAddressParams(walletAddress, "committeeWallet");
-        ISourceDaoCommittee(committeeAddress).propose(7 days, params);
-    }
-
-    function setCommitteeWallet(
-        address walletAddress,
-        uint proposalId
-    ) external override {
-        if (committeeWalletAddress == address(0)) {
-            committeeWalletAddress = walletAddress;
-        } else {
-            bytes32[] memory params = _makeSetAddressParams(walletAddress, "committeeWallet");
-            require(ISourceDaoCommittee(committeeAddress).takeResult(proposalId, params) == ISourceDaoCommittee.ProposalResult.Accept, "not accept");
-            committeeWalletAddress = walletAddress;
-            ISourceDaoCommittee(committeeAddress).setProposalExecuted(proposalId);
-        }
-    }
-
-    function perpareSetAssetWallet(address walletAddress) external {
-        require(ISourceDaoCommittee(committeeAddress).isMember(msg.sender), "only member can set wallet");
-        bytes32[] memory params = _makeSetAddressParams(walletAddress, "assetWallet");
-        ISourceDaoCommittee(committeeAddress).propose(7 days, params);
-    }
-
-    function setAssetWallet(
-        address walletAddress,
-        uint proposalId
-    ) external override {
-        if (assetWalletAddress == address(0)) {
-            assetWalletAddress = walletAddress;
-        } else {
-            bytes32[] memory params = _makeSetAddressParams(walletAddress, "assetWallet");
-            require(ISourceDaoCommittee(committeeAddress).takeResult(proposalId, params) == ISourceDaoCommittee.ProposalResult.Accept, "not accept");
-            assetWalletAddress = walletAddress;
-            ISourceDaoCommittee(committeeAddress).setProposalExecuted(proposalId);
-        }
-    }
-
-    function perpareSetIncomeWallet(address walletAddress) external {
-        require(ISourceDaoCommittee(committeeAddress).isMember(msg.sender), "only member can set wallet");
-        bytes32[] memory params = _makeSetAddressParams(walletAddress, "incomeWallet");
-        ISourceDaoCommittee(committeeAddress).propose(7 days, params);
-    }
-
-    function setIncomeWallet(
-        address walletAddress,
-        uint proposalId
-    ) external override {
-        if (incomeWalletAddress == address(0)) {
-            incomeWalletAddress = walletAddress;
-        } else {
-            bytes32[] memory params = _makeSetAddressParams(walletAddress, "incomeWallet");
-            require(ISourceDaoCommittee(committeeAddress).takeResult(proposalId, params) == ISourceDaoCommittee.ProposalResult.Accept, "not accept");
-            incomeWalletAddress = walletAddress;
-            ISourceDaoCommittee(committeeAddress).setProposalExecuted(proposalId);
-        }
+    function acquired() external view returns (IAcquired) {
+        return IAcquired(_acquired);
     }
 } 

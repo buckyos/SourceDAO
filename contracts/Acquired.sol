@@ -9,7 +9,7 @@ import "./Interface.sol";
 
 import "hardhat/console.sol";
 
-contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGuardUpgradeable, SourceDaoContractUpgradeable {
+contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpgradeable {
     struct Investment {
         bool canEndEarly;
         bool end;
@@ -46,8 +46,10 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
     }
 
     function startInvestment(startInvestmentParam calldata param) external payable nonReentrant {
+        ISourceDAONormalToken daoToken = getMainContractAddress().normalToken();
+
         require(param.whitelist.length == param.firstPercent.length, "whitelist and firstPercent length not equal");
-        require(param.tokenAddress != address(getMainContractAddress().token()), "cannot invest dao token");
+        require(param.tokenAddress != address(daoToken), "cannot invest dao token");
         uint256 totalPercents = 0;
         for (uint i = 0; i < param.firstPercent.length; i++) {
             totalPercents += param.firstPercent[i];
@@ -60,7 +62,7 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
             require(param.tokenAmount == msg.value, "main token not enough");
         } else {
             uint8 tokenDecimals = IERC20Metadata(param.tokenAddress).decimals();
-            uint8 daoTokenDecimals = getMainContractAddress().token().decimals();
+            uint8 daoTokenDecimals = daoToken.decimals();
             require(daoTokenDecimals >= tokenDecimals, "not support token decimals > 18");
             IERC20(param.tokenAddress).transferFrom(msg.sender, address(this), param.tokenAmount);
         }
@@ -89,7 +91,7 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
             require(investment.investedAmount == 0 || investment.totalAmount == investment.investedAmount, "not all token sold out");
         }
 
-        getMainContractAddress().token().transfer(investment.investor, investment.daoTokenAmount);
+        getMainContractAddress().normalToken().transfer(investment.investor, investment.daoTokenAmount);
         uint256 remainAmount = investment.totalAmount - investment.investedAmount;
         if (remainAmount > 0) {
             if (investment.tokenAddress == address(0)) {
@@ -112,11 +114,13 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
         require(investment.end == false, "investment end");
         require(block.timestamp <= investment.step2EndTime, "investment end");
 
+        ISourceDAONormalToken daoToken = getMainContractAddress().normalToken();
+
         uint256 tokenAmount = amount * investment.tokenRatio.tokenAmount / investment.tokenRatio.daoTokenAmount;
 
         if (investment.tokenAddress != address(0)) {
             uint8 tokenDecimals = IERC20Metadata(investment.tokenAddress).decimals();
-            uint8 daoTokenDecimals = getMainContractAddress().token().decimals();
+            uint8 daoTokenDecimals = daoToken.decimals();
 
             uint8 deltaDecimals = daoTokenDecimals - tokenDecimals;
             tokenAmount /= 10 ** deltaDecimals;
@@ -132,7 +136,7 @@ contract TwoStepWhitelistInvestment is ITwoStepWhitelistInvestment, ReentrancyGu
         }
         // in step 2, only need to check enough token
 
-        getMainContractAddress().token().transferFrom(msg.sender, address(this), amount);
+        daoToken.transferFrom(msg.sender, address(this), amount);
 
         investment.investedAmounts[msg.sender] += tokenAmount;
         investment.investedAmount += tokenAmount;

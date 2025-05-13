@@ -29,24 +29,21 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
 
     mapping(address => uint) contractUpgradeProposals;
 
-    uint devRatio;
-
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
     function version() external pure virtual override returns (string memory) {
-        return "2.0.0";
+        return "1.1.0";
     }
 
-    function initialize(address[] memory initialCommittees, uint initProposalId, uint _devRatio, address mainAddr) public initializer {
+    function initialize(address[] memory initialCommittees, uint initProposalId, address mainAddr) public initializer {
         __SourceDaoContractUpgradable_init(mainAddr);
 
         curProposalId = initProposalId;
 
         committees = initialCommittees;
-        devRatio = _devRatio;
         emit MemberChanged(new address[](0), initialCommittees);
     }
 
@@ -113,13 +110,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         );
         require(extra.endBlockNumber < block.number, "not yet settled");
 
-        ISourceDAODevToken devToken = getMainContractAddress().devToken();
-
-        ISourceDAONormalToken normalToken = getMainContractAddress().normalToken();
-
         if (extra.totalReleasedToken == 0) {
-            // 所有释放的token = normal总量+dev释放量
-            extra.totalReleasedToken = (devToken.totalReleased()) + normalToken.totalSupply();
+            extra.totalReleasedToken = getMainContractAddress().token().totalReleased();
         }
 
         uint agree = 0;
@@ -128,14 +120,11 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         for (uint i = 0; i < voters.length; i++) {
             int vote = proposalVotes[proposalId][voters[i]];
             if (vote == 1 || vote == -1) {
-                // 锁定的normal token也算投票权？
-                // 先算锁定合约中未提取的token
-                uint balance = normalToken.balanceOf(voters[i]) + getMainContractAddress().lockup().totalLocked(voters[i]);
-                uint devBalance = devToken.balanceOf(voters[i]);
+                uint balance = getMainContractAddress().token().balanceOf(voters[i]) + getMainContractAddress().lockup().totalAssigned(voters[i]);
                 if (vote == 1) {
-                    agree += (balance + devBalance * devRatio);
+                    agree += balance;
                 } else if (vote == -1) {
-                    rejected += (balance + devBalance * devRatio);
+                    rejected += balance;
                 }
                 proposalVotes[proposalId][voters[i]] = 2;
                 settled += 1;
@@ -383,39 +372,6 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         emit MemberChanged(committees, newCommittees);
 
         committees = newCommittees;
-
-        _setProposalExecuted(proposalId, true);
-    }
-
-    function _prepareSetDevRatioParam(uint newDevRatio) pure internal returns(bytes32[] memory) {
-        bytes32[] memory params = new bytes32[](2);
-        params[0] = bytes32(newDevRatio);
-        params[1] = bytes32("setDevRatio");
-        return params;
-    }
-
-    function prepareSetDevRatio(uint newDevRatio) public returns (uint) {
-        require(
-            isMember(msg.sender),
-            "only committee can set member"
-        );
-
-        // 是否要限制新的ratio一定比旧的小？
-        // require(newDevRatio < devRatio, "new dev ratio must less then old one");
-
-        bytes32[] memory params = _prepareSetDevRatioParam(newDevRatio);
-
-        return _propose(address(this), 7 days, params, false);
-    }
-
-    function setDevRatio(uint newDevRatio, uint256 proposalId) public {
-        bytes32[] memory params = _prepareSetDevRatioParam(newDevRatio);
-        require(
-            _takeResult(proposalId, params) == ProposalResult.Accept,
-            "proposal not accepted"
-        );
-
-        devRatio = newDevRatio;
 
         _setProposalExecuted(proposalId, true);
     }
