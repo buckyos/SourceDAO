@@ -43,6 +43,7 @@ contract NormalToken is
         uint256 _totalReleased = totalSupply();        // 对于normal token来说，totalSupply就是released
         require(_totalReleased >= lockupAmount, "Too much locked tokens");
 
+        // 返回的是当前正在流通的总Token量
         return _totalReleased - lockupAmount;
     }
 

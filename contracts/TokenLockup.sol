@@ -42,8 +42,36 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
 
         ISourceDAONormalToken token = getMainContractAddress().normalToken();
 
+        uint totalAmount = 0;
         for (uint i = 0; i < to.length; i++) {
-            token.transferFrom(msg.sender, address(this), amount[i]);
+            totalAmount += amount[i];
+        }
+
+        token.transferFrom(msg.sender, address(this), totalAmount);
+
+        for (uint i = 0; i < to.length; i++) {
+            UnlockInfo storage info = _unlockInfo[to[i]];
+            info.totalAssigned = info.totalUnlocked + amount[i];    // 如果有未提取的部分，也一并锁定回去
+            info.unlockTime = 0;
+
+            _totalAssigned += amount[i];
+        }
+    }
+
+    // convert dev token to normal token and lock it
+    function convertAndLock(address[] calldata to, uint256[] calldata amount) external override nonReentrant {
+        require(to.length == amount.length, "Input arrays must be of same length");
+
+        ISourceDAODevToken devToken = getMainContractAddress().devToken();
+
+        uint totalAmount = 0;
+        for (uint i = 0; i < to.length; i++) {
+            totalAmount += amount[i];
+        }
+        devToken.transferFrom(msg.sender, address(this), totalAmount);
+        devToken.dev2normal(totalAmount);
+
+        for (uint i = 0; i < to.length; i++) {
             UnlockInfo storage info = _unlockInfo[to[i]];
             info.totalAssigned = info.totalUnlocked + amount[i];    // 如果有未提取的部分，也一并锁定回去
             info.unlockTime = 0;

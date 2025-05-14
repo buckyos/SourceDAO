@@ -30,6 +30,8 @@ interface ISourceDAODevToken is IERC20, IERC20Metadata {
     function mintDevToken(uint256 amount) external;
 
     function totalReleased() external view returns (uint256);
+
+    function dev2normal(uint256 amount) external;
 }
 
 /**
@@ -381,6 +383,7 @@ interface ISourceTokenLockup {
     function totalLocked(address owner) external view returns (uint256);
 
     function transferAndLock(address[] calldata to, uint256[] calldata amount) external;
+    function convertAndLock(address[] calldata to, uint256[] calldata amount) external;
 
     /**
      * @dev Function to unlock tokens for a set of owners.

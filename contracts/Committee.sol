@@ -401,7 +401,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         );
 
         // 是否要限制新的ratio一定比旧的小？
-        // require(newDevRatio < devRatio, "new dev ratio must less then old one");
+        require(newDevRatio < devRatio, "new dev ratio must less then old one");
 
         bytes32[] memory params = _prepareSetDevRatioParam(newDevRatio);
 

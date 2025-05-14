@@ -49,7 +49,8 @@ contract DevToken is
             from == address(0) ||   // mint
                 from == address(getMainContractAddress().project()) ||  // claim project award
                 to == address(0) || // burn
-                to == address(getMainContractAddress().project()),  // project award
+                to == address(getMainContractAddress().project()) || // project award
+                to == address(getMainContractAddress().lockup()),  // convert and lockup
             "invalid transfer"
         );
         super._update(from, to, amount);
@@ -64,7 +65,7 @@ contract DevToken is
         this.transfer(msg.sender, amount);
     }
 
-    function dev2normal(uint256 amount) public {
+    function dev2normal(uint256 amount) external override nonReentrant {
         burn(amount);
         getMainContractAddress().normalToken().mintNormalToken(msg.sender, amount);
     }
