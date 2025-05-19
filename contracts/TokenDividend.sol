@@ -50,7 +50,8 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
     }
 
     function deposit(uint256 amount, address token) external override nonReentrant {
-        require(token != address(getMainContractAddress().normalToken()), "Cannot deposit Source token");
+        require(token != address(getMainContractAddress().normalToken()), "Cannot deposit DAO token");
+        require(token != address(getMainContractAddress().devToken()), "Cannot deposit DAODev token");
         require(token != address(0), "Use native transfer to deposit ETH");
 
         IERC20(token).transferFrom(msg.sender, address(this), amount);
@@ -65,7 +66,8 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
     }
 
     function updateTokenBalance(address token) external override nonReentrant {
-        require(token != address(getMainContractAddress().normalToken()), "Cannot update Source token");
+        require(token != address(getMainContractAddress().normalToken()), "Cannot update DAO token");
+        require(token != address(getMainContractAddress().devToken()), "Cannot deposit DAODev token");
   
         if (!isTokenInList(token)) {
             tokens.push(token);
@@ -83,12 +85,19 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
         tokenBalances[token] = balance;
     }
 
+    function getTotalCirculation() internal view returns (uint256) {
+        uint256 totalNormalCirculation = getMainContractAddress().normalToken().totalInCirculation();
+        uint256 totalDevCirculation = getMainContractAddress().devToken().totalReleased();
+
+        return totalNormalCirculation + totalDevCirculation;
+    }
+
     function estimate() external view override returns (address[] memory, uint256[] memory) {
-        ISourceDAONormalToken sourceDAOToken = getMainContractAddress().normalToken();
-        uint256 totalSupply = sourceDAOToken.totalInCirculation();
+        uint256 totalSupply = getTotalCirculation();
         require(totalSupply > 0, "Not enough tokens in circulation");
 
-        uint256 userBalance = sourceDAOToken.balanceOf(msg.sender);
+        uint256 userBalance = getMainContractAddress().normalToken().balanceOf(msg.sender) + 
+            getMainContractAddress().devToken().balanceOf(msg.sender);
 
         address[] memory estimateTokens = new address[](tokens.length);
         uint256[] memory estimateAmounts = new uint256[](tokens.length);
@@ -104,8 +113,7 @@ contract DividendContract is ISourceDAOTokenDividend, SourceDaoContractUpgradeab
     function withdraw(uint256 sourceAmount) external override nonReentrant {
         require(isDividendEnable());
 
-        ISourceDAONormalToken sourceDAOToken = getMainContractAddress().normalToken();
-        uint256 totalSupply = sourceDAOToken.totalInCirculation();
+        uint256 totalSupply = getTotalCirculation();
         require(totalSupply > 0, "Not enough tokens in circulation");
 
         require(sourceDAOToken.balanceOf(msg.sender) >= sourceAmount, "Not enough Source tokens");
