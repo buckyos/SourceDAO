@@ -14,13 +14,17 @@ import "./SourceDaoUpgradeable.sol";
 
 contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, ReentrancyGuardUpgradeable {
     struct UnlockInfo {
-        uint256 totalAssigned;  // 还有多少在锁定中
-        uint256 totalUnlocked;  // 还有多少未提取
-        uint256 unlockTime;     // 解锁时间。0表示未解锁
+        uint256 totalAssigned;  // 曾锁定的总量
+        uint256 totalClaimed;  // 已经提取了多少
     }
 
     uint256 public _totalAssigned;
-    uint256 public _totalUnlocked;
+    uint256 public _totalClaimed;
+
+    bytes32 public unlockProjectName;
+    uint64 public unlockProjectVersion;
+
+    uint256 unlockTime;
 
     // Mapping from owner to UnlockInfo
     mapping (address => UnlockInfo) private _unlockInfo;
@@ -30,118 +34,104 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
         _disableInitializers();
     }
 
-    function initialize(address mainAddr) public initializer {
+    function initialize(bytes2 _unlockProjectName, uint64 _unlockVersion, address mainAddr) public initializer {
         __SourceDaoContractUpgradable_init(mainAddr);
         __ReentrancyGuard_init();
-    }
 
+        unlockProjectName = _unlockProjectName;
+        unlockProjectVersion = _unlockVersion;
+        unlockTime = 0;
+    }
 
     // transfer normal token to someone and lock it
     function transferAndLock(address[] calldata to, uint256[] calldata amount) external override nonReentrant {
         require(to.length == amount.length, "Input arrays must be of same length");
+        require(unlockTime == 0, "already Unlocked");
 
         ISourceDAONormalToken token = getMainContractAddress().normalToken();
 
         uint totalAmount = 0;
         for (uint i = 0; i < to.length; i++) {
             totalAmount += amount[i];
+            _unlockInfo[to[i]].totalAssigned += amount[i];
         }
 
         token.transferFrom(msg.sender, address(this), totalAmount);
 
-        for (uint i = 0; i < to.length; i++) {
-            UnlockInfo storage info = _unlockInfo[to[i]];
-            info.totalAssigned = info.totalUnlocked + amount[i];    // 如果有未提取的部分，也一并锁定回去
-            info.unlockTime = 0;
-
-            _totalAssigned += amount[i];
-        }
+        _totalAssigned += totalAmount;
     }
 
     // convert dev token to normal token and lock it
     function convertAndLock(address[] calldata to, uint256[] calldata amount) external override nonReentrant {
         require(to.length == amount.length, "Input arrays must be of same length");
+        require(unlockTime == 0, "already Unlocked");
 
         ISourceDAODevToken devToken = getMainContractAddress().devToken();
 
         uint totalAmount = 0;
         for (uint i = 0; i < to.length; i++) {
             totalAmount += amount[i];
+            _unlockInfo[to[i]].totalAssigned += amount[i];
         }
         devToken.transferFrom(msg.sender, address(this), totalAmount);
         devToken.dev2normal(totalAmount);
 
-        for (uint i = 0; i < to.length; i++) {
-            UnlockInfo storage info = _unlockInfo[to[i]];
-            info.totalAssigned = info.totalUnlocked + amount[i];    // 如果有未提取的部分，也一并锁定回去
-            info.unlockTime = 0;
-
-            _totalAssigned += amount[i];
-        }
+        _totalAssigned += totalAmount;
     }
 
-    function prepareProposalParams(address[] memory owners, bytes32 proposalType) internal pure returns (bytes32[] memory) {
-        bytes32[] memory params = new bytes32[](owners.length+1);
-        for (uint i = 0; i < owners.length; i++) {
-            params[i] = keccak256(abi.encodePacked(owners[i]));
-        }
-        params[owners.length] = proposalType;
+    function _maxClaimTokens(address owner, uint256 _unlockTime) internal view returns (uint256) {
+        UnlockInfo storage info = _unlockInfo[owner];
 
-        return params;
-    }
-    
-    function prepareUnlockTokens(uint duration, address[] memory owners) external override nonReentrant returns (uint) {
-        ISourceDaoCommittee committee = getMainContractAddress().committee();
-        require(committee.isMember(msg.sender), "Only committee members can call this");
-
-        bytes32[] memory params = prepareProposalParams(owners, "unlockTokens");
-
-        uint256 proposalId = committee.propose(duration, params);
-
-        emit TokensPrepareUnlock(proposalId, duration, owners);
-
-        return proposalId;
-    }
-
-    function unlockTokens(uint proposalId, address[] memory owners) external override nonReentrant {
-        ISourceDaoCommittee committee = getMainContractAddress().committee();
-        require(committee.isMember(msg.sender), "Only committee members can call this");
-
-        bytes32[] memory params = prepareProposalParams(owners, "unlockTokens");
-
-        require(committee.takeResult(proposalId, params) == ISourceDaoCommittee.ProposalResult.Accept, "Proposal must be passed");
-
-        uint256 totalAmount = 0;
-        for (uint i = 0; i < owners.length; i++) {
-            UnlockInfo storage info = _unlockInfo[owners[i]];
-            info.unlockTime = block.timestamp;
-
-            info.totalUnlocked = info.totalAssigned;
-            totalAmount += info.totalAssigned;
+        uint256 unlockPassed = (block.timestamp - _unlockTime);
+        if (unlockPassed > 180 days) {
+            unlockPassed = 180 days;
         }
 
-        _totalUnlocked += totalAmount;
+        uint256 maxClaimTokens = (unlockPassed * info.totalAssigned) / 180 days; // 6 months
 
-        committee.setProposalExecuted(proposalId);
+        require(maxClaimTokens >= info.totalClaimed, "Already claimed more than max claimable tokens");
 
-        emit TokensUnlocked(proposalId, totalAmount, owners);
+        return maxClaimTokens - info.totalClaimed;
     }
 
     function claimTokens(uint256 amount) external override nonReentrant {
-        UnlockInfo storage info = _unlockInfo[msg.sender];
+        if (unlockTime == 0) {
+            // 检查是否已解锁
+            ISourceProject.VersionInfo memory versionInfo = getMainContractAddress().project().latestProjectVersion(unlockProjectName);
+            if (versionInfo.version >= unlockProjectVersion) {
+                // 从版本发布的时刻开始解锁
+                unlockTime = versionInfo.versionTime;
+            } else {
+                revert("Tokens are not unlocked yet");
+            }
+        }
+        uint256 maxClaimToken = _maxClaimTokens(msg.sender, unlockTime);
+        require(maxClaimToken >= amount, "Claim amount exceeds unlocked tokens");
 
-        uint256 unlockPassed = (block.timestamp - info.unlockTime);
-        uint256 maxClaimTokens = (unlockPassed * info.totalAssigned) / 180 days; // 6 months
-
-        require(info.totalUnlocked >= amount, "Insufficient unlocked tokens");
-        require(maxClaimTokens - (info.totalAssigned - info.totalUnlocked) >= amount, "Claim amount exceeds unlocked tokens");
-
-        info.totalUnlocked -= amount;
+        _unlockInfo[msg.sender].totalClaimed += amount;
 
         getMainContractAddress().normalToken().transfer(msg.sender, amount);
 
+        _totalClaimed += amount;
+
         emit TokensClaimed(msg.sender, amount);
     }
+
+    function getCanClaimTokens() external view override returns (uint256) {
+        uint256 _unlockTime = unlockTime;
+        if (_unlockTime == 0) {
+            // 检查是否已解锁
+            ISourceProject.VersionInfo memory versionInfo = getMainContractAddress().project().latestProjectVersion(unlockProjectName);
+            if (versionInfo.version >= unlockProjectVersion) {
+                // 从版本发布的时刻开始解锁
+                _unlockTime = versionInfo.versionTime;
+            } else {
+                return 0;
+            }
+        }
+
+        return _maxClaimTokens(msg.sender, _unlockTime);
+    } 
 
     function totalAssigned(address owner) external view override returns (uint256) {
         if (owner == address(0)) {
@@ -151,19 +141,11 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
         }
     }
 
-    function totalUnlocked(address owner) external view override returns (uint256) {
+    function totalClaimed(address owner) external view override returns (uint256) {
         if (owner == address(0)) {
-            return _totalUnlocked;
+            return _totalClaimed;
         } else {
-            return _unlockInfo[owner].totalUnlocked;
-        }
-    }
-
-    function totalLocked(address owner) external view override returns (uint256) {
-        if (owner == address(0)) {
-            return _totalAssigned - _totalUnlocked;
-        } else {
-            return _unlockInfo[owner].totalAssigned - _unlockInfo[owner].totalUnlocked;
+            return _unlockInfo[owner].totalClaimed;
         }
     }
 }

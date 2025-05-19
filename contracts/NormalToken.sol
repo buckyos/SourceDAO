@@ -37,16 +37,6 @@ contract NormalToken is
         }
     }
 
-    function totalInCirculation() external view override returns (uint256) {
-        ISourceTokenLockup lockup = getMainContractAddress().lockup();
-        uint256 lockupAmount =  lockup.totalLocked(address(0));
-        uint256 _totalReleased = totalSupply();        // 对于normal token来说，totalSupply就是released
-        require(_totalReleased >= lockupAmount, "Too much locked tokens");
-
-        // 返回的是当前正在流通的总Token量
-        return _totalReleased - lockupAmount;
-    }
-
     function mintNormalToken(
         address to,
         uint256 amount

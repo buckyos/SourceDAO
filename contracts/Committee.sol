@@ -128,9 +128,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         for (uint i = 0; i < voters.length; i++) {
             int vote = proposalVotes[proposalId][voters[i]];
             if (vote == 1 || vote == -1) {
-                // 锁定的normal token也算投票权？
-                // 先算锁定合约中未提取的token
-                uint balance = normalToken.balanceOf(voters[i]) + getMainContractAddress().lockup().totalLocked(voters[i]);
+                // 锁定的normal token不参与投票
+                uint balance = normalToken.balanceOf(voters[i]);
                 uint devBalance = devToken.balanceOf(voters[i]);
                 if (vote == 1) {
                     agree += (balance + devBalance * devRatio);

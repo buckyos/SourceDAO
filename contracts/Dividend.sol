@@ -72,7 +72,7 @@ contract DividendContract is SourceDaoContractUpgradeable, ReentrancyGuardUpgrad
     function initialize(address _stakingToken, uint256 _cycleMinLength, address mainAddr) public initializer {
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
-        __SourceDaoContractUpgradeable_init(mainAddr);
+        __SourceDaoContractUpgradable_init(mainAddr);
         __DividendContractUpgradable_init(_stakingToken, _cycleMinLength, mainAddr);
     }
 
@@ -297,7 +297,6 @@ contract DividendContract is SourceDaoContractUpgradeable, ReentrancyGuardUpgrad
         require(amount > 0, "Cannot unstake 0");
         StakeRecord[] storage stakeRecords = UserStakeRecords[msg.sender];
         require(stakeRecords.length > 0, "No stake record found");
-        require(!isUserUnstakeLocked(msg.sender), "Unstake is locked");
         
         // console.log("user unstake <=== amount %d, cycle %d, user %s", amount, currentCycleIndex, msg.sender);
 

@@ -9,12 +9,6 @@ import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
  */
 interface ISourceDAONormalToken is IERC20, IERC20Metadata {
     /**
-     * @dev Get the total amount of tokens in circulation.
-     * @return Total amount of tokens in circulation.
-     */
-    function totalInCirculation() external view returns (uint256);
-
-    /**
      * @dev Mint normal tokens to a specified address.
      * @param to The address to mint tokens to.
      * @param amount The amount of tokens to mint.
@@ -235,8 +229,10 @@ interface ISourceProject {
         uint proposalId;
         // budget of this project, in token amount
         uint budget;
-        // issue id referenced on git hub
-        uint64 issueId;
+        // project name in string, max 32 bytes
+        bytes32 projectName;
+        // version in uint64, convert from a.b.c: a*100000000+b*100000+c
+        uint64 version;
         // start time
         uint64 startDate;
         // project deadline
@@ -249,6 +245,11 @@ interface ISourceProject {
         address contributor;
         // contribution in percent
         uint64 value;
+    }
+
+    struct VersionInfo {
+        uint64 version;
+        uint256 versionTime;
     }
 
     /**
@@ -271,7 +272,8 @@ interface ISourceProject {
      */
     function createProject(
         uint budget,
-        uint64 issueId,
+        bytes32 name, 
+        uint64 version,
         uint64 startDate,
         uint64 endDate
     ) external returns (uint ProjectId);
@@ -323,6 +325,8 @@ interface ISourceProject {
     function projectOf(
         uint projectId
     ) external view returns (ProjectBrief memory);
+
+    function latestProjectVersion(bytes32 projectName) external view returns(VersionInfo memory);
 }
 
 /**
@@ -333,24 +337,20 @@ interface ISourceTokenLockup {
      * @dev Event emitted when tokens are prepared to unlock to the owner.
      * @param proposalId The proposal id that created by the SourceDaoCommittee.
      * @param duration Expiration time of the proposal, in seconds
-     * @param owners The addresses of the owners
      */
     event TokensPrepareUnlock(
         uint proposalId,
-        uint duration,
-        address[] owners
+        uint duration
     );
 
     /**
      * @dev Event emitted when tokens are unlocked.
      * @param proposalId The proposal id that passed in the SourceDaoCommittee.
      * @param total The total amount to be deposit
-     * @param owners The address of the owner.
      */
     event TokensUnlocked(
         uint proposalId,
-        uint256 total,
-        address[] owners
+        uint256 total
     );
 
     /**
@@ -373,58 +373,10 @@ interface ISourceTokenLockup {
      * @param owner The address of the owner.
      * @return The amount of unlocked tokens of the owner.
      */
-    function totalUnlocked(address owner) external view returns (uint256);
-
-    /**
-     * @dev Get the amount of locked tokens of an owner.
-     * @param owner The address of the owner.
-     * @return The amount of locked tokens of the owner.
-     */
-    function totalLocked(address owner) external view returns (uint256);
+    function totalClaimed(address owner) external view returns (uint256);
 
     function transferAndLock(address[] calldata to, uint256[] calldata amount) external;
     function convertAndLock(address[] calldata to, uint256[] calldata amount) external;
-
-    /**
-     * @dev Function to unlock tokens for a set of owners.
-     * Can only be called by a committee member and requires proposal approval.
-     *
-     * Emits a {TokensUnlocked} event.
-     *
-     * Requirements:
-     *
-     * - `owners` and `amounts` must have the same length.
-     * - `proposalId` must be a proposal that has passed.
-     * - The caller must be a committee member.
-     *
-     * @param duration Expiration time of the proposal, in seconds
-     * @param owners The addresses of the owners
-     * @return The proposal id
-     */
-    function prepareUnlockTokens(
-        uint duration,
-        address[] memory owners
-    ) external returns (uint);
-
-    /**
-     * @dev Function to unlock tokens for a set of owners.
-     * Can only be called by a committee member and requires proposal approval.
-     *
-     * Emits a {TokensUnlocked} event.
-     *
-     * Requirements:
-     *
-     * - `owners` and `amounts` must have the same length.
-     * - `proposalId` must be a proposal that has passed.
-     * - The caller must be a committee member.
-     *
-     * @param proposalId The id of the proposal
-     * @param owners The addresses of the owners
-     */
-    function unlockTokens(
-        uint proposalId,
-        address[] memory owners
-    ) external;
 
     /**
      * @dev Function to claim tokens for the caller.
@@ -437,6 +389,8 @@ interface ISourceTokenLockup {
      * - The caller must have unlocked tokens.
      */
     function claimTokens(uint256 amount) external;
+
+    function getCanClaimTokens() external view returns (uint256);
 }
 
 interface ISourceDAOTokenDividend {

@@ -26,14 +26,13 @@ contract ProjectManagement is
 
     uint public projectIdCounter;
 
+    
+    mapping(bytes32 => VersionInfo) private projectLatestVersions;
+
     event ChangeTokenAddress(address oldAddress, address newAddress);
     event ChangeCommittee(address oldAddress, address newAddress);
     event WithdrawContributionToken(address owner, uint amount);
     event WithdrawContributionToken2(address owner, uint amount, uint[] projectIds);
-
-    function version() external pure override returns (string memory) {
-        return "2.0.0";
-    }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -47,27 +46,31 @@ contract ProjectManagement is
 
     function _makeProjectParams(uint projectId, ProjectBrief memory project) pure internal returns (bytes32[] memory) {
         
-        bytes32[] memory params = new bytes32[](5);
+        bytes32[] memory params = new bytes32[](6);
         params[0] = bytes32(projectId);
-        params[1] = bytes32(project.budget);
-        params[2] = bytes32(uint256(project.startDate));
-        params[3] = bytes32(uint256(project.endDate));
+        params[1] = project.projectName;
+        params[2] = bytes32(uint256(project.version));
+        params[3] = bytes32(uint256(project.startDate));
+        params[4] = bytes32(uint256(project.endDate));
 
         if (project.state == ProjectState.Preparing) {
-            params[4] = bytes32("createProject");
+            params[5] = bytes32("createProject");
         } else if (project.state == ProjectState.Accepting) {
-            params[4] = bytes32("acceptProject");
+            params[5] = bytes32("acceptProject");
         }
 
         return params;
     }
 
-    function createProject(uint budget, uint64 issueId, uint64 startDate, uint64 endDate) external returns(uint ProjectId) {
+    function createProject(uint budget, bytes32 name, uint64 version, uint64 startDate, uint64 endDate) external returns(uint ProjectId) {
+        require(projectLatestVersions[name].version < version, "Version must be greater than the latest version");
+
         uint projectId = projectIdCounter++;
         ProjectBrief storage project = projects[projectId];
         project.manager = msg.sender;
         project.budget = budget;
-        project.issueId = issueId;
+        project.projectName = name;
+        project.version = version;
         project.startDate = startDate;
         project.endDate = endDate;
         project.state = ProjectState.Preparing;
@@ -110,6 +113,14 @@ contract ProjectManagement is
             uint reward = (project.budget * coefficient) / 100;
 
             getMainContractAddress().devToken().mintDevToken(reward);
+
+            // set project version to latest
+            // 会不会有这种情况？当前是0.0.1， 同时有0.0.2和0.0.3在开发，0.0.3先完成，0.0.2后完成？
+            if (projectLatestVersions[project.projectName].version < project.version) {
+                projectLatestVersions[project.projectName].version = project.version;
+                projectLatestVersions[project.projectName].versionTime = block.timestamp;
+            }
+            
         }
         getMainContractAddress().committee().setProposalExecuted(project.proposalId);
         emit ProjectChange(projectId, project.proposalId, oldState, project.state);
@@ -206,5 +217,9 @@ contract ProjectManagement is
             }
         }
         return 0;
+    }
+
+    function latestProjectVersion(bytes32 projectName) external view returns(VersionInfo memory) {
+        return projectLatestVersions[projectName];
     }
 }
