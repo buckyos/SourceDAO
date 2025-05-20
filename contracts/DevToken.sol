@@ -46,12 +46,14 @@ contract DevToken is
         uint256 amount
     ) internal override {
         require(
-            from == address(0) ||   // mint
-                from == address(getMainContractAddress().project()) ||  // claim project award
-                to == address(0) || // burn
-                to == address(getMainContractAddress().project()) || // project award
-                to == address(getMainContractAddress().lockup()),  // convert and lockup
-            "invalid transfer"
+            from == address(0)    // mint
+                || from == address(getMainContractAddress().project())   // claim project award
+                || to == address(0)  // burn
+                || to == address(getMainContractAddress().project())  // project award
+                || to == address(getMainContractAddress().lockup())  // convert and lockup
+                || from == address(getMainContractAddress().dividend())  // stack to dividend
+                || to == address(getMainContractAddress().dividend())  // unstack from dividend
+            , "invalid transfer"
         );
         super._update(from, to, amount);
     }

@@ -327,6 +327,9 @@ interface ISourceProject {
     ) external view returns (ProjectBrief memory);
 
     function latestProjectVersion(bytes32 projectName) external view returns(VersionInfo memory);
+
+    // 判定指定版本是否已经发布，如果未发布，返回0，如果发布，返回发布时间
+    function versionReleasedTime(bytes32 projectName, uint64 version) external view returns(uint256);
 }
 
 /**
@@ -393,82 +396,63 @@ interface ISourceTokenLockup {
     function getCanClaimTokens() external view returns (uint256);
 }
 
-interface ISourceDAOTokenDividend {
-    enum DividendState {
-        // init
-        Disable,
-        // enabl eafter the specified block number
-        Enable
+interface ISourceDAODividend {
+    struct RewardInfo {
+        address token;
+        uint256 amount;
     }
 
-    /// @notice Event emitted when assets are deposited
-    /// @param amount The amount of tokens deposited
-    /// @param token The token address
+    struct CycleInfo {
+        // The start block of the cycle
+        uint256 startBlocktime;
+
+        // The total stake amount of the curent cycle
+        uint256 totalStaked;
+
+        // The reward info of the cycle       
+        RewardInfo[] rewards;
+    }
+
+    struct RewardWithdrawInfo {
+        address token;
+        uint256 amount;
+        bool withdrawed;
+    }
+
+    event TokenAddedToWhitelist(address token);
+    event TokenRemovedFromWhitelist(address token);
     event Deposit(uint256 amount, address token);
-
-    /// @notice Event emitted when assets are withdrawn
-    /// @param SourceAmount The amount of Source tokens burned
-    event Withdraw(address to, uint256 SourceAmount);
-
-    /// @notice Event emitted when devidend enable state been requested
-    /// @param proposalId the id of the proposal
-    /// @param state the new devidend state of the contract
-    /// @param blockNumber the devidend state will enable after the blockNumber
-    event DividendStateChangeRequested(
-        uint proposalId,
-        DividendState state,
-        uint256 blockNumber
-    );
-
-    /// @notice Event emitted when devidend enable state changed
-    /// @param state the new devidend state of the contract
-    /// @param blockNumber the devidend state will enable after the blockNumber
-    event DividendStateChanged(DividendState state, uint256 blockNumber);
+    event Stake(address indexed user, uint256 amount);
+    event Unstake(address indexed user, uint256 amount);
+    event NewCycle(uint256 cycleIndex, uint256 startBlock);
+    event Withdraw(address indexed user, address token, uint256 amount);
 
     /// @notice Receive ETH deposits
     receive() external payable;
 
-    /// @notice Deposit tokens to the contract
-    /// @param amount The amount of tokens to deposit
-    /// @param token The token to deposit
-    function deposit(uint256 amount, address token) external;
+    function getCurrentCycleIndex() external view returns (uint256);
 
-    /// @notice Update token balance for the contract
-    /// @param token The token to deposit
+    function getCurrentCycle() external view returns (CycleInfo memory);
+    function getCycleInfos(uint256 startCycle, uint256 endCycle) external view returns (CycleInfo[] memory);
+    function getTotalStaked(uint256 cycleIndex) external view returns (uint256);
+    function getDepositTokenBalance(address token) external view returns (uint256);
+
+    function deposit(uint256 amount, address token) external;
     function updateTokenBalance(address token) external;
 
-    /// @notice Get the estimated assets per Source token
-    /// @return tokens The list of tokens the contract holds
-    /// @return amounts The amount of each token that can be claimed per Source token
-    function estimate()
-        external
-        view
-        returns (address[] memory tokens, uint256[] memory amounts);
+    function getStakeAmount(uint256 cycleIndex) external view returns (uint256);
 
-    /// @notice Withdraw assets from the contract
-    /// @param SourceAmount The amount of Source tokens to burn
-    function withdraw(uint256 SourceAmount) external;
+    function stakeNormal(uint256 amount) external;
+    function stakeDev(uint256 amount) external;
+    function unstakeNormal(uint256 amount) external;
+    function unstakeDev(uint256 amount) external;
 
-    /// @notice Check if the dividend operation is currently allowed
-    /// @return enable The dividend is anable or not
-    function isDividendEnable() external view returns (bool enable);
+    function tryNewCycle() external;
 
-    /// @notice Change the devidend state of the contract
-    /// @param duration the duration of the proposal in seconds
-    /// @param _state the new devidend state of the contract
-    /// @param blockNumber the devidend state will enable after the blockNumber
-    /// @return proposalId the id of the proposal
-    function prepareChangeState(
-        uint duration,
-        DividendState _state,
-        uint256 blockNumber
-    ) external returns (uint proposalId);
+    function isDividendWithdrawed(uint256 cycleIndex, address token) external view returns (bool);
+    function estimateDividends(uint256[] calldata cycleIndexs, address[] calldata tokens) external view returns (RewardWithdrawInfo[] memory);
 
-    function changeState(
-        uint proposalId,
-        DividendState _state,
-        uint256 blockNumber
-    ) external;
+    function withdrawDividends(uint256[] calldata cycleIndexs, address[] calldata tokens) external;
 }
 
 interface IAcquired {
@@ -536,7 +520,7 @@ interface ISourceDao {
      */
     function lockup() external view returns (ISourceTokenLockup);
 
-    function dividend() external view returns (ISourceDAOTokenDividend);
+    function dividend() external view returns (ISourceDAODividend);
 
     function acquired() external view returns (IAcquired); 
 }

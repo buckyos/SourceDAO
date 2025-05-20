@@ -222,4 +222,12 @@ contract ProjectManagement is
     function latestProjectVersion(bytes32 projectName) external view returns(VersionInfo memory) {
         return projectLatestVersions[projectName];
     }
+
+    function versionReleasedTime(bytes32 projectName, uint64 version) external view returns(uint256) {
+        VersionInfo memory versionInfo = projectLatestVersions[projectName];
+        if (versionInfo.version >= version) {
+            return versionInfo.versionTime;
+        }
+        return 0;
+    }
 }

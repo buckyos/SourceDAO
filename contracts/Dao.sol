@@ -84,8 +84,8 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
         return ISourceTokenLockup(_tokenLockup);
     }
 
-    function dividend() external view returns (ISourceDAOTokenDividend) {
-        return ISourceDAOTokenDividend(payable(_tokenDividend));
+    function dividend() external view returns (ISourceDAODividend) {
+        return ISourceDAODividend(payable(_tokenDividend));
     }
 
     function acquired() external view returns (IAcquired) {

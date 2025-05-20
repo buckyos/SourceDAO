@@ -97,10 +97,10 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
     function claimTokens(uint256 amount) external override nonReentrant {
         if (unlockTime == 0) {
             // 检查是否已解锁
-            ISourceProject.VersionInfo memory versionInfo = getMainContractAddress().project().latestProjectVersion(unlockProjectName);
-            if (versionInfo.version >= unlockProjectVersion) {
+            uint256 releaseTime = getMainContractAddress().project().versionReleasedTime(unlockProjectName, unlockProjectVersion);
+            if (releaseTime > 0) {
                 // 从版本发布的时刻开始解锁
-                unlockTime = versionInfo.versionTime;
+                unlockTime = releaseTime;
             } else {
                 revert("Tokens are not unlocked yet");
             }
@@ -121,10 +121,10 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
         uint256 _unlockTime = unlockTime;
         if (_unlockTime == 0) {
             // 检查是否已解锁
-            ISourceProject.VersionInfo memory versionInfo = getMainContractAddress().project().latestProjectVersion(unlockProjectName);
-            if (versionInfo.version >= unlockProjectVersion) {
+            uint256 releaseTime = getMainContractAddress().project().versionReleasedTime(unlockProjectName, unlockProjectVersion);
+            if (releaseTime > 0) {
                 // 从版本发布的时刻开始解锁
-                _unlockTime = versionInfo.versionTime;
+                _unlockTime = releaseTime;
             } else {
                 return 0;
             }

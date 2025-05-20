@@ -29,24 +29,30 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
 
     mapping(address => uint) contractUpgradeProposals;
 
-    uint devRatio;
+    bytes32 public mainProjectName;
+    uint64 public finalVersion;
+    uint public devRatio;
+    uint public finalRatio;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-    function version() external pure virtual override returns (string memory) {
-        return "2.0.0";
-    }
+    // devRatio支持两位小数，必须大于100, 使用时除100
+    function initialize(address[] memory initialCommittees, uint initProposalId, uint _initDevRatio, bytes2 _mainProjectName, uint64 _finalVersion, uint _finalDevRatio, address mainAddr) public initializer {
+        require(_initDevRatio > 100, "dev ratio must greater than 100");
+        require(_finalDevRatio > 100, "final dev ratio must greater than 100");
 
-    function initialize(address[] memory initialCommittees, uint initProposalId, uint _devRatio, address mainAddr) public initializer {
         __SourceDaoContractUpgradable_init(mainAddr);
 
         curProposalId = initProposalId;
 
         committees = initialCommittees;
-        devRatio = _devRatio;
+        devRatio = _initDevRatio;
+        mainProjectName = _mainProjectName;
+        finalVersion = _finalVersion;
+        finalRatio = _finalDevRatio;
         emit MemberChanged(new address[](0), initialCommittees);
     }
 
@@ -103,6 +109,13 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         uint proposalId,
         address[] memory voters
     ) external override {
+        // 如果正式版已经发布，将devRatio固定为finalRatio
+        if (devRatio != finalRatio) {
+            if (getMainContractAddress().project().versionReleasedTime(mainProjectName, finalVersion) > 0) {
+                devRatio = finalRatio;
+            }
+        }
+
         Proposal storage proposal = _proposals[proposalId];
         PorposalExtra storage extra = _extras[proposalId];
 
@@ -131,10 +144,11 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
                 // 锁定的normal token不参与投票
                 uint balance = normalToken.balanceOf(voters[i]);
                 uint devBalance = devToken.balanceOf(voters[i]);
+                uint votes = balance + (devBalance * devRatio / 100);
                 if (vote == 1) {
-                    agree += (balance + devBalance * devRatio);
+                    agree += votes;
                 } else if (vote == -1) {
-                    rejected += (balance + devBalance * devRatio);
+                    rejected += votes;
                 }
                 proposalVotes[proposalId][voters[i]] = 2;
                 settled += 1;
@@ -396,11 +410,17 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     function prepareSetDevRatio(uint newDevRatio) public returns (uint) {
         require(
             isMember(msg.sender),
-            "only committee can set member"
+            "only committee can set dev ratio"
         );
+
+        if (getMainContractAddress().project().versionReleasedTime(mainProjectName, finalVersion) > 0) {
+            revert("cannot set dev ratio after final version released");
+        }
 
         // 是否要限制新的ratio一定比旧的小？
         require(newDevRatio < devRatio, "new dev ratio must less then old one");
+        // 也限制新的ratio不能小于finalRatio
+        require(newDevRatio >= finalRatio, "new dev ratio must greater then final one");
 
         bytes32[] memory params = _prepareSetDevRatioParam(newDevRatio);
 
