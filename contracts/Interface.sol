@@ -204,7 +204,9 @@ interface ISourceProject {
         // waiting committe votes for project's result
         Accepting,
         // project has finished, check its result
-        Finished
+        Finished,
+        // project failed
+        Rejected
     }
 
     enum ProjectResult {
@@ -239,6 +241,8 @@ interface ISourceProject {
         uint64 endDate;
         ProjectState state;
         ProjectResult result;
+        address[] extraTokens;
+        uint256[] extraTokenAmounts;
     }
 
     struct Contribution {
@@ -275,8 +279,12 @@ interface ISourceProject {
         bytes32 name, 
         uint64 version,
         uint64 startDate,
-        uint64 endDate
+        uint64 endDate, 
+        address[] calldata extraTokens, 
+        uint256[] calldata extraTokenAmounts
     ) external returns (uint ProjectId);
+
+    function cancelProject(uint projectId) external;
 
     /**
      * @dev promote to change project state if waiting a committe's proposal,

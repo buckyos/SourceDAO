@@ -62,7 +62,7 @@ contract ProjectManagement is
         return params;
     }
 
-    function createProject(uint budget, bytes32 name, uint64 version, uint64 startDate, uint64 endDate) external returns(uint ProjectId) {
+    function createProject(uint budget, bytes32 name, uint64 version, uint64 startDate, uint64 endDate, address[] calldata extraTokens, uint256[] calldata extraTokenAmunts) external returns(uint ProjectId) {
         require(projectLatestVersions[name].version < version, "Version must be greater than the latest version");
 
         uint projectId = projectIdCounter++;
@@ -73,6 +73,8 @@ contract ProjectManagement is
         project.version = version;
         project.startDate = startDate;
         project.endDate = endDate;
+        project.extraTokens = extraTokens;
+        project.extraTokenAmounts = extraTokenAmunts;
         project.state = ProjectState.Preparing;
         project.result = ProjectResult.Inprogress;
 
@@ -80,9 +82,33 @@ contract ProjectManagement is
 
         project.proposalId = getMainContractAddress().committee().propose(30 days, params);
 
+        for (uint i = 0; i < extraTokens.length; i++) {
+            IERC20(extraTokens[i]).transferFrom(msg.sender, address(this), extraTokenAmunts[i]);
+        }
+
         emit ProjectCreate(projectId, project.proposalId);
 
         return projectId;
+    }
+
+    function cancelProject(uint projectId) external {
+        ProjectBrief storage project = projects[projectId];
+
+        require(project.manager != address(0), "This project doesn't exist");
+        require(project.manager == msg.sender, "Must be called by the project manager");
+
+        // prepareing状态下提案被拒绝，说明项目本身没有被接受
+        // accept状态下提案被拒绝，说明项目本身的开发失败
+        require(project.state == ProjectState.Preparing || project.state == ProjectState.Accepting, "state error");
+
+        bytes32[] memory params = _makeProjectParams(projectId, project);
+        ISourceDaoCommittee.ProposalResult result = getMainContractAddress().committee().takeResult(project.proposalId, params);
+        require(result == ISourceDaoCommittee.ProposalResult.Reject || result == ISourceDaoCommittee.ProposalResult.Expired, "Proposal status is not failed");
+
+        project.state = ProjectState.Rejected;
+        for (uint i = 0; i < project.extraTokens.length; i++) {
+            IERC20(project.extraTokens[i]).transfer(project.manager, project.extraTokenAmounts[i]);
+        }
     }
 
     function promoteProject(uint projectId) external {
@@ -119,6 +145,14 @@ contract ProjectManagement is
             if (projectLatestVersions[project.projectName].version < project.version) {
                 projectLatestVersions[project.projectName].version = project.version;
                 projectLatestVersions[project.projectName].versionTime = block.timestamp;
+            }
+
+            // 如果coefficient不是100，在这里把多余的部分还给项目manager
+            if (coefficient < 100) {
+                for (uint i = 0; i < project.extraTokens.length; i++) {
+                    uint extraTokenAmount = project.extraTokenAmounts[i] * (coefficient - 100) / 100;
+                    IERC20(project.extraTokens[i]).transfer(project.manager, extraTokenAmount);
+                }
             }
             
         }
@@ -194,6 +228,19 @@ contract ProjectManagement is
                 }
             }
             claimAmount = claimAmount + reward * contribution / totalContribution;
+
+            // 处理extra token
+            uint extraCoefficient = coefficient;
+            // extra最多只能拿到100%
+            if (extraCoefficient > 100) {
+                extraCoefficient = 100;
+            }
+            for (uint i = 0; i < project.extraTokens.length; i++) {
+                // extraCoefficient / 100计算extra能拿到的总比例
+                // contribution / totalContribution计算这个人能拿到多少
+                uint extraTokenAmount = project.extraTokenAmounts[i] * extraCoefficient / 100 * contribution / totalContribution ;
+                IERC20(project.extraTokens[i]).transfer(msg.sender, extraTokenAmount);
+            }
         }
         IERC20(address(getMainContractAddress().devToken())).transfer(msg.sender, claimAmount);
         emit WithdrawContributionToken2(msg.sender, claimAmount, projectIds);
