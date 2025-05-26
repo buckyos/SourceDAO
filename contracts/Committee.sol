@@ -15,7 +15,6 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         uint threshold;
         uint agree;
         uint reject;
-        uint endBlockNumber;
         uint settled;
         uint totalReleasedToken;
     }
@@ -87,22 +86,28 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         return _proposalId;
     }
 
+    function _fullPropose(uint duration,
+        bytes32[] memory params,
+        uint threshold) internal returns (uint) {
+            require(threshold > 10 && threshold < 100, "threshold must in 10 to 100");
+            // 12 seconds a block.
+            uint id = _propose(
+                msg.sender,
+                duration,
+                params,
+                true
+            );
+
+            _extras[id] = PorposalExtra(tx.origin, threshold, 0, 0, 0, 0);
+            return id;
+        }
+
     function fullPropose(
-        uint endBlockNumber,
+        uint duration,
         bytes32[] memory params,
         uint threshold
     ) external override returns (uint proposalId) {
-        require(threshold > 30 && threshold < 100, "threshold must in 30 to 100");
-        // 12 seconds a block.
-        uint id = _propose(
-            msg.sender,
-            block.timestamp + (endBlockNumber - block.number) * 12,
-            params,
-            true
-        );
-
-        _extras[id] = PorposalExtra(tx.origin, threshold, 0, 0, endBlockNumber, 0, 0);
-        return id;
+        return _fullPropose(duration, params, threshold);
     }
 
     function endFullPropose(
@@ -119,12 +124,12 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         Proposal storage proposal = _proposals[proposalId];
         PorposalExtra storage extra = _extras[proposalId];
 
-        require(extra.endBlockNumber != 0, "not full propose");
+        require(extra.from != address(0), "not full propose");
         require(
             proposal.state == ProposalState.Inprogress,
             "invalid proposal state"
         );
-        require(extra.endBlockNumber < block.number, "not yet settled");
+        require(proposal.expired < block.timestamp, "not yet settled");
 
         ISourceDAODevToken devToken = getMainContractAddress().devToken();
 
@@ -132,7 +137,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
 
         if (extra.totalReleasedToken == 0) {
             // 所有释放的token = normal总量+dev释放量
-            extra.totalReleasedToken = (devToken.totalReleased()) + normalToken.totalSupply();
+            extra.totalReleasedToken = (devToken.totalReleased() * devRatio / 100) + normalToken.totalSupply();
         }
 
         uint agree = 0;
@@ -159,6 +164,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         extra.reject += rejected;
         extra.settled += settled;
 
+        // 所有已投票的人都计算完毕
         if (extra.settled == proposal.support.length + proposal.reject.length) {
             // settlement votes
             if (extra.agree + extra.reject < extra.totalReleasedToken * extra.threshold / 100 ) {
@@ -244,7 +250,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         
         if (proposal.state == ProposalState.Inprogress) {
             PorposalExtra memory extra = _extras[proposalId];
-            require(extra.endBlockNumber == 0, "cannot settle full proposal");
+            require(extra.from == address(0), "cannot settle full proposal");
             // Proposal in the Inprogress state, try to calculate the ratio of votes
             uint agreed = 0;
             uint rejected = 0;
@@ -375,13 +381,27 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         return params;
     }
 
-    function prepareSetCommittees(address[] calldata newCommittees) public returns (uint) {
-        require(
-            isMember(msg.sender),
-            "only committee can set member"
-        );
+    function prepareSetCommittees(address[] calldata newCommittees, bool isFullProposal) public returns (uint) {
+        if (!isFullProposal) {
+            require(
+                isMember(msg.sender),
+                "only committee can set member"
+            );
+        } else {
+            // TODO: 要sender销毁一部分Token？
+        }
+        
 
         bytes32[] memory params = _prepareSetComitteesParam(newCommittees);
+
+        uint proposalId;
+        if (isFullProposal) {
+            // full propose
+            proposalId = _fullPropose(block.number, params, 10);
+        } else {
+            // normal propose
+            proposalId = _propose(address(this), 7 days, params, false);
+        }
 
         return _propose(address(this), 7 days, params, false);
     }

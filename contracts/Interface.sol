@@ -126,7 +126,7 @@ interface ISourceDaoCommittee {
     ) external returns (uint proposalId);
 
     function fullPropose(
-        uint endBlockNumber,
+        uint duration,
         bytes32[] memory params,
         uint threshold
     ) external returns (uint proposalId);
@@ -173,7 +173,7 @@ interface ISourceDaoCommittee {
 
     function removeCommitteeMember(address member, uint proposalId) external;
 
-    function prepareSetCommittees(address[] calldata newCommittees) external returns (uint);
+    function prepareSetCommittees(address[] calldata newCommittees, bool isFullProposal) external returns (uint);
     function setCommittees(address[] calldata newCommittees, uint256 proposalId) external;
 
     function perpareContractUpgrade(

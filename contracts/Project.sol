@@ -65,6 +65,11 @@ contract ProjectManagement is
     function createProject(uint budget, bytes32 name, uint64 version, uint64 startDate, uint64 endDate, address[] calldata extraTokens, uint256[] calldata extraTokenAmunts) external returns(uint ProjectId) {
         require(projectLatestVersions[name].version < version, "Version must be greater than the latest version");
 
+        // budget不能超过devToken总量的2.5%
+        require(budget <= getMainContractAddress().devToken().totalSupply() * 25 / 1000, "Budget exceeds 2.5% of total supply");
+        // 每个版本之间最少间隔7天
+        require(block.timestamp - projectLatestVersions[name].versionTime > 7 days, "Project version must be at least 7 days apart");
+
         uint projectId = projectIdCounter++;
         ProjectBrief storage project = projects[projectId];
         project.manager = msg.sender;
