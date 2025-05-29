@@ -22,8 +22,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     uint curProposalId;
     address[] committees;
 
-    mapping(uint => Proposal) _proposals;
-    mapping(uint => PorposalExtra) _extras;
+    mapping(uint => Proposal) proposals;
+    mapping(uint => PorposalExtra) proposalExtras;
     mapping(uint => mapping(address => int)) proposalVotes;
 
     mapping(address => uint) contractUpgradeProposals;
@@ -69,9 +69,9 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         bytes32[] memory params,
         bool isFull
     ) internal returns (uint) {
-        uint _proposalId = curProposalId++;
+        uint proposalId = curProposalId++;
         bytes32 root = MerkleProof.processProof(params, util.AddressToBytes32(tx.origin));
-        _proposals[_proposalId] = Proposal(
+        proposals[proposalId] = Proposal(
             from,
             tx.origin,
             block.timestamp + duration,
@@ -81,9 +81,9 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             root
         );
 
-        emit ProposalStart(_proposalId, isFull);
+        emit ProposalStart(proposalId, isFull);
 
-        return _proposalId;
+        return proposalId;
     }
 
     function _fullPropose(uint duration,
@@ -98,7 +98,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
                 true
             );
 
-            _extras[id] = PorposalExtra(tx.origin, threshold, 0, 0, 0, 0);
+            proposalExtras[id] = PorposalExtra(tx.origin, threshold, 0, 0, 0, 0);
             return id;
         }
 
@@ -121,8 +121,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             }
         }
 
-        Proposal storage proposal = _proposals[proposalId];
-        PorposalExtra storage extra = _extras[proposalId];
+        Proposal storage proposal = proposals[proposalId];
+        PorposalExtra storage extra = proposalExtras[proposalId];
 
         require(extra.from != address(0), "not full propose");
         require(
@@ -191,7 +191,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     }
 
     function support(uint proposalId, bytes32[] memory params) external override returns (bool) {
-        Proposal storage proposal = _proposals[proposalId];
+        Proposal storage proposal = proposals[proposalId];
         require(
             proposal.state == ProposalState.Inprogress,
             "invalid proposal state"
@@ -211,7 +211,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     }
 
     function reject(uint proposalId, bytes32[] memory params) external override returns (bool) {
-        Proposal storage proposal = _proposals[proposalId];
+        Proposal storage proposal = proposals[proposalId];
         require(
             proposal.state == ProposalState.Inprogress,
             "invalid proposal state"
@@ -246,10 +246,10 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     }
 
     function _settleProposal (uint proposalId) internal returns (ProposalResult) {
-        Proposal storage proposal = _proposals[proposalId];
+        Proposal storage proposal = proposals[proposalId];
         
         if (proposal.state == ProposalState.Inprogress) {
-            PorposalExtra memory extra = _extras[proposalId];
+            PorposalExtra memory extra = proposalExtras[proposalId];
             require(extra.from == address(0), "cannot settle full proposal");
             // Proposal in the Inprogress state, try to calculate the ratio of votes
             uint agreed = 0;
@@ -286,7 +286,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         uint proposalId,
         bytes32[] memory params
     ) internal returns (ProposalResult) {
-        Proposal memory proposal = _proposals[proposalId];
+        Proposal memory proposal = proposals[proposalId];
         if (!MerkleProof.verify(params, proposal.paramroot, util.AddressToBytes32(proposal.origin))) {
             return ProposalResult.NotMatch;
         }
@@ -304,7 +304,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     function proposalOf(
         uint proposalId
     ) external view override returns (Proposal memory) {
-        return _proposals[proposalId];
+        return proposals[proposalId];
     }
 
     function _perpareParams(
@@ -397,7 +397,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         uint proposalId;
         if (isFullProposal) {
             // full propose
-            proposalId = _fullPropose(block.number, params, 10);
+            proposalId = _fullPropose(7 days, params, 10);
         } else {
             // normal propose
             proposalId = _propose(address(this), 7 days, params, false);
@@ -526,11 +526,11 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     }
 
     function getContractUpgradeProposal(address proxyContractAddress) external view returns(Proposal memory) {
-        return _proposals[contractUpgradeProposals[proxyContractAddress]];
+        return proposals[contractUpgradeProposals[proxyContractAddress]];
     }
 
     function _setProposalExecuted(uint proposalId, bool self) internal {
-        Proposal storage prop = _proposals[proposalId];
+        Proposal storage prop = proposals[proposalId];
         if (!self) {
             require(msg.sender == prop.fromGroup, "sender not match");
         }

@@ -233,7 +233,7 @@ interface ISourceProject {
         uint budget;
         // project name in string, max 32 bytes
         bytes32 projectName;
-        // version in uint64, convert from a.b.c: a*100000000+b*100000+c
+        // version in uint64, convert from a.b.c: a*10000000000+b*100000+c
         uint64 version;
         // start time
         uint64 startDate;
