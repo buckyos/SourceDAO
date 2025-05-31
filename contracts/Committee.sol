@@ -89,8 +89,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     function _fullPropose(uint duration,
         bytes32[] memory params,
         uint threshold) internal returns (uint) {
-            require(duration > 7 days, "duration must greater than 7 days");
-            require(threshold > 34 && threshold < 100, "threshold must in 10 to 100");
+            require(duration >= 7 days, "duration must greater than 7 days");
+            require(threshold >= 34 && threshold <= 100, "threshold must in 10 to 100");
             // 12 seconds a block.
             uint id = _propose(
                 msg.sender,
