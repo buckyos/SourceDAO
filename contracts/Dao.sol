@@ -91,4 +91,16 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
     function acquired() external view returns (IAcquired) {
         return IAcquired(_acquired);
     }
+
+    function isDAOContract(address addr) external view returns (bool) {
+        return
+            addr == _devToken ||
+            addr == _normalToken ||
+            addr == _committee ||
+            addr == _project ||
+            addr == _tokenLockup ||
+            addr == _tokenDividend ||
+            addr == _acquired ||
+            addr == address(this);
+    }
 } 

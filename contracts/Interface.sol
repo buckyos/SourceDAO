@@ -530,5 +530,11 @@ interface ISourceDao {
 
     function dividend() external view returns (ISourceDAODividend);
 
-    function acquired() external view returns (IAcquired); 
+    function acquired() external view returns (IAcquired);
+
+    function isDAOContract(address addr) external view returns (bool);
+    /**
+     * @dev Set the address of the dev token contract.
+     * @param newAddress The address of the new dev token contract.
+     */
 }

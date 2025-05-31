@@ -89,7 +89,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     function _fullPropose(uint duration,
         bytes32[] memory params,
         uint threshold) internal returns (uint) {
-            require(threshold > 10 && threshold < 100, "threshold must in 10 to 100");
+            require(duration > 7 days, "duration must greater than 7 days");
+            require(threshold > 34 && threshold < 100, "threshold must in 10 to 100");
             // 12 seconds a block.
             uint id = _propose(
                 msg.sender,
@@ -107,6 +108,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         bytes32[] memory params,
         uint threshold
     ) external override returns (uint proposalId) {
+        require(getMainContractAddress().isDAOContract(msg.sender), "only DAO contract can propose");
         return _fullPropose(duration, params, threshold);
     }
 
@@ -187,6 +189,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         uint duration,
         bytes32[] memory params
     ) external override returns (uint proposalId) {
+        require(getMainContractAddress().isDAOContract(msg.sender), "only DAO contract can propose");
         return _propose(msg.sender, duration, params, false);
     }
 
@@ -397,7 +400,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         uint proposalId;
         if (isFullProposal) {
             // full propose
-            proposalId = _fullPropose(7 days, params, 10);
+            proposalId = _fullPropose(7 days, params, 51);
         } else {
             // normal propose
             proposalId = _propose(address(this), 7 days, params, false);
