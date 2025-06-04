@@ -90,7 +90,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         bytes32[] memory params,
         uint threshold) internal returns (uint) {
             require(duration >= 7 days, "duration must greater than 7 days");
-            require(threshold >= 34 && threshold <= 100, "threshold must in 10 to 100");
+            require(threshold >= 10 && threshold <= 100, "threshold must in 10 to 100");
             // 12 seconds a block.
             uint id = _propose(
                 msg.sender,
@@ -400,7 +400,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         uint proposalId;
         if (isFullProposal) {
             // full propose
-            proposalId = _fullPropose(7 days, params, 51);
+            proposalId = _fullPropose(7 days, params, 40);
         } else {
             // normal propose
             proposalId = _propose(address(this), 7 days, params, false);
