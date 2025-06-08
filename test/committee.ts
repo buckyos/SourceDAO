@@ -234,7 +234,7 @@ describe("Committee", () => {
 
     it("propose add member test", async () => {
         // 添加signer4到委员会
-        await expect(committee.connect(signers[1]).perpareAddMember(signers[4].address)).to.emit(committee, "ProposalStart").withArgs(7, false);
+        await expect(committee.connect(signers[1]).prepareAddMember(signers[4].address)).to.emit(committee, "ProposalStart").withArgs(7, false);
 
         expect((await committee.proposalOf(7)).state).to.equal(1);
         for (const signer of committeeSigners) {
@@ -253,10 +253,10 @@ describe("Committee", () => {
     });
 
     it("propose remove member test", async () => {
-        await expect(committee.perpareRemoveMember(committeeAddrs[0])).to.be.revertedWith("only committee can remove member");
+        await expect(committee.prepareRemoveMember(committeeAddrs[0])).to.be.revertedWith("only committee can remove member");
 
         // 移除signer1到委员会
-        await expect(committee.connect(signers[1]).perpareRemoveMember(committeeAddrs[0])).to.emit(committee, "ProposalStart").withArgs(8, false);
+        await expect(committee.connect(signers[1]).prepareRemoveMember(committeeAddrs[0])).to.emit(committee, "ProposalStart").withArgs(8, false);
 
         expect((await committee.proposalOf(8)).state).to.equal(1);
         for (const signer of committeeSigners) {

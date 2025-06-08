@@ -110,7 +110,7 @@ interface ISourceDaoCommittee {
         // default
         NotFound,
         // voting
-        Inprogress,
+        InProgress,
         // accept by committee
         Accepted,
         // reject by committee
@@ -225,9 +225,9 @@ interface ISourceDaoCommittee {
 
     function setProposalExecuted(uint proposalId) external;
 
-    function perpareAddMember(address member) external returns (uint);
+    function prepareAddMember(address member) external returns (uint);
 
-    function perpareRemoveMember(address member) external returns (uint);
+    function prepareRemoveMember(address member) external returns (uint);
 
     function addCommitteeMember(address member, uint proposalId) external;
 
@@ -236,7 +236,7 @@ interface ISourceDaoCommittee {
     function prepareSetCommittees(address[] calldata newCommittees) external returns (uint);
     function setCommittees(address[] calldata newCommittees, uint256 proposalId) external;
 
-    function perpareContractUpgrade(
+    function prepareContractUpgrade(
         address proxyContractAddress,
         address newImplementAddress
     ) external returns (uint);
@@ -269,7 +269,7 @@ interface ISourceDevGroup {
 
     enum ProjectResult {
         // still in progress, no result
-        Inprogress,
+        InProgress,
         // over time after endDate
         Expired,
         // project failed
@@ -1080,7 +1080,7 @@ interface ITwoStepWhitelistInvestment {
     }
 
     function startInvestment(startInvestmentParam calldata param) external payable;
-    function endInventment(uint256 investmentId) external;
+    function endInvestment(uint256 investmentId) external;
     function invest(uint256 investmentId, uint256 amount) external;
     function getInvestmentInfo(uint256 investmentId) external view returns (InvestmentInfo memory);
     function isInWhiteList(uint256 investmentId, address addr) external view returns (bool);

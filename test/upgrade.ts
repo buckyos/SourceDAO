@@ -45,7 +45,7 @@ describe("upgrade", () => {
         const newProxyAddress = await upgrades.deployImplementation(CommitteeFactory, {kind: 'uups'});
         console.log("deployed impl contract address:", newProxyAddress);
 
-        let receipt = await (await committee.perpareContractUpgrade(committee.address, newProxyAddress as string)).wait();
+        let receipt = await (await committee.prepareContractUpgrade(committee.address, newProxyAddress as string)).wait();
         let proposalId = receipt.events![0].args![0];
         console.log('upgrade proposal id', proposalId);
 

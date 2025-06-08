@@ -18,7 +18,7 @@ async function main() {
     const committee = (await ethers.getContractFactory("SourceDaoCommittee")).attach(await mainDao.committee());
     
     console.log("begin update purpose");
-    let receipt = await (await committee.perpareContractUpgrade(contractProxyAddress, implAddress)).wait();
+    let receipt = await (await committee.prepareContractUpgrade(contractProxyAddress, implAddress)).wait();
     console.log("receipt log: ", JSON.stringify(receipt.logs));
     let proposalId = receipt.events![0].args![0];
 

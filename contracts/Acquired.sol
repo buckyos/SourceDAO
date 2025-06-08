@@ -82,7 +82,7 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
         investmentCount++;
     }
 
-    function endInventment(uint256 investmentId) external nonReentrant {
+    function endInvestment(uint256 investmentId) external nonReentrant {
         Investment storage investment = investments[investmentId];
 
         require(msg.sender == investment.investor, "only investor can end investment");

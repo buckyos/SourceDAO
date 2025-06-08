@@ -97,7 +97,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
 
     /**
      * Get the total staked amount of the specified cycle
-     * @param cycleIndex the cycle index, shoule be less than or equal to the current cycle index
+     * @param cycleIndex the cycle index, should be less than or equal to the current cycle index
      * @return the total staked amount of the specified cycle
      */
     function getTotalStaked(uint256 cycleIndex) external view returns (uint256) {

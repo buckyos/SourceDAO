@@ -79,20 +79,20 @@ Determines if someone is a member of a committee
 #### members() external view returns (address[] memory)
 Returns all current committee members
 
-#### perpareAddMember(address member) external returns (uint)
+#### prepareAddMember(address member) external returns (uint)
 Initiate a proposal to add a committee member, returns the id of the proposal
 
 #### addCommitteeMember(address member, uint proposalId)
-Add committee member, the member passed in here and the ID returned by perpareAddMember must correspond, otherwise the execution fails.
+Add committee member, the member passed in here and the ID returned by prepareAddMember must correspond, otherwise the execution fails.
 
-#### perpareRemoveMember(address member) external returns (uint)
+#### prepareRemoveMember(address member) external returns (uint)
 Initiate a proposal to remove a committee member, return the id of the proposal
 
 #### removeCommitteeMember(address member, uint proposalId)
-Remove a committee member, the member passed in here must correspond to the ID returned by perpareAddMember, otherwise the execution fails.
+Remove a committee member, the member passed in here must correspond to the ID returned by prepareAddMember, otherwise the execution fails.
 
 ### Contract Upgrade Interface
-#### perpareContractUpgrade(address proxyContractAddress, address newImplementAddress) external returns (uint)
+#### prepareContractUpgrade(address proxyContractAddress, address newImplementAddress) external returns (uint)
 Initiates a contract upgrade proposal.
 - proxyContractAddress: address of the contract agent to be upgraded.
 - newImplementAddress: the address of the new contract implementation.

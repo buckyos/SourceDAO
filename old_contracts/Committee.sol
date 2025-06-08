@@ -10,7 +10,7 @@ import "./util.sol";
 
 // 委员会
 contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable {
-    struct PorposalExtra {
+    struct ProposalExtra {
         address from;
         uint threshold;
         uint agree;
@@ -24,7 +24,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     address[] committees;
 
     mapping(uint => Proposal) _proposals;
-    mapping(uint => PorposalExtra) _extras;
+    mapping(uint => ProposalExtra) _extras;
     mapping(uint => mapping(address => int)) proposalVotes;
 
     mapping(address => uint) contractUpgradeProposals;
@@ -69,7 +69,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             block.timestamp + duration,
             new address[](0),
             new address[](0),
-            ProposalState.Inprogress,
+            ProposalState.InProgress,
             root
         );
 
@@ -92,7 +92,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             true
         );
 
-        _extras[id] = PorposalExtra(tx.origin, threshold, 0, 0, endBlockNumber, 0, 0);
+        _extras[id] = ProposalExtra(tx.origin, threshold, 0, 0, endBlockNumber, 0, 0);
         return id;
     }
 
@@ -101,11 +101,11 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         address[] memory voters
     ) external override {
         Proposal storage proposal = _proposals[proposalId];
-        PorposalExtra storage extra = _extras[proposalId];
+        ProposalExtra storage extra = _extras[proposalId];
 
         require(extra.endBlockNumber != 0, "not full propose");
         require(
-            proposal.state == ProposalState.Inprogress,
+            proposal.state == ProposalState.InProgress,
             "invalid proposal state"
         );
         require(extra.endBlockNumber < block.number, "not yet settled");
@@ -163,7 +163,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     function support(uint proposalId, bytes32[] memory params) external override returns (bool) {
         Proposal storage proposal = _proposals[proposalId];
         require(
-            proposal.state == ProposalState.Inprogress,
+            proposal.state == ProposalState.InProgress,
             "invalid proposal state"
         );
         require(block.timestamp < proposal.expired, "proposal expired");
@@ -183,7 +183,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     function reject(uint proposalId, bytes32[] memory params) external override returns (bool) {
         Proposal storage proposal = _proposals[proposalId];
         require(
-            proposal.state == ProposalState.Inprogress,
+            proposal.state == ProposalState.InProgress,
             "invalid proposal state"
         );
         require(block.timestamp < proposal.expired, "proposal expired");
@@ -218,10 +218,10 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     function _settleProposal (uint proposalId) internal returns (ProposalResult) {
         Proposal storage proposal = _proposals[proposalId];
         
-        if (proposal.state == ProposalState.Inprogress) {
-            PorposalExtra memory extra = _extras[proposalId];
+        if (proposal.state == ProposalState.InProgress) {
+            ProposalExtra memory extra = _extras[proposalId];
             require(extra.endBlockNumber == 0, "cannot settle full proposal");
-            // Proposal in the Inprogress state, try to calculate the ratio of votes
+            // Proposal in the InProgress state, try to calculate the ratio of votes
             uint agreed = 0;
             uint rejected = 0;
             for (uint i = 0; i < committees.length; i++) {
@@ -277,7 +277,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         return _proposals[proposalId];
     }
 
-    function _perpareParams(
+    function _prepareParams(
         address member,
         bool isAdd
     ) internal pure returns (bytes32[] memory) {
@@ -287,23 +287,23 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         return params;
     }
 
-    function perpareAddMember(address member) external returns (uint) {
+    function prepareAddMember(address member) external returns (uint) {
         require(isMember(msg.sender), "only committee can add member");
-        bytes32[] memory params = _perpareParams(member, true);
+        bytes32[] memory params = _prepareParams(member, true);
 
         return _propose(address(this), 7 days, params, false);
     }
 
-    function perpareRemoveMember(address member) external returns (uint) {
+    function prepareRemoveMember(address member) external returns (uint) {
         require(isMember(msg.sender), "only committee can remove member");
-        bytes32[] memory params = _perpareParams(member, false);
+        bytes32[] memory params = _prepareParams(member, false);
 
         return _propose(address(this), 7 days, params, false);
     }
 
     // Add a committee member
     function addCommitteeMember(address member, uint proposalId) external {
-        bytes32[] memory params = _perpareParams(member, true);
+        bytes32[] memory params = _prepareParams(member, true);
         require(
             _takeResult(proposalId, params) == ProposalResult.Accept,
             "proposal not accepted"
@@ -323,7 +323,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     }
 
     function removeCommitteeMember(address member, uint proposalId) external {
-        bytes32[] memory params = _perpareParams(member, false);
+        bytes32[] memory params = _prepareParams(member, false);
         require(
             _takeResult(proposalId, params) == ProposalResult.Accept,
             "proposal not accepted"
@@ -342,7 +342,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         emit MemberRemoved(member);
     }
 
-    function _prepareSetComitteesParam(address[] calldata newCommittees) pure internal returns(bytes32[] memory) {
+    function _prepareSetCommitteesParam(address[] calldata newCommittees) pure internal returns(bytes32[] memory) {
         bytes32[] memory params = new bytes32[](newCommittees.length + 1);
         for (uint i = 0; i < newCommittees.length; i++) {
             params[i] = bytes32(uint256(uint160(newCommittees[i])));
@@ -357,13 +357,13 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             "only committee can set member"
         );
 
-        bytes32[] memory params = _prepareSetComitteesParam(newCommittees);
+        bytes32[] memory params = _prepareSetCommitteesParam(newCommittees);
 
         return _propose(address(this), 7 days, params, false);
     }
 
     function setCommittees(address[] calldata newCommittees, uint256 proposalId) public {
-        bytes32[] memory params = _prepareSetComitteesParam(newCommittees);
+        bytes32[] memory params = _prepareSetCommitteesParam(newCommittees);
         require(
             _takeResult(proposalId, params) == ProposalResult.Accept,
             "proposal not accepted"
@@ -376,7 +376,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         _setProposalExecuted(proposalId, true);
     }
 
-    function perpareContractUpgrade(
+    function prepareContractUpgrade(
         address proxyContractAddress,
         address newImplementAddress
     ) external override returns (uint) {

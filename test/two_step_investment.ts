@@ -134,7 +134,7 @@ describe("TwoStepInvestment", () => {
 
         await expect(investment.connect(signers[1]).invest(1, ethers.parseEther("30"))).to.be.revertedWith("over limit");
         await expect(investment.connect(signers[3]).invest(1, ethers.parseEther("30"))).to.be.revertedWith("not in whitelist");
-        await expect(investment.connect(signers[0]).endInventment(1)).to.be.revertedWith("not all token sold out");
+        await expect(investment.connect(signers[0]).endInvestment(1)).to.be.revertedWith("not all token sold out");
 
         console.log("signers 2 invest 60")
         let invest2Tx = await investment.connect(signers[2]).invest(1, ethers.parseEther("60"));
@@ -150,13 +150,13 @@ describe("TwoStepInvestment", () => {
         let invest3Tx = await investment.connect(signers[2]).invest(1, ethers.parseEther("10"));
         await expect(invest3Tx).to.be.changeTokenBalance(daoToken, signers[2], ethers.parseEther("-10"));
         await expect(invest3Tx).to.changeTokenBalance(testToken, signers[2], ethers.parseUnits("50", await testToken.decimals()));
-        await expect(investment.connect(signers[0]).endInventment(1)).to.be.revertedWith("not all token sold out");
+        await expect(investment.connect(signers[0]).endInvestment(1)).to.be.revertedWith("not all token sold out");
 
         // end invest
         mine(2, {interval: 24*60*60});
         await expect(investment.connect(signers[1]).invest(1, ethers.parseEther("10"))).to.be.revertedWith("investment end");
         console.log("signers 0 end investment")
-        let investEndTx = await investment.connect(signers[0]).endInventment(1);
+        let investEndTx = await investment.connect(signers[0]).endInvestment(1);
         await expect(investEndTx).to.be.changeTokenBalance(testToken, signers[0], ethers.parseUnits("50", await testToken.decimals()));
         await expect(investEndTx).to.changeTokenBalance(daoToken, signers[0], ethers.parseEther("90"));
 
@@ -190,7 +190,7 @@ describe("TwoStepInvestment", () => {
 
         await expect(investment.connect(signers[1]).invest(2, 30)).to.be.revertedWith("over limit");
         await expect(investment.connect(signers[3]).invest(2, 30)).to.be.revertedWith("not in whitelist");
-        await expect(investment.connect(signers[0]).endInventment(2)).to.be.revertedWith("not all token sold out");
+        await expect(investment.connect(signers[0]).endInvestment(2)).to.be.revertedWith("not all token sold out");
 
         console.log("signers 2 invest 60")
         let invest2Tx = await investment.connect(signers[2]).invest(2, 60);
@@ -207,13 +207,13 @@ describe("TwoStepInvestment", () => {
         let invest3Tx = await investment.connect(signers[2]).invest(2, 10);
         await expect(invest3Tx).to.be.changeTokenBalance(daoToken, signers[2], -10);
         await expect(invest3Tx).to.changeEtherBalance(signers[2], 2);
-        await expect(investment.connect(signers[0]).endInventment(2)).to.be.revertedWith("not all token sold out");
+        await expect(investment.connect(signers[0]).endInvestment(2)).to.be.revertedWith("not all token sold out");
 
         // end invest
         mine(2, {interval: 24*60*60});
         await expect(investment.connect(signers[1]).invest(2, 10)).to.be.revertedWith("investment end");
         console.log("signers 0 end investment")
-        let investEndTx = await investment.connect(signers[0]).endInventment(2);
+        let investEndTx = await investment.connect(signers[0]).endInvestment(2);
         await expect(investEndTx).to.be.changeEtherBalance(signers[0], 2);
         await expect(investEndTx).to.changeTokenBalance(daoToken, signers[0], 90);
 
@@ -242,7 +242,7 @@ describe("TwoStepInvestment", () => {
         await (await investment.connect(signers[1]).invest(3, ethers.parseEther("40"))).wait();
         await (await investment.connect(signers[2]).invest(3, ethers.parseEther("60"))).wait();
 
-        let endTx = await investment.endInventment(3);
+        let endTx = await investment.endInvestment(3);
 
         await expect(endTx).to.be.changeTokenBalance(daoToken, signers[0], ethers.parseEther("100"));
 
@@ -258,7 +258,7 @@ describe("TwoStepInvestment", () => {
         })).wait();
 
         await (await investment.connect(signers[1]).invest(4, ethers.parseEther("40"))).wait();
-        let endTx2 = await investment.endInventment(4);
+        let endTx2 = await investment.endInvestment(4);
 
         await expect(endTx2).to.be.changeTokenBalance(daoToken, signers[0], ethers.parseEther("40"));
         await expect(endTx2).to.be.changeTokenBalance(testToken, signers[0], ethers.parseUnits("60", await testToken.decimals()));

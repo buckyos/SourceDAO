@@ -81,7 +81,7 @@ contract ProjectManagement is
         project.extraTokens = extraTokens;
         project.extraTokenAmounts = extraTokenAmunts;
         project.state = ProjectState.Preparing;
-        project.result = ProjectResult.Inprogress;
+        project.result = ProjectResult.InProgress;
 
         bytes32[] memory params = _makeProjectParams(projectId, project);
 
@@ -102,7 +102,7 @@ contract ProjectManagement is
         require(project.manager != address(0), "This project doesn't exist");
         require(project.manager == msg.sender, "Must be called by the project manager");
 
-        // prepareing状态下提案被拒绝，说明项目本身没有被接受
+        // preparing状态下提案被拒绝，说明项目本身没有被接受
         // accept状态下提案被拒绝，说明项目本身的开发失败
         require(project.state == ProjectState.Preparing || project.state == ProjectState.Accepting, "state error");
 
