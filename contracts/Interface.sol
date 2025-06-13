@@ -464,6 +464,11 @@ interface ISourceDAODividend {
 }
 
 interface IAcquired {
+    /**
+     * TokenRatio为标准代币单位，不涉及到代币精度，精度在合约内部自动处理
+     * 例：使用1 USDC收购1 DAO Token，则TokenRatio为{tokenAmount: 1, daoTokenAmount: 1}
+     * 例：使用0.5 USDC收购1 DAO Token，则TokenRatio为{tokenAmount: 5, daoTokenAmount: 10}
+     */
     struct TokenRatio {
         uint256 tokenAmount;
         uint256 daoTokenAmount;
