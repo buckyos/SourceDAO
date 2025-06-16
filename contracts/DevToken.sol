@@ -37,6 +37,7 @@ contract DevToken is
             totalInited += initAmount[i];
         }
 
+        require(totalInited <= __totalSupply, "initAmount exceeds totalSupply");
         _mint(address(this), __totalSupply - totalInited);
     }
 
@@ -56,6 +57,8 @@ contract DevToken is
             , "invalid transfer"
         );
         super._update(from, to, amount);
+
+        emit TransferRestricted(from, to, amount);
     }
 
     function mintDevToken(uint256 amount) external override {

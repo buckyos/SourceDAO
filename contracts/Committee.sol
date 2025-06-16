@@ -119,6 +119,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         // 如果正式版已经发布，将devRatio固定为finalRatio
         if (devRatio != finalRatio) {
             if (getMainContractAddress().project().versionReleasedTime(mainProjectName, finalVersion) > 0) {
+                emit DevRatioChanged(devRatio, finalRatio);
                 devRatio = finalRatio;
             }
         }
@@ -457,6 +458,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             "proposal not accepted"
         );
 
+        emit DevRatioChanged(devRatio, newDevRatio);
         devRatio = newDevRatio;
 
         _setProposalExecuted(proposalId, true);
