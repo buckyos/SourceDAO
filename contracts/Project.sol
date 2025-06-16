@@ -4,13 +4,15 @@ pragma solidity ^0.8.18;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./Interface.sol";
 import "./SourceDaoUpgradeable.sol";
 
 contract ProjectManagement is
     ISourceProject,
     Initializable,
-    SourceDaoContractUpgradeable {
+    SourceDaoContractUpgradeable,
+    ReentrancyGuardUpgradeable {
     struct ContributionInfo {
         address contributor;
         uint64 value;
@@ -41,6 +43,7 @@ contract ProjectManagement is
 
     function initialize(uint initProjectIdCounter, address mainAddr) initializer public {
         __SourceDaoContractUpgradable_init(mainAddr);
+        
         projectIdCounter = initProjectIdCounter;
     }
 
@@ -62,7 +65,7 @@ contract ProjectManagement is
         return params;
     }
 
-    function createProject(uint budget, bytes32 name, uint64 version, uint64 startDate, uint64 endDate, address[] calldata extraTokens, uint256[] calldata extraTokenAmunts) external returns(uint ProjectId) {
+    function createProject(uint budget, bytes32 name, uint64 version, uint64 startDate, uint64 endDate, address[] calldata extraTokens, uint256[] calldata extraTokenAmunts) external returns(uint ProjectId) nonReentrant {
         require(projectLatestVersions[name].version < version, "Version must be greater than the latest version");
 
         // budget不能超过devToken总量的2.5%
@@ -96,7 +99,7 @@ contract ProjectManagement is
         return projectId;
     }
 
-    function cancelProject(uint projectId) external {
+    function cancelProject(uint projectId) external nonReentrant {
         ProjectBrief storage project = projects[projectId];
 
         require(project.manager != address(0), "This project doesn't exist");
@@ -116,7 +119,7 @@ contract ProjectManagement is
         }
     }
 
-    function promoteProject(uint projectId) external {
+    function promoteProject(uint projectId) external nonReentrant {
         ProjectBrief storage project = projects[projectId];
 
         require(project.manager != address(0), "This project doesn't exist");
@@ -165,7 +168,7 @@ contract ProjectManagement is
         emit ProjectChange(projectId, project.proposalId, oldState, project.state);
     }
 
-    function acceptProject(uint projectId, ProjectResult result, Contribution[] calldata contributions) external {
+    function acceptProject(uint projectId, ProjectResult result, Contribution[] calldata contributions) external nonReentrant {
         ProjectBrief storage project = projects[projectId];
 
         require(project.manager != address(0), "This project doesn't exist");
@@ -204,7 +207,7 @@ contract ProjectManagement is
         }
     }
 
-    function withdrawContributions(uint[] calldata projectIds) external returns(uint) {
+    function withdrawContributions(uint[] calldata projectIds) external returns(uint) nonReentrant {
         uint claimAmount = 0;
         for (uint j = 0; j < projectIds.length; j++) {
             uint projectId = projectIds[j];
