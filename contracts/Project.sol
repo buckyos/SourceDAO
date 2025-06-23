@@ -65,7 +65,7 @@ contract ProjectManagement is
         return params;
     }
 
-    function createProject(uint budget, bytes32 name, uint64 version, uint64 startDate, uint64 endDate, address[] calldata extraTokens, uint256[] calldata extraTokenAmunts) external returns(uint ProjectId) nonReentrant {
+    function createProject(uint budget, bytes32 name, uint64 version, uint64 startDate, uint64 endDate, address[] calldata extraTokens, uint256[] calldata extraTokenAmunts) external nonReentrant returns(uint ProjectId) {
         require(projectLatestVersions[name].version < version, "Version must be greater than the latest version");
 
         // budget不能超过devToken总量的2.5%
@@ -207,7 +207,7 @@ contract ProjectManagement is
         }
     }
 
-    function withdrawContributions(uint[] calldata projectIds) external returns(uint) nonReentrant {
+    function withdrawContributions(uint[] calldata projectIds) external nonReentrant returns(uint) {
         uint claimAmount = 0;
         for (uint j = 0; j < projectIds.length; j++) {
             uint projectId = projectIds[j];

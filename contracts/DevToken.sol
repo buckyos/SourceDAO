@@ -57,8 +57,6 @@ contract DevToken is
             , "invalid transfer"
         );
         super._update(from, to, amount);
-
-        emit TransferRestricted(from, to, amount);
     }
 
     function mintDevToken(uint256 amount) external override {

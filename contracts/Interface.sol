@@ -551,17 +551,4 @@ interface ISourceDao {
      * @dev Set the address of the dev token contract.
      * @param newAddress The address of the new dev token contract.
      */
-
-    /**
-     * Transfer is restricted to certain addresses or conditions.
-     * This event is emitted when a transfer is restricted.
-     * @param from The address from which the tokens are transferred.
-     * @param to The address to which the tokens are transferred.
-     * @param amount The amount of tokens transferred.
-     */
-    event TransferRestricted(
-        address indexed from,
-        address indexed to,
-        uint256 amount
-    );
 }
