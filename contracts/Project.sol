@@ -28,6 +28,9 @@ contract ProjectManagement is
 
     uint public projectIdCounter;
 
+    uint public minProjectFinishDuration;
+    uint public latestProjectFinishTime;
+
     
     mapping(bytes32 => VersionInfo) private projectLatestVersions;
 
@@ -45,6 +48,8 @@ contract ProjectManagement is
         __SourceDaoContractUpgradable_init(mainAddr);
         
         projectIdCounter = initProjectIdCounter;
+        minProjectFinishDuration = 7 days;
+        latestProjectFinishTime = 0;
     }
 
     function _makeProjectParams(uint projectId, ProjectBrief memory project) pure internal returns (bytes32[] memory) {
@@ -70,8 +75,6 @@ contract ProjectManagement is
 
         // budget不能超过devToken总量的2.5%
         require(budget <= getMainContractAddress().devToken().totalSupply() * 25 / 1000, "Budget exceeds 2.5% of total supply");
-        // 每个版本之间最少间隔7天
-        require(block.timestamp - projectLatestVersions[name].versionTime > 7 days, "Project version must be at least 7 days apart");
 
         uint projectId = projectIdCounter++;
         ProjectBrief storage project = projects[projectId];
@@ -134,6 +137,8 @@ contract ProjectManagement is
         if (project.state == ProjectState.Preparing) {
             project.state = ProjectState.Developing;
         } else if (project.state == ProjectState.Accepting) {
+            // 任意两个版本间的结算时间不能小于7天
+            require(block.timestamp - latestProjectFinishTime > minProjectFinishDuration, "Project finish must be at least 7 days apart");
             project.state = ProjectState.Finished;
 
             uint coefficient = 0;
@@ -153,6 +158,7 @@ contract ProjectManagement is
             if (projectLatestVersions[project.projectName].version < project.version) {
                 projectLatestVersions[project.projectName].version = project.version;
                 projectLatestVersions[project.projectName].versionTime = block.timestamp;
+                latestProjectFinishTime = block.timestamp;
             }
 
             // 如果coefficient不是100，在这里把多余的部分还给项目manager
