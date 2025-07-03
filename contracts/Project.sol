@@ -158,8 +158,9 @@ contract ProjectManagement is
             if (projectLatestVersions[project.projectName].version < project.version) {
                 projectLatestVersions[project.projectName].version = project.version;
                 projectLatestVersions[project.projectName].versionTime = block.timestamp;
-                latestProjectFinishTime = block.timestamp;
             }
+
+            latestProjectFinishTime = block.timestamp;
 
             // 如果coefficient不是100，在这里把多余的部分还给项目manager
             if (coefficient < 100) {
@@ -205,11 +206,17 @@ contract ProjectManagement is
         require(msg.sender == project.manager, "Must be called by the project manager");
 
         ProjectDetail storage detail = projectDetails[projectId];
+        bool updated = false;
         for (uint i = 0; i < detail.contributions.length; i++) {
             if (detail.contributions[i].contributor == contribution.contributor) {
                 detail.contributions[i].value = contribution.value;
+                updated = true;
                 break;
             }
+        }
+
+        if (!updated) {
+            detail.contributions.push(ContributionInfo(contribution.contributor, contribution.value, false));
         }
     }
 
