@@ -175,6 +175,7 @@ contract ProjectManagement is
         emit ProjectChange(projectId, project.proposalId, oldState, project.state);
     }
 
+    // 同一个address只允许在contributions出现一次。出现多次的project version应被视为错误，拒绝结算
     function acceptProject(uint projectId, ProjectResult result, Contribution[] calldata contributions) external nonReentrant {
         ProjectBrief storage project = projects[projectId];
 
