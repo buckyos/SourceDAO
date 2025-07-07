@@ -11,8 +11,16 @@ function convertVersion(version) {
     return major*10000000000+minor*100000+patch
 }
 
+function parseVersion(version) {
+    // from uint to version string
+    let major = Math.floor(version / 10000000000);
+    let minor = Math.floor((version % 10000000000) / 100000);
+    let patch = version % 100000;
+    return `${major}.${minor}.${patch}`;
+}
+
 function test(version) {
-    console.log(`version: ${version}, converted: ${convertVersion(version)}`);
+    console.log(`version: ${version}, converted: ${convertVersion(version)},  parsed: ${parseVersion(convertVersion(version))}`);
 }
 
 test("0.8.20");
