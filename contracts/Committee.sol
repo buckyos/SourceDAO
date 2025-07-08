@@ -39,7 +39,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     }
 
     // devRatio支持两位小数，必须大于100, 使用时除100
-    function initialize(address[] memory initialCommittees, uint initProposalId, uint _initDevRatio, bytes2 _mainProjectName, uint64 _finalVersion, uint _finalDevRatio, address mainAddr) public initializer {
+    function initialize(address[] memory initialCommittees, uint initProposalId, uint _initDevRatio, bytes32 _mainProjectName, uint64 _finalVersion, uint _finalDevRatio, address mainAddr) public initializer {
         require(_initDevRatio > 100, "dev ratio must greater than 100");
         require(_finalDevRatio > 100, "final dev ratio must greater than 100");
 
