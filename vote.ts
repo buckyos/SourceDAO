@@ -7,6 +7,45 @@ import { sign } from "node:crypto";
 
 const MAIN_ADDRESS = "0x191Af8663fF88823d6b226621DC4700809D042fa"; // opmain main contract address
 
+function zeroPadLeft(value: number | string | undefined): string{
+  if (undefined === value) {
+    throw new Error('value is undefined')
+  }
+  const big = ethers.toBigInt(value.toString())
+  const hex = ethers.toBeHex(big)
+  const result = ethers.zeroPadValue(hex, 32)
+  return result
+}
+
+function parseParams(params: any): any {
+    switch (params[1]) {
+        case "createProject":
+            return [
+                zeroPadLeft(params[0].projectId),
+                zeroPadLeft(params[0].budget),
+                zeroPadLeft(params[0].start_date),
+                zeroPadLeft(params[0].end_date),
+                ethers.encodeBytes32String('createProject'),
+            ]
+        case "acceptProject":
+            return [
+                zeroPadLeft(params[0].projectId),
+                zeroPadLeft(params[0].budget),
+                zeroPadLeft(params[0].start_date),
+                zeroPadLeft(params[0].end_date),
+                ethers.encodeBytes32String('createProject'),
+            ]
+        case "upgradeContract":
+            return [
+                ethers.zeroPadValue(params[0].contractProxyAddress as string, 32),
+                ethers.zeroPadValue(params[0].implAddress as string, 32),
+                ethers.encodeBytes32String("upgradeContract"),
+            ]
+        default:
+            throw new Error(`Unsupported proposal type: ${params[1]}.`);
+    }
+}
+
 async function vote() {
     console.log(`Using network ${network.name}, endpoint: ${(network.config as HttpNetworkConfig).url}`);
     
@@ -56,7 +95,7 @@ async function vote() {
     }
 
     let paramStr = await rl.question("Please input the parameters for the vote: ");
-    let params = JSON.parse(paramStr);
+    let params = parseParams(JSON.parse(paramStr));
 
     if (vote) {
         console.log(`Supporting proposal ${proposal_id}...`);
