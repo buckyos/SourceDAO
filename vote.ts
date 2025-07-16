@@ -3,9 +3,21 @@ import readline from "node:readline/promises";
 
 import { ethers, network } from "hardhat";
 import { HttpNetworkConfig } from "hardhat/types";
-import { sign } from "node:crypto";
 
-const MAIN_ADDRESS = "0x191Af8663fF88823d6b226621DC4700809D042fa"; // opmain main contract address
+const MAIN_ADDRESS = "0x2fc3186176B80EA829A7952b874F36f7cb8bd184"; // opmain main contract address
+
+function convertVersion(version: string): number {
+    let versions = version.split('.');
+    if (versions.length < 3) {
+        throw new Error(`Invalid version format: ${version}. Expected format is 'major.minor.patch'.`);
+    }
+
+    let major = parseInt(versions[0], 10);
+    let minor = parseInt(versions[1], 10);
+    let patch = parseInt(versions[2], 10);
+
+    return major*10000000000+minor*100000+patch
+}
 
 function zeroPadLeft(value: number | string | undefined): string{
   if (undefined === value) {
@@ -17,32 +29,35 @@ function zeroPadLeft(value: number | string | undefined): string{
   return result
 }
 
-function parseParams(params: any): any {
-    switch (params[1]) {
+function parseParams(params: any[]): any {
+    let propose_type = params[params.length - 1];
+    switch (propose_type) {
         case "createProject":
             return [
-                zeroPadLeft(params[0].projectId),
-                zeroPadLeft(params[0].budget),
-                zeroPadLeft(params[0].start_date),
-                zeroPadLeft(params[0].end_date),
-                ethers.encodeBytes32String('createProject'),
+                zeroPadLeft(params[0]),                 // project id
+                ethers.encodeBytes32String(params[1]), // version
+                zeroPadLeft(convertVersion(params[2])),                 // project name
+                zeroPadLeft(params[3]),
+                zeroPadLeft(params[4]),
+                ethers.encodeBytes32String(params[5]),
             ]
         case "acceptProject":
             return [
-                zeroPadLeft(params[0].projectId),
-                zeroPadLeft(params[0].budget),
-                zeroPadLeft(params[0].start_date),
-                zeroPadLeft(params[0].end_date),
-                ethers.encodeBytes32String('createProject'),
+                zeroPadLeft(params[0]),                 // project id
+                ethers.encodeBytes32String(params[1]), // version
+                zeroPadLeft(convertVersion(params[2])),                 // project name
+                zeroPadLeft(params[3]),
+                zeroPadLeft(params[4]),
+                ethers.encodeBytes32String(params[5]),
             ]
         case "upgradeContract":
             return [
-                ethers.zeroPadValue(params[0].contractProxyAddress as string, 32),
-                ethers.zeroPadValue(params[0].implAddress as string, 32),
-                ethers.encodeBytes32String("upgradeContract"),
+                ethers.zeroPadValue(params[0] as string, 32),
+                ethers.zeroPadValue(params[1] as string, 32),
+                ethers.encodeBytes32String(propose_type),
             ]
         default:
-            throw new Error(`Unsupported proposal type: ${params[1]}.`);
+            throw new Error(`Unsupported proposal type: ${propose_type}.`);
     }
 }
 
@@ -77,6 +92,10 @@ async function vote() {
     }
 
     let proposeInfo = await committee.proposalOf(proposal_id);
+    if (proposeInfo.origin === ethers.ZeroAddress) {
+        console.error(`Proposal ${proposal_id} not found.`);
+        return;
+    }
     console.log(`Propoal ${proposal_id} info:`)
     console.log(`\torigin: ${proposeInfo.origin}`);
     console.log(`\State: ${proposeInfo.state}`);
@@ -94,8 +113,23 @@ async function vote() {
         }
     }
 
-    let paramStr = await rl.question("Please input the parameters for the vote: ");
-    let params = parseParams(JSON.parse(paramStr));
+    console.log("getting proposal parameters from BuckyOS SourceDAO Backend:");
+    let proposal_result = await (await fetch(`https://dao.buckyos.org/api/proposal/${proposal_id}`)).json();
+    if (proposal_result.code !== 0) {
+        console.error(`Failed to get proposal ${proposal_id} parameters: err code ${proposal_result.code}, ${proposal_result.message}`);
+        return;
+    }
+
+    let param = proposal_result.data.params;
+    console.log(`Please check proposal ${proposal_id} parameters:`, param);
+
+    let confirm = await rl.question(`Do you confirm to vote ${vote?"support":"reject"} for propose ${proposal_id}? (y/n): `);
+    if (confirm !== 'y' && confirm !== 'yes') {
+        console.log("Vote cancelled.");
+        return;
+    }
+
+    let params = parseParams(param);
 
     if (vote) {
         console.log(`Supporting proposal ${proposal_id}...`);
