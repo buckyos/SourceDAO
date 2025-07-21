@@ -76,6 +76,15 @@ interface ISourceDaoCommittee {
         bytes32 paramroot;
     }
 
+    struct ProposalExtra {
+        address from;
+        uint threshold;
+        uint agree;
+        uint reject;
+        uint settled;
+        uint totalReleasedToken;
+    }
+
     /**
      * @dev dev ratio changed
      * @param oldDevRatio the old dev ratio
@@ -169,6 +178,10 @@ interface ISourceDaoCommittee {
     function proposalOf(
         uint proposalId
     ) external view returns (Proposal memory);
+
+    function proposalExtraOf(
+        uint proposalId
+    ) external view returns (ProposalExtra memory);
 
     function settleProposal(uint proposalId) external returns (ProposalResult);
 

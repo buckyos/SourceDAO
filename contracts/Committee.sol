@@ -10,15 +10,6 @@ import "./util.sol";
 
 // 委员会
 contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable {
-    struct ProposalExtra {
-        address from;
-        uint threshold;
-        uint agree;
-        uint reject;
-        uint settled;
-        uint totalReleasedToken;
-    }
-
     uint curProposalId;
     address[] committees;
 
@@ -309,6 +300,12 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         uint proposalId
     ) external view override returns (Proposal memory) {
         return proposals[proposalId];
+    }
+
+    function proposalExtraOf(
+        uint proposalId
+    ) external view override returns (ProposalExtra memory) {
+        return proposalExtras[proposalId];
     }
 
     function _prepareParams(
