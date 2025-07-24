@@ -404,7 +404,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             proposalId = _propose(address(this), 7 days, params, false);
         }
 
-        return _propose(address(this), 7 days, params, false);
+        return proposalId;
     }
 
     function setCommittees(address[] calldata newCommittees, uint256 proposalId) public {
