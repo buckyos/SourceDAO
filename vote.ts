@@ -56,6 +56,13 @@ function parseParams(params: any[]): any {
                 ethers.zeroPadValue(params[1] as string, 32),
                 ethers.encodeBytes32String(propose_type),
             ]
+        case "setCommittees":
+            let ret_params = [];
+            for (let i = 0; i < params.length - 1; i++) {
+                ret_params.push(ethers.zeroPadValue(params[i] as string, 32));
+            }
+            ret_params.push(ethers.encodeBytes32String(propose_type));
+            return ret_params;
         default:
             throw new Error(`Unsupported proposal type: ${propose_type}.`);
     }
@@ -100,6 +107,21 @@ async function vote() {
     console.log(`\torigin: ${proposeInfo.origin}`);
     console.log(`\State: ${proposeInfo.state}`);
     console.log(`\expired at: ${new Date(Number(proposeInfo.expired) * 1000).toLocaleString()}`);
+
+    let extra = await committee.proposalExtraOf(proposal_id);
+    if (extra.from !== ethers.ZeroAddress) {
+        console.log("This is a full proposal!");
+        console.log("calcuting your votes...");
+        let dev_token = await ethers.getContractAt("DevToken", await dao.devToken());
+        let dev_balance = await dev_token.balanceOf(await signer.getAddress());
+        let normal_token = await ethers.getContractAt("NormalToken", await dao.normalToken());
+        let normal_balance = await normal_token.balanceOf(await signer.getAddress());
+
+        let ratio = await committee.devRatio();
+        let totalVotes = dev_balance * ratio / 100n + normal_balance;
+
+        console.log(`You have ${ethers.formatUnits(dev_balance, 18)} dev tokens and ${ethers.formatUnits(normal_balance, 18)} normal tokens, total votes: ${ethers.formatUnits(totalVotes, 18)}`);
+    }
 
     let vote = undefined;
     while (vote === undefined) {
