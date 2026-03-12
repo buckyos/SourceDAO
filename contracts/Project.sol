@@ -70,8 +70,9 @@ contract ProjectManagement is
         return params;
     }
 
-    function createProject(uint budget, bytes32 name, uint64 version, uint64 startDate, uint64 endDate, address[] calldata extraTokens, uint256[] calldata extraTokenAmunts) external nonReentrant returns(uint ProjectId) {
+    function createProject(uint budget, bytes32 name, uint64 version, uint64 startDate, uint64 endDate, address[] calldata extraTokens, uint256[] calldata extraTokenAmounts) external nonReentrant returns(uint ProjectId) {
         require(projectLatestVersions[name].version < version, "Version must be greater than the latest version");
+        require(extraTokens.length == extraTokenAmounts.length, "extra token length mismatch");
 
         // budget不能超过devToken总量的2.5%
         require(budget <= getMainContractAddress().devToken().totalSupply() * 25 / 1000, "Budget exceeds 2.5% of total supply");
@@ -85,7 +86,7 @@ contract ProjectManagement is
         project.startDate = startDate;
         project.endDate = endDate;
         project.extraTokens = extraTokens;
-        project.extraTokenAmounts = extraTokenAmunts;
+        project.extraTokenAmounts = extraTokenAmounts;
         project.state = ProjectState.Preparing;
         project.result = ProjectResult.InProgress;
 
@@ -94,7 +95,7 @@ contract ProjectManagement is
         project.proposalId = getMainContractAddress().committee().propose(30 days, params);
 
         for (uint i = 0; i < extraTokens.length; i++) {
-            IERC20(extraTokens[i]).transferFrom(msg.sender, address(this), extraTokenAmunts[i]);
+            IERC20(extraTokens[i]).transferFrom(msg.sender, address(this), extraTokenAmounts[i]);
         }
 
         emit ProjectCreate(projectId, project.proposalId);
@@ -162,10 +163,10 @@ contract ProjectManagement is
 
             latestProjectFinishTime = block.timestamp;
 
-            // 如果coefficient不是100，在这里把多余的部分还给项目manager
+            // 如果coefficient低于100，在这里把未分配的部分还给项目manager
             if (coefficient < 100) {
                 for (uint i = 0; i < project.extraTokens.length; i++) {
-                    uint extraTokenAmount = project.extraTokenAmounts[i] * (coefficient - 100) / 100;
+                    uint extraTokenAmount = project.extraTokenAmounts[i] * (100 - coefficient) / 100;
                     IERC20(project.extraTokens[i]).transfer(project.manager, extraTokenAmount);
                 }
             }
@@ -182,6 +183,7 @@ contract ProjectManagement is
         require(project.manager != address(0), "This project doesn't exist");
         require(project.state == ProjectState.Developing, "state error");
         require(project.manager == msg.sender, "Must be called by the project manager");
+        require(contributions.length > 0, "No contributions");
 
         project.result = result;
 
@@ -191,6 +193,11 @@ contract ProjectManagement is
         }
 
         for (uint i = 0 ; i < contributions.length; i++) {
+            require(contributions[i].contributor != address(0), "Invalid contributor");
+            require(contributions[i].value > 0, "Invalid contribution");
+            for (uint j = i + 1; j < contributions.length; j++) {
+                require(contributions[i].contributor != contributions[j].contributor, "Duplicate contributor");
+            }
             projectDetail.contributions.push(ContributionInfo(contributions[i].contributor, contributions[i].value, false));
         }
 
@@ -205,6 +212,8 @@ contract ProjectManagement is
         require(project.manager != address(0), "This project doesn't exist");
         require(project.state == ProjectState.Accepting, "status error");
         require(msg.sender == project.manager, "Must be called by the project manager");
+        require(contribution.contributor != address(0), "Invalid contributor");
+        require(contribution.value > 0, "Invalid contribution");
 
         ProjectDetail storage detail = projectDetails[projectId];
         bool updated = false;
