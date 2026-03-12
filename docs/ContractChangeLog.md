@@ -652,3 +652,82 @@
 - `npm test -- --grep "acquired"` 通过
 - `npm test` 全量通过
 - 当前全量回归结果：`135 passing`
+
+---
+
+## 2026-03-12 SourceTokenLockup 变更记录
+
+### 合约
+
+- 合约：`SourceTokenLockup`
+- 文件：[contracts/TokenLockup.sol](contracts/TokenLockup.sol)
+- 相关测试：[test/lockup.ts](test/lockup.ts)
+
+### 背景
+
+`SourceTokenLockup` 的职责相对集中：在指定项目版本正式发布前接收锁仓分配，发布后按 180 天线性释放。
+
+它的高风险点主要不在复杂算术，而在于两个时间语义：
+
+1. 解锁是否从正确的发布时间开始生效
+2. 一旦进入解锁期，是否还能继续写入新的锁仓
+
+这一轮继续补边界测试后，暴露出一个真实缺陷：如果主项目版本已经 release，但还没有任何地址第一次调用 `claimTokens` 把 `unlockTime` 持久化，两个锁仓入口仍然允许继续写入新锁仓。
+
+### 修改目的
+
+本次修改目标有两个：
+
+1. 固定 `SourceTokenLockup` 在输入长度、解锁起点、部分领取后的剩余额度这些边界行为
+2. 阻止合约在项目版本已经发布后继续接受新的锁仓写入
+
+### 具体改动
+
+#### 1. 为锁仓入口增加“已进入解锁期”的统一判断
+
+修改位置：[contracts/TokenLockup.sol](contracts/TokenLockup.sol)
+
+本次新增内部函数 `_isUnlocked()`，并让以下两个入口统一使用它：
+
+1. `transferAndLock`
+2. `convertAndLock`
+
+修复前的问题是：
+
+1. 两个入口只检查 `unlockTime == 0`
+2. 但 `unlockTime` 只有在第一次 `claimTokens` 时才会从 `versionReleasedTime(...)` 持久化进状态变量
+3. 因此如果版本已经 release、只是还没人 claim，合约仍会错误地认为“尚未解锁”，继续接受新的锁仓
+
+这与合约和文档里的业务语义不一致，因为发布后的线性释放期已经开始，不应再让新的历史锁仓混入同一释放轨道。
+
+修复后：
+
+1. 只要 `unlockTime > 0`，视为已进入解锁期
+2. 或者即使 `unlockTime == 0`，只要 `project.versionReleasedTime(unlockProjectName, unlockProjectVersion) > 0`，也同样视为已进入解锁期
+
+这样即使首个 claim 还没发生，只要目标版本已经正式发布，新的锁仓写入就会被稳定拒绝。
+
+### 新增测试覆盖
+
+这轮对 `SourceTokenLockup` 重点新增了以下测试：
+
+1. `convertAndLock` / `transferAndLock` 输入数组长度不一致时必须拒绝
+2. 在精确的 release timestamp 上，可领取数量仍然应为 `0`
+3. 30 天部分解锁后，把当前可领取额度全部提完，再继续领取 1 个单位必须拒绝
+4. 项目版本已经 release 但首个 claim 还未发生时，两个锁仓入口都必须直接返回 `already Unlocked`
+
+### 风险说明
+
+这次修复的是真实业务状态缺陷，而不是纯测试补洞。
+
+如果不修：
+
+1. 发布后的新锁仓会混入一个已经开始线性释放的池子
+2. 后续用户看到的 `totalAssigned`、`getCanClaimTokens` 和实际释放节奏会偏离“发布前一次性锁定，发布后逐步释放”的原始语义
+3. 这种问题不会在简单 happy path 中立即暴露，但会在发布后补录锁仓、或运营流程滞后于链上 release 时引入账务和预期不一致
+
+### 验证结果
+
+- `npm test -- --grep "Lockup"` 通过
+- `npm test` 全量通过
+- 当前全量回归结果：`138 passing`

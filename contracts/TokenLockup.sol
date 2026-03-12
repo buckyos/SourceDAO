@@ -43,10 +43,14 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
         unlockTime = 0;
     }
 
+    function _isUnlocked() internal view returns (bool) {
+        return unlockTime > 0 || getMainContractAddress().project().versionReleasedTime(unlockProjectName, unlockProjectVersion) > 0;
+    }
+
     // transfer normal token to someone and lock it
     function transferAndLock(address[] calldata to, uint256[] calldata amount) external override nonReentrant {
         require(to.length == amount.length, "Input arrays must be of same length");
-        require(unlockTime == 0, "already Unlocked");
+        require(!_isUnlocked(), "already Unlocked");
 
         ISourceDAONormalToken token = getMainContractAddress().normalToken();
 
@@ -64,7 +68,7 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
     // convert dev token to normal token and lock it
     function convertAndLock(address[] calldata to, uint256[] calldata amount) external override nonReentrant {
         require(to.length == amount.length, "Input arrays must be of same length");
-        require(unlockTime == 0, "already Unlocked");
+        require(!_isUnlocked(), "already Unlocked");
 
         ISourceDAODevToken devToken = getMainContractAddress().devToken();
 

@@ -44,10 +44,15 @@ function projectProposalParams(
     ];
 }
 
-async function deployLockupFixture() {
+async function deployLockupFixture(options?: {
+    unlockProjectName?: string;
+    unlockVersion?: bigint;
+}) {
     const signers = await ethers.getSigners();
     const [owner, beneficiary] = signers;
     const releaseVersion = convertVersion("1.0.0");
+    const trackedUnlockProjectName = options?.unlockProjectName ?? MAIN_PROJECT_NAME;
+    const trackedUnlockVersion = options?.unlockVersion ?? releaseVersion;
 
     const dao = await deployUUPSProxy(ethers, "SourceDao");
     const daoAddress = await dao.getAddress();
@@ -82,8 +87,8 @@ async function deployLockupFixture() {
     await (await devToken.dev2normal(2_500)).wait();
 
     const lockup = await deployUUPSProxy(ethers, "SourceTokenLockup", [
-        MAIN_PROJECT_NAME,
-        releaseVersion,
+        trackedUnlockProjectName,
+        trackedUnlockVersion,
         daoAddress
     ]);
     await (await dao.setTokenLockupAddress(await lockup.getAddress())).wait();
@@ -97,7 +102,9 @@ async function deployLockupFixture() {
         devToken,
         normalToken,
         lockup,
-        releaseVersion
+        releaseVersion,
+        trackedUnlockProjectName,
+        trackedUnlockVersion
     };
 }
 
@@ -168,7 +175,70 @@ async function deployReleasedLockupFixture() {
     };
 }
 
+async function deployUnreleasedTrackedVersionLockupFixture() {
+    return deployLockupFixture({ unlockVersion: convertVersion("1.0.1") });
+}
+
 describe("Lockup", function () {
+    it("rejects lock operations with mismatched recipient and amount arrays", async function () {
+        const { owner, devToken, normalToken, lockup } = await networkHelpers.loadFixture(deployLockupFixture);
+
+        await (await devToken.approve(await lockup.getAddress(), 1_000)).wait();
+        await expect(lockup.convertAndLock([owner.address], [500, 500])).to.be.revertedWith(
+            "Input arrays must be of same length"
+        );
+
+        await (await normalToken.approve(await lockup.getAddress(), 1_000)).wait();
+        await expect(lockup.transferAndLock([owner.address], [500, 500])).to.be.revertedWith(
+            "Input arrays must be of same length"
+        );
+    });
+
+    it("treats empty and zero-amount lock batches as no-op state changes before release", async function () {
+        const { owner, beneficiary, devToken, normalToken, lockup } = await networkHelpers.loadFixture(deployLockupFixture);
+
+        const ownerDevBefore = await devToken.balanceOf(owner.address);
+        const ownerNormalBefore = await normalToken.balanceOf(owner.address);
+
+        await (await lockup.convertAndLock([], [])).wait();
+        await (await lockup.transferAndLock([], [])).wait();
+
+        await (await devToken.approve(await lockup.getAddress(), 0)).wait();
+        await (await lockup.convertAndLock([owner.address, beneficiary.address], [0, 0])).wait();
+
+        await (await normalToken.approve(await lockup.getAddress(), 0)).wait();
+        await (await lockup.transferAndLock([owner.address, beneficiary.address], [0, 0])).wait();
+
+        expect(await devToken.balanceOf(owner.address)).to.equal(ownerDevBefore);
+        expect(await normalToken.balanceOf(owner.address)).to.equal(ownerNormalBefore);
+        expect(await lockup.totalAssigned(owner.address)).to.equal(0n);
+        expect(await lockup.totalAssigned(beneficiary.address)).to.equal(0n);
+        expect(await lockup.totalAssigned(ethers.ZeroAddress)).to.equal(0n);
+        expect(await lockup.totalClaimed(ethers.ZeroAddress)).to.equal(0n);
+    });
+
+    it("aggregates repeated recipient entries across multiple lock batches", async function () {
+        const { owner, beneficiary, devToken, normalToken, lockup } = await networkHelpers.loadFixture(deployLockupFixture);
+
+        await (await devToken.approve(await lockup.getAddress(), 300)).wait();
+        await (await lockup.convertAndLock(
+            [owner.address, owner.address, beneficiary.address],
+            [100, 150, 50]
+        )).wait();
+
+        await (await normalToken.approve(await lockup.getAddress(), 300)).wait();
+        await (await lockup.transferAndLock(
+            [owner.address, beneficiary.address, owner.address],
+            [200, 75, 25]
+        )).wait();
+
+        expect(await lockup.totalAssigned(owner.address)).to.equal(475n);
+        expect(await lockup.totalAssigned(beneficiary.address)).to.equal(125n);
+        expect(await lockup.totalAssigned(ethers.ZeroAddress)).to.equal(600n);
+        expect(await lockup.totalClaimed(owner.address)).to.equal(0n);
+        expect(await lockup.totalClaimed(beneficiary.address)).to.equal(0n);
+    });
+
     it("locks converted and transferred tokens for the sender before release", async function () {
         const { owner, devToken, normalToken, lockup } = await networkHelpers.loadFixture(deployLockupFixture);
 
@@ -211,6 +281,35 @@ describe("Lockup", function () {
         );
     });
 
+    it("does not unlock anything at the exact release timestamp", async function () {
+        const { lockup, releaseTime } = await networkHelpers.loadFixture(deployReleasedLockupFixture);
+
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        expect(BigInt(latestBlock.timestamp)).to.equal(releaseTime);
+        expect(await lockup.getCanClaimTokens()).to.equal(0n);
+        await expect(lockup.claimTokens(1)).to.be.revertedWith("Claim amount exceeds unlocked tokens");
+    });
+
+    it("does not unlock when only a different tracked version remains unreleased", async function () {
+        const fixture = await networkHelpers.loadFixture(deployUnreleasedTrackedVersionLockupFixture);
+
+        await (await fixture.devToken.approve(await fixture.lockup.getAddress(), 1_000)).wait();
+        await (await fixture.lockup.convertAndLock([fixture.owner.address], [1_000])).wait();
+
+        await (await fixture.normalToken.approve(await fixture.lockup.getAddress(), 1_000)).wait();
+        await (await fixture.lockup.transferAndLock([fixture.owner.address], [1_000])).wait();
+
+        await releaseMainProject(fixture);
+        await networkHelpers.time.increase(SIX_MONTHS);
+
+        expect(await fixture.lockup.getCanClaimTokens()).to.equal(0n);
+        await expect(fixture.lockup.claimTokens(1)).to.be.revertedWith("Tokens are not unlocked yet");
+    });
+
     it("releases only part of the locked tokens after 30 days", async function () {
         const { owner, beneficiary, normalToken, lockup, releaseTime } = await networkHelpers.loadFixture(deployReleasedLockupFixture);
 
@@ -238,6 +337,133 @@ describe("Lockup", function () {
         expect(await lockup.totalClaimed(beneficiary.address)).to.equal(250n);
         expect(await lockup.getCanClaimTokens()).to.equal(133n);
         expect(await lockup.connect(beneficiary).getCanClaimTokens()).to.equal(83n);
+
+        await (await lockup.claimTokens(133)).wait();
+        expect(await lockup.getCanClaimTokens()).to.equal(0n);
+        await expect(lockup.claimTokens(1)).to.be.revertedWith("Claim amount exceeds unlocked tokens");
+    });
+
+    it("keeps later cross-user claim math stable after the first claim persists the release start", async function () {
+        const { owner, beneficiary, normalToken, lockup, releaseTime } = await networkHelpers.loadFixture(deployReleasedLockupFixture);
+
+        await networkHelpers.time.increaseTo(releaseTime + THIRTY_DAYS);
+
+        const beneficiaryBalanceBefore = await normalToken.balanceOf(beneficiary.address);
+        await (await lockup.connect(beneficiary).claimTokens(100)).wait();
+        expect(await normalToken.balanceOf(beneficiary.address)).to.equal(beneficiaryBalanceBefore + 100n);
+        expect(await lockup.totalClaimed(beneficiary.address)).to.equal(100n);
+        expect(await lockup.totalClaimed(ethers.ZeroAddress)).to.equal(100n);
+
+        await networkHelpers.time.increase(THIRTY_DAYS);
+
+        expect(await lockup.getCanClaimTokens()).to.equal(666n);
+        expect(await lockup.connect(beneficiary).getCanClaimTokens()).to.equal(566n);
+
+        const ownerBalanceBefore = await normalToken.balanceOf(owner.address);
+        await (await lockup.claimTokens(666)).wait();
+        expect(await normalToken.balanceOf(owner.address)).to.equal(ownerBalanceBefore + 666n);
+        expect(await lockup.totalClaimed(owner.address)).to.equal(666n);
+        expect(await lockup.totalClaimed(beneficiary.address)).to.equal(100n);
+        expect(await lockup.totalClaimed(ethers.ZeroAddress)).to.equal(766n);
+    });
+
+    it("uses the original release timestamp even when the first successful claim happens much later", async function () {
+        const { owner, beneficiary, normalToken, lockup, releaseTime } = await networkHelpers.loadFixture(deployReleasedLockupFixture);
+
+        await networkHelpers.time.increaseTo(releaseTime + 90n * ONE_DAY);
+
+        expect(await lockup.getCanClaimTokens()).to.equal(1_000n);
+        expect(await lockup.connect(beneficiary).getCanClaimTokens()).to.equal(1_000n);
+
+        const ownerBalanceBefore = await normalToken.balanceOf(owner.address);
+        await (await lockup.claimTokens(1_000)).wait();
+        expect(await normalToken.balanceOf(owner.address)).to.equal(ownerBalanceBefore + 1_000n);
+        expect(await lockup.totalClaimed(owner.address)).to.equal(1_000n);
+        expect(await lockup.totalClaimed(ethers.ZeroAddress)).to.equal(1_000n);
+
+        await networkHelpers.time.increase(90n * ONE_DAY);
+
+        expect(await lockup.getCanClaimTokens()).to.equal(1_000n);
+        expect(await lockup.connect(beneficiary).getCanClaimTokens()).to.equal(2_000n);
+
+        const beneficiaryBalanceBefore = await normalToken.balanceOf(beneficiary.address);
+        await (await lockup.connect(beneficiary).claimTokens(2_000)).wait();
+        expect(await normalToken.balanceOf(beneficiary.address)).to.equal(beneficiaryBalanceBefore + 2_000n);
+        expect(await lockup.totalClaimed(beneficiary.address)).to.equal(2_000n);
+        expect(await lockup.totalClaimed(ethers.ZeroAddress)).to.equal(3_000n);
+    });
+
+    it("keeps uneven small lock allocations consistent across rounding-heavy release checkpoints", async function () {
+        const fixture = await networkHelpers.loadFixture(deployLockupFixture);
+        const signers = await ethers.getSigners();
+        const outsider = signers[2];
+
+        await (await fixture.normalToken.approve(await fixture.lockup.getAddress(), 23)).wait();
+        await (await fixture.lockup.transferAndLock(
+            [fixture.owner.address, fixture.beneficiary.address, outsider.address],
+            [5, 7, 11]
+        )).wait();
+
+        const releaseTime = await releaseMainProject(fixture);
+        await networkHelpers.time.increaseTo(releaseTime + THIRTY_DAYS);
+
+        expect(await fixture.lockup.getCanClaimTokens()).to.equal(0n);
+        expect(await fixture.lockup.connect(fixture.beneficiary).getCanClaimTokens()).to.equal(1n);
+        expect(await fixture.lockup.connect(outsider).getCanClaimTokens()).to.equal(1n);
+
+        await networkHelpers.time.increase(149n * ONE_DAY);
+
+        expect(await fixture.lockup.getCanClaimTokens()).to.equal(4n);
+        expect(await fixture.lockup.connect(fixture.beneficiary).getCanClaimTokens()).to.equal(6n);
+        expect(await fixture.lockup.connect(outsider).getCanClaimTokens()).to.equal(10n);
+
+        await networkHelpers.time.increase(ONE_DAY);
+
+        expect(await fixture.lockup.getCanClaimTokens()).to.equal(5n);
+        expect(await fixture.lockup.connect(fixture.beneficiary).getCanClaimTokens()).to.equal(7n);
+        expect(await fixture.lockup.connect(outsider).getCanClaimTokens()).to.equal(11n);
+        expect(await fixture.lockup.totalAssigned(ethers.ZeroAddress)).to.equal(23n);
+    });
+
+    it("keeps global and per-user accounting consistent across staggered partial claims", async function () {
+        const { owner, beneficiary, normalToken, lockup, releaseTime } = await networkHelpers.loadFixture(deployReleasedLockupFixture);
+
+        await networkHelpers.time.increaseTo(releaseTime + THIRTY_DAYS);
+
+        const ownerBalanceBefore = await normalToken.balanceOf(owner.address);
+        await (await lockup.claimTokens(200)).wait();
+        expect(await normalToken.balanceOf(owner.address)).to.equal(ownerBalanceBefore + 200n);
+        expect(await lockup.totalClaimed(owner.address)).to.equal(200n);
+        expect(await lockup.totalClaimed(ethers.ZeroAddress)).to.equal(200n);
+        expect(await normalToken.balanceOf(await lockup.getAddress())).to.equal(3_800n);
+
+        await networkHelpers.time.increase(THIRTY_DAYS);
+
+        const beneficiaryBalanceBefore = await normalToken.balanceOf(beneficiary.address);
+        await (await lockup.connect(beneficiary).claimTokens(400)).wait();
+        expect(await normalToken.balanceOf(beneficiary.address)).to.equal(beneficiaryBalanceBefore + 400n);
+        expect(await lockup.totalClaimed(beneficiary.address)).to.equal(400n);
+        expect(await lockup.totalClaimed(ethers.ZeroAddress)).to.equal(600n);
+        expect(await normalToken.balanceOf(await lockup.getAddress())).to.equal(3_400n);
+
+        await networkHelpers.time.increase(60n * ONE_DAY);
+
+        await (await lockup.claimTokens(800)).wait();
+        expect(await lockup.totalClaimed(owner.address)).to.equal(1_000n);
+        expect(await lockup.totalClaimed(ethers.ZeroAddress)).to.equal(1_400n);
+        expect(await normalToken.balanceOf(await lockup.getAddress())).to.equal(2_600n);
+
+        await networkHelpers.time.increase(60n * ONE_DAY);
+
+        await (await lockup.claimTokens(1_000)).wait();
+        await (await lockup.connect(beneficiary).claimTokens(1_600)).wait();
+
+        expect(await lockup.totalClaimed(owner.address)).to.equal(2_000n);
+        expect(await lockup.totalClaimed(beneficiary.address)).to.equal(2_000n);
+        expect(await lockup.totalClaimed(ethers.ZeroAddress)).to.equal(4_000n);
+        expect(await normalToken.balanceOf(await lockup.getAddress())).to.equal(0n);
+        expect(await lockup.getCanClaimTokens()).to.equal(0n);
+        expect(await lockup.connect(beneficiary).getCanClaimTokens()).to.equal(0n);
     });
 
     it("releases the full remaining balance after 180 days", async function () {
@@ -258,5 +484,31 @@ describe("Lockup", function () {
         expect(await lockup.totalAssigned(ethers.ZeroAddress)).to.equal(4_000n);
         expect(await lockup.totalClaimed(ethers.ZeroAddress)).to.equal(4_000n);
         expect(await lockup.getCanClaimTokens()).to.equal(0n);
+    });
+
+    it("rejects creating new lockups after the unlock version is already released", async function () {
+        const { owner, beneficiary, devToken, normalToken, lockup, releaseTime } = await networkHelpers.loadFixture(deployReleasedLockupFixture);
+
+        await networkHelpers.time.increaseTo(releaseTime + 1n);
+        expect(await lockup.getCanClaimTokens()).to.equal(0n);
+
+        await (await devToken.approve(await lockup.getAddress(), 100)).wait();
+        await expect(lockup.convertAndLock([beneficiary.address], [100])).to.be.revertedWith("already Unlocked");
+
+        await (await normalToken.approve(await lockup.getAddress(), 100)).wait();
+        await expect(lockup.transferAndLock([owner.address], [100])).to.be.revertedWith("already Unlocked");
+    });
+
+    it("keeps zero-allocation users at zero claimable balance even after release", async function () {
+        const { lockup, releaseTime } = await networkHelpers.loadFixture(deployReleasedLockupFixture);
+        const signers = await ethers.getSigners();
+        const outsider = signers[2];
+
+        await networkHelpers.time.increaseTo(releaseTime + SIX_MONTHS);
+
+        expect(await lockup.totalAssigned(outsider.address)).to.equal(0n);
+        expect(await lockup.totalClaimed(outsider.address)).to.equal(0n);
+        expect(await lockup.connect(outsider).getCanClaimTokens()).to.equal(0n);
+        await expect(lockup.connect(outsider).claimTokens(1)).to.be.revertedWith("Claim amount exceeds unlocked tokens");
     });
 });
