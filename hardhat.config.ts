@@ -1,12 +1,16 @@
-import { HardhatUserConfig } from "hardhat/config";
-import "@nomicfoundation/hardhat-toolbox";
-import 'hardhat-abi-exporter';
-import "hardhat-gas-reporter";
-import '@openzeppelin/hardhat-upgrades';
+import { defineConfig } from "hardhat/config";
+import hardhatToolboxMochaEthers from "@nomicfoundation/hardhat-toolbox-mocha-ethers";
 
-const config: HardhatUserConfig = {
+export default defineConfig({
+    plugins: [hardhatToolboxMochaEthers],
+    paths: {
+        tests: {
+            mocha: "./test-hh3"
+        }
+    },
     solidity: {
         version: "0.8.20",
+        npmFilesToBuild: ["@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol"],
         settings: {
             optimizer: {
                 enabled: true,
@@ -15,19 +19,9 @@ const config: HardhatUserConfig = {
             viaIR: true
         }
     },
-    abiExporter: {
-        runOnCompile: true,
-        clear: true,
-    },
-    gasReporter: {
-        enabled: false,
-    },
-    networks: {
-        
-    },
-    mocha: {
-        bail: true,
+    test: {
+        mocha: {
+            bail: true
+        }
     }
-};
-
-export default config;
+});
