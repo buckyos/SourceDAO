@@ -228,6 +228,11 @@
 5. 较老版本即使更晚完成，也不能覆盖更高版本的已发布时间记录
 6. 多项目批量提取时，每个项目的舍入残值是独立保留的，不会互相吞并
 7. 不同 `ProjectResult`、不同 `projectName`、不同 extra token 集合在一次批量提取中也必须彼此隔离，不能串账
+8. `Expired` 和 `Failed` 项目在批量提取里必须保持“零奖励、manager 退款”的独立语义，不能污染同批次其它项目的正常分发
+9. 即使同时存在三人贡献、双 extra token、跨项目名、混合 `ProjectResult`，批量提取后的余额、退款和残值也必须仍然按项目独立结算
+10. `acceptProject` 只能在 `Developing` 状态调用，项目尚未进入开发、已进入 `Accepting`、已 `Finished` 或已 `Rejected` 时都必须拒绝重复或越界验收
+11. `updateContribute` 只能在 `Accepting` 状态调用，不能在 `Developing`、`Finished`、`Rejected` 等非验收窗口中修改结算数据
+12. `promoteProject` / `cancelProject` / `acceptProject` 这些生命周期入口在提案已执行或项目已进入终态后，必须稳定返回状态错误，避免重复推进状态机
 
 这些语义本轮主要通过测试显式化，并未引入新的合约设计。
 
@@ -246,12 +251,16 @@
 7. 版本交错完成
 8. 舍入残值保留
 9. `Normal / Good / Excellent / Failed / Expired` 的组合结算行为
+10. `Expired / Failed` 在三人贡献、双 token、跨项目名混合批量提取下的隔离性
+11. `acceptProject` 在 `Preparing / Accepting / Finished / Rejected` 状态下的错误路径和重复调用保护
+12. `updateContribute` 在非 `Accepting` 状态下的错误路径和重复调用保护
+13. `promoteProject / cancelProject / acceptProject` 在提案已执行或项目终态后的状态机幂等保护
 
 验证结果：
 
 - `npm test -- --grep "project"` 通过
 - `npm test` 全量通过
-- 当前全量回归结果：`74 passing`
+- 当前全量回归结果：`88 passing`
 
 ### 为什么必须留下这份记录
 

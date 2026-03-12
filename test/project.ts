@@ -331,6 +331,25 @@ describe("project", function () {
         ).to.be.revertedWith("Invalid contribution");
     });
 
+    it("rejects accepting a project before the create proposal has been promoted", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const startDate = BigInt(latestBlock.timestamp);
+        const endDate = startDate + THIRTY_DAYS;
+
+        await (await fixture.project.createProject(10_000, PROJECT_NAME, PROJECT_VERSION, startDate, endDate, [], [])).wait();
+
+        await expect(
+            fixture.project.acceptProject(1n, 4, [
+                { contributor: fixture.manager.address, value: 100 }
+            ])
+        ).to.be.revertedWith("state error");
+    });
+
     it("allows managers to cancel expired proposals", async function () {
         const fixture = await networkHelpers.loadFixture(deployProjectFixture);
         const latestBlock = await ethers.provider.getBlock("latest");
@@ -424,6 +443,257 @@ describe("project", function () {
         expect(await fixture.extraToken.balanceOf(await fixture.project.getAddress())).to.equal(0n);
         expect((await fixture.project.projectOf(1n)).state).to.equal(4n);
         expect(amount).to.equal(500n);
+    });
+
+    it("rejects canceling proposals that are still in progress or already accepted", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const startDate = BigInt(latestBlock.timestamp);
+        const endDate = startDate + THIRTY_DAYS;
+
+        await (await fixture.project.createProject(10_000, PROJECT_NAME, PROJECT_VERSION, startDate, endDate, [], [])).wait();
+
+        await expect(
+            fixture.project.cancelProject(1n)
+        ).to.be.revertedWith("Proposal status is not failed");
+
+        await (await fixture.committee.support(1n, projectParams(1n, startDate, endDate, "createProject"))).wait();
+
+        await expect(
+            fixture.project.cancelProject(1n)
+        ).to.be.revertedWith("Proposal status is not failed");
+    });
+
+    it("rejects promoting a preparing project when the proposal is in progress rejected or expired", async function () {
+        const inProgressFixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const inProgressBlock = await ethers.provider.getBlock("latest");
+        if (inProgressBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const inProgressStart = BigInt(inProgressBlock.timestamp);
+        const inProgressEnd = inProgressStart + THIRTY_DAYS;
+        await (await inProgressFixture.project.createProject(10_000, PROJECT_NAME, PROJECT_VERSION, inProgressStart, inProgressEnd, [], [])).wait();
+
+        await expect(
+            inProgressFixture.project.promoteProject(1n)
+        ).to.be.revertedWith("Proposal status is not accept");
+
+        const rejectedFixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const rejectedBlock = await ethers.provider.getBlock("latest");
+        if (rejectedBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const rejectedStart = BigInt(rejectedBlock.timestamp);
+        const rejectedEnd = rejectedStart + THIRTY_DAYS;
+        await (await rejectedFixture.project.createProject(10_000, PROJECT_NAME, PROJECT_VERSION, rejectedStart, rejectedEnd, [], [])).wait();
+        await (await rejectedFixture.committee.reject(1n, projectParams(1n, rejectedStart, rejectedEnd, "createProject"))).wait();
+
+        await expect(
+            rejectedFixture.project.promoteProject(1n)
+        ).to.be.revertedWith("Proposal status is not accept");
+
+        const expiredFixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const expiredBlock = await ethers.provider.getBlock("latest");
+        if (expiredBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const expiredStart = BigInt(expiredBlock.timestamp);
+        const expiredEnd = expiredStart + THIRTY_DAYS;
+        await (await expiredFixture.project.createProject(10_000, PROJECT_NAME, PROJECT_VERSION, expiredStart, expiredEnd, [], [])).wait();
+        await networkHelpers.time.increase(30n * 24n * 60n * 60n + 1n);
+
+        await expect(
+            expiredFixture.project.promoteProject(1n)
+        ).to.be.revertedWith("Proposal status is not accept");
+    });
+
+    it("rejects promoting an accepting project when the proposal is in progress rejected or expired", async function () {
+        const inProgressFixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const { startDate: inProgressStart, endDate: inProgressEnd } = await createAndPromoteProject(inProgressFixture);
+        await (await inProgressFixture.project.acceptProject(1n, 4, [
+            { contributor: inProgressFixture.manager.address, value: 100 }
+        ])).wait();
+
+        await expect(
+            inProgressFixture.project.promoteProject(1n)
+        ).to.be.revertedWith("Proposal status is not accept");
+
+        const rejectedFixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const { startDate: rejectedStart, endDate: rejectedEnd } = await createAndPromoteProject(rejectedFixture);
+        await (await rejectedFixture.project.acceptProject(1n, 4, [
+            { contributor: rejectedFixture.manager.address, value: 100 }
+        ])).wait();
+        await (await rejectedFixture.committee.reject(2n, projectParams(1n, rejectedStart, rejectedEnd, "acceptProject"))).wait();
+
+        await expect(
+            rejectedFixture.project.promoteProject(1n)
+        ).to.be.revertedWith("Proposal status is not accept");
+
+        const expiredFixture = await networkHelpers.loadFixture(deployProjectFixture);
+        await createAndPromoteProject(expiredFixture);
+        await (await expiredFixture.project.acceptProject(1n, 4, [
+            { contributor: expiredFixture.manager.address, value: 100 }
+        ])).wait();
+        await networkHelpers.time.increase(30n * 24n * 60n * 60n + 1n);
+
+        await expect(
+            expiredFixture.project.promoteProject(1n)
+        ).to.be.revertedWith("Proposal status is not accept");
+    });
+
+    it("rejects repeating lifecycle actions after a create proposal has already been executed", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        await createAndPromoteProject(fixture);
+
+        const storedProject = await fixture.project.projectOf(1n);
+        expect(storedProject.state).to.equal(1n);
+
+        await expect(
+            fixture.project.promoteProject(1n)
+        ).to.be.revertedWith("state error");
+
+        await expect(
+            fixture.project.cancelProject(1n)
+        ).to.be.revertedWith("state error");
+    });
+
+    it("rejects repeating acceptProject once a project is already in accepting", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        await createAndPromoteProject(fixture);
+
+        await (await fixture.project.acceptProject(1n, 4, [
+            { contributor: fixture.manager.address, value: 100 }
+        ])).wait();
+
+        expect((await fixture.project.projectOf(1n)).state).to.equal(2n);
+
+        await expect(
+            fixture.project.acceptProject(1n, 4, [
+                { contributor: fixture.manager.address, value: 100 }
+            ])
+        ).to.be.revertedWith("state error");
+    });
+
+    it("rejects repeating lifecycle actions after a project has finished", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const { startDate, endDate } = await createAndPromoteProject(fixture);
+
+        await (await fixture.project.acceptProject(1n, 4, [
+            { contributor: fixture.manager.address, value: 100 }
+        ])).wait();
+        await (await fixture.committee.support(2n, projectParams(1n, startDate, endDate, "acceptProject"))).wait();
+        await networkHelpers.time.increase(7n * 24n * 60n * 60n + 1n);
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        expect((await fixture.project.projectOf(1n)).state).to.equal(3n);
+
+        await expect(
+            fixture.project.promoteProject(1n)
+        ).to.be.revertedWith("state error");
+
+        await expect(
+            fixture.project.cancelProject(1n)
+        ).to.be.revertedWith("state error");
+    });
+
+    it("rejects accepting a project after it has already finished", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const { startDate, endDate } = await createAndPromoteProject(fixture);
+
+        await (await fixture.project.acceptProject(1n, 4, [
+            { contributor: fixture.manager.address, value: 100 }
+        ])).wait();
+        await (await fixture.committee.support(2n, projectParams(1n, startDate, endDate, "acceptProject"))).wait();
+        await networkHelpers.time.increase(7n * 24n * 60n * 60n + 1n);
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        await expect(
+            fixture.project.acceptProject(1n, 4, [
+                { contributor: fixture.manager.address, value: 100 }
+            ])
+        ).to.be.revertedWith("state error");
+    });
+
+    it("rejects repeating lifecycle actions after a project has been canceled as rejected", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const { startDate, endDate } = await createProjectWithExtraToken(fixture);
+
+        await (await fixture.committee.reject(1n, projectParams(1n, startDate, endDate, "createProject"))).wait();
+        await (await fixture.project.cancelProject(1n)).wait();
+
+        expect((await fixture.project.projectOf(1n)).state).to.equal(4n);
+
+        await expect(
+            fixture.project.cancelProject(1n)
+        ).to.be.revertedWith("state error");
+
+        await expect(
+            fixture.project.promoteProject(1n)
+        ).to.be.revertedWith("state error");
+    });
+
+    it("rejects accepting a project after it has already been canceled", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const { startDate, endDate } = await createProjectWithExtraToken(fixture);
+
+        await (await fixture.committee.reject(1n, projectParams(1n, startDate, endDate, "createProject"))).wait();
+        await (await fixture.project.cancelProject(1n)).wait();
+
+        await expect(
+            fixture.project.acceptProject(1n, 4, [
+                { contributor: fixture.manager.address, value: 100 }
+            ])
+        ).to.be.revertedWith("state error");
+    });
+
+    it("rejects updating contributions outside the accepting state", async function () {
+        const developingFixture = await networkHelpers.loadFixture(deployProjectFixture);
+        await createAndPromoteProject(developingFixture);
+
+        await expect(
+            developingFixture.project.updateContribute(1n, {
+                contributor: developingFixture.manager.address,
+                value: 100
+            })
+        ).to.be.revertedWith("status error");
+
+        const finishedFixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const { startDate: finishedStart, endDate: finishedEnd } = await createAndPromoteProject(finishedFixture);
+        await (await finishedFixture.project.acceptProject(1n, 4, [
+            { contributor: finishedFixture.manager.address, value: 100 }
+        ])).wait();
+        await (await finishedFixture.committee.support(2n, projectParams(1n, finishedStart, finishedEnd, "acceptProject"))).wait();
+        await networkHelpers.time.increase(7n * 24n * 60n * 60n + 1n);
+        await (await finishedFixture.project.promoteProject(1n)).wait();
+
+        await expect(
+            finishedFixture.project.updateContribute(1n, {
+                contributor: finishedFixture.manager.address,
+                value: 120
+            })
+        ).to.be.revertedWith("status error");
+
+        const rejectedFixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const { startDate: rejectedStart, endDate: rejectedEnd } = await createAndPromoteProject(rejectedFixture);
+        await (await rejectedFixture.project.acceptProject(1n, 4, [
+            { contributor: rejectedFixture.manager.address, value: 100 }
+        ])).wait();
+        await (await rejectedFixture.committee.reject(2n, projectParams(1n, rejectedStart, rejectedEnd, "acceptProject"))).wait();
+        await (await rejectedFixture.project.cancelProject(1n)).wait();
+
+        await expect(
+            rejectedFixture.project.updateContribute(1n, {
+                contributor: rejectedFixture.manager.address,
+                value: 120
+            })
+        ).to.be.revertedWith("status error");
     });
 
     it("updates latestProjectFinishTime only when a project actually finishes", async function () {
@@ -882,6 +1152,56 @@ describe("project", function () {
         expect(await fixture.extraToken.balanceOf(await fixture.project.getAddress())).to.equal(2n);
     });
 
+    it("does not mark claims or transfer balances when a non-contributor batch withdraws", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+
+        const first = await createProjectWithExtraToken(fixture, PROJECT_VERSION, 500n);
+        await (await fixture.committee.support(1n, projectParams(1n, first.startDate, first.endDate, "createProject", PROJECT_VERSION))).wait();
+        await (await fixture.project.promoteProject(1n)).wait();
+        await (await fixture.project.acceptProject(1n, 3, [
+            { contributor: fixture.manager.address, value: 40 },
+            { contributor: fixture.contributor.address, value: 60 }
+        ])).wait();
+        await (await fixture.committee.support(2n, projectParams(1n, first.startDate, first.endDate, "acceptProject", PROJECT_VERSION))).wait();
+        await networkHelpers.time.increase(7n * 24n * 60n * 60n + 1n);
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const secondVersion = PROJECT_VERSION + 1n;
+        const secondStart = BigInt(latestBlock.timestamp);
+        const secondEnd = secondStart + THIRTY_DAYS;
+        await (await fixture.project.createProject(10_000, ALT_PROJECT_NAME, secondVersion, secondStart, secondEnd, [], [])).wait();
+        await (await fixture.committee.support(3n, projectParams(2n, secondStart, secondEnd, "createProject", secondVersion, ALT_PROJECT_NAME))).wait();
+        await (await fixture.project.promoteProject(2n)).wait();
+        await (await fixture.project.acceptProject(2n, 4, [
+            { contributor: fixture.manager.address, value: 40 },
+            { contributor: fixture.contributor.address, value: 60 }
+        ])).wait();
+        await (await fixture.committee.support(4n, projectParams(2n, secondStart, secondEnd, "acceptProject", secondVersion, ALT_PROJECT_NAME))).wait();
+        await networkHelpers.time.increase(7n * 24n * 60n * 60n + 1n);
+        await (await fixture.project.promoteProject(2n)).wait();
+
+        const outsiderDevBefore = await fixture.devToken.balanceOf(fixture.outsider.address);
+        const outsiderExtraBefore = await fixture.extraToken.balanceOf(fixture.outsider.address);
+
+        await (await fixture.project.connect(fixture.outsider).withdrawContributions([1n, 2n])).wait();
+
+        expect(await fixture.devToken.balanceOf(fixture.outsider.address)).to.equal(outsiderDevBefore);
+        expect(await fixture.extraToken.balanceOf(fixture.outsider.address)).to.equal(outsiderExtraBefore);
+
+        const firstDetail = await fixture.project.projectDetailOf(1n);
+        expect(firstDetail.contributions[0].hasClaim).to.equal(false);
+        expect(firstDetail.contributions[1].hasClaim).to.equal(false);
+
+        const secondDetail = await fixture.project.projectDetailOf(2n);
+        expect(secondDetail.contributions[0].hasClaim).to.equal(false);
+        expect(secondDetail.contributions[1].hasClaim).to.equal(false);
+    });
+
     it("accumulates rounding remainders across mixed normal and good projects in one batch", async function () {
         const fixture = await networkHelpers.loadFixture(deployProjectFixture);
 
@@ -1028,6 +1348,176 @@ describe("project", function () {
         expect(await fixture.extraToken.balanceOf(fixture.manager.address)).to.equal(999460n);
         expect(await fixture.extraToken.balanceOf(fixture.contributor.address)).to.equal(540n);
         expect(await fixture.extraToken.balanceOf(await fixture.project.getAddress())).to.equal(0n);
+    });
+
+    it("isolates an expired dual-token project from a named good project in one three-contributor batch", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+
+        const firstBlock = await ethers.provider.getBlock("latest");
+        if (firstBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const mainStart = BigInt(firstBlock.timestamp);
+        const mainEnd = mainStart + THIRTY_DAYS;
+        await (await fixture.extraToken.approve(await fixture.project.getAddress(), 600n)).wait();
+        await (await fixture.extraTokenTwo.approve(await fixture.project.getAddress(), 300n)).wait();
+        await (await fixture.project.createProject(
+            10_000,
+            PROJECT_NAME,
+            PROJECT_VERSION,
+            mainStart,
+            mainEnd,
+            [await fixture.extraToken.getAddress(), await fixture.extraTokenTwo.getAddress()],
+            [600n, 300n]
+        )).wait();
+        await (await fixture.committee.support(1n, projectParams(1n, mainStart, mainEnd, "createProject", PROJECT_VERSION, PROJECT_NAME))).wait();
+        await (await fixture.project.promoteProject(1n)).wait();
+        await (await fixture.project.acceptProject(1n, 1, [
+            { contributor: fixture.manager.address, value: 20 },
+            { contributor: fixture.contributor.address, value: 30 },
+            { contributor: fixture.outsider.address, value: 50 }
+        ])).wait();
+        await (await fixture.committee.support(2n, projectParams(1n, mainStart, mainEnd, "acceptProject", PROJECT_VERSION, PROJECT_NAME))).wait();
+        await networkHelpers.time.increase(7n * 24n * 60n * 60n + 1n);
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        const secondBlock = await ethers.provider.getBlock("latest");
+        if (secondBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const altVersion = PROJECT_VERSION;
+        const altStart = BigInt(secondBlock.timestamp);
+        const altEnd = altStart + THIRTY_DAYS;
+        await (await fixture.extraToken.approve(await fixture.project.getAddress(), 900n)).wait();
+        await (await fixture.extraTokenTwo.approve(await fixture.project.getAddress(), 450n)).wait();
+        await (await fixture.project.createProject(
+            10_000,
+            ALT_PROJECT_NAME,
+            altVersion,
+            altStart,
+            altEnd,
+            [await fixture.extraToken.getAddress(), await fixture.extraTokenTwo.getAddress()],
+            [900n, 450n]
+        )).wait();
+        await (await fixture.committee.support(3n, projectParams(2n, altStart, altEnd, "createProject", altVersion, ALT_PROJECT_NAME))).wait();
+        await (await fixture.project.promoteProject(2n)).wait();
+        await (await fixture.project.acceptProject(2n, 4, [
+            { contributor: fixture.manager.address, value: 20 },
+            { contributor: fixture.contributor.address, value: 30 },
+            { contributor: fixture.outsider.address, value: 50 }
+        ])).wait();
+        await (await fixture.committee.support(4n, projectParams(2n, altStart, altEnd, "acceptProject", altVersion, ALT_PROJECT_NAME))).wait();
+        await networkHelpers.time.increase(7n * 24n * 60n * 60n + 1n);
+        await (await fixture.project.promoteProject(2n)).wait();
+
+        const managerDevBefore = await fixture.devToken.balanceOf(fixture.manager.address);
+        const contributorDevBefore = await fixture.devToken.balanceOf(fixture.contributor.address);
+        const outsiderDevBefore = await fixture.devToken.balanceOf(fixture.outsider.address);
+
+        await (await fixture.project.withdrawContributions([1n, 2n])).wait();
+        await (await fixture.project.connect(fixture.contributor).withdrawContributions([1n, 2n])).wait();
+        await (await fixture.project.connect(fixture.outsider).withdrawContributions([1n, 2n])).wait();
+
+        expect(await fixture.devToken.balanceOf(fixture.manager.address)).to.equal(managerDevBefore + 2000n);
+        expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(contributorDevBefore + 3000n);
+        expect(await fixture.devToken.balanceOf(fixture.outsider.address)).to.equal(outsiderDevBefore + 5000n);
+        expect(await fixture.devToken.balanceOf(await fixture.project.getAddress())).to.equal(0n);
+
+        expect(await fixture.extraToken.balanceOf(fixture.manager.address)).to.equal(999280n);
+        expect(await fixture.extraToken.balanceOf(fixture.contributor.address)).to.equal(270n);
+        expect(await fixture.extraToken.balanceOf(fixture.outsider.address)).to.equal(450n);
+        expect(await fixture.extraTokenTwo.balanceOf(fixture.manager.address)).to.equal(999640n);
+        expect(await fixture.extraTokenTwo.balanceOf(fixture.contributor.address)).to.equal(135n);
+        expect(await fixture.extraTokenTwo.balanceOf(fixture.outsider.address)).to.equal(225n);
+        expect(await fixture.extraToken.balanceOf(await fixture.project.getAddress())).to.equal(0n);
+        expect(await fixture.extraTokenTwo.balanceOf(await fixture.project.getAddress())).to.equal(0n);
+    });
+
+    it("isolates a failed dual-token project from a named normal project with rounding in one three-contributor batch", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+
+        const firstBlock = await ethers.provider.getBlock("latest");
+        if (firstBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const mainStart = BigInt(firstBlock.timestamp);
+        const mainEnd = mainStart + THIRTY_DAYS;
+        await (await fixture.extraToken.approve(await fixture.project.getAddress(), 600n)).wait();
+        await (await fixture.extraTokenTwo.approve(await fixture.project.getAddress(), 300n)).wait();
+        await (await fixture.project.createProject(
+            10_000,
+            PROJECT_NAME,
+            PROJECT_VERSION,
+            mainStart,
+            mainEnd,
+            [await fixture.extraToken.getAddress(), await fixture.extraTokenTwo.getAddress()],
+            [600n, 300n]
+        )).wait();
+        await (await fixture.committee.support(1n, projectParams(1n, mainStart, mainEnd, "createProject", PROJECT_VERSION, PROJECT_NAME))).wait();
+        await (await fixture.project.promoteProject(1n)).wait();
+        await (await fixture.project.acceptProject(1n, 2, [
+            { contributor: fixture.manager.address, value: 20 },
+            { contributor: fixture.contributor.address, value: 30 },
+            { contributor: fixture.outsider.address, value: 50 }
+        ])).wait();
+        await (await fixture.committee.support(2n, projectParams(1n, mainStart, mainEnd, "acceptProject", PROJECT_VERSION, PROJECT_NAME))).wait();
+        await networkHelpers.time.increase(7n * 24n * 60n * 60n + 1n);
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        const secondBlock = await ethers.provider.getBlock("latest");
+        if (secondBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const altVersion = PROJECT_VERSION;
+        const altStart = BigInt(secondBlock.timestamp);
+        const altEnd = altStart + THIRTY_DAYS;
+        await (await fixture.extraToken.approve(await fixture.project.getAddress(), 1_000n)).wait();
+        await (await fixture.extraTokenTwo.approve(await fixture.project.getAddress(), 500n)).wait();
+        await (await fixture.project.createProject(
+            10_000,
+            ALT_PROJECT_NAME,
+            altVersion,
+            altStart,
+            altEnd,
+            [await fixture.extraToken.getAddress(), await fixture.extraTokenTwo.getAddress()],
+            [1_000n, 500n]
+        )).wait();
+        await (await fixture.committee.support(3n, projectParams(2n, altStart, altEnd, "createProject", altVersion, ALT_PROJECT_NAME))).wait();
+        await (await fixture.project.promoteProject(2n)).wait();
+        await (await fixture.project.acceptProject(2n, 3, [
+            { contributor: fixture.manager.address, value: 1 },
+            { contributor: fixture.contributor.address, value: 1 },
+            { contributor: fixture.outsider.address, value: 1 }
+        ])).wait();
+        await (await fixture.committee.support(4n, projectParams(2n, altStart, altEnd, "acceptProject", altVersion, ALT_PROJECT_NAME))).wait();
+        await networkHelpers.time.increase(7n * 24n * 60n * 60n + 1n);
+        await (await fixture.project.promoteProject(2n)).wait();
+
+        const managerDevBefore = await fixture.devToken.balanceOf(fixture.manager.address);
+        const contributorDevBefore = await fixture.devToken.balanceOf(fixture.contributor.address);
+        const outsiderDevBefore = await fixture.devToken.balanceOf(fixture.outsider.address);
+
+        await (await fixture.project.withdrawContributions([1n, 2n])).wait();
+        await (await fixture.project.connect(fixture.contributor).withdrawContributions([1n, 2n])).wait();
+        await (await fixture.project.connect(fixture.outsider).withdrawContributions([1n, 2n])).wait();
+
+        expect(await fixture.devToken.balanceOf(fixture.manager.address)).to.equal(managerDevBefore + 2666n);
+        expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(contributorDevBefore + 2666n);
+        expect(await fixture.devToken.balanceOf(fixture.outsider.address)).to.equal(outsiderDevBefore + 2666n);
+        expect(await fixture.devToken.balanceOf(await fixture.project.getAddress())).to.equal(2n);
+
+        expect(await fixture.extraToken.balanceOf(fixture.manager.address)).to.equal(999466n);
+        expect(await fixture.extraToken.balanceOf(fixture.contributor.address)).to.equal(266n);
+        expect(await fixture.extraToken.balanceOf(fixture.outsider.address)).to.equal(266n);
+        expect(await fixture.extraTokenTwo.balanceOf(fixture.manager.address)).to.equal(999733n);
+        expect(await fixture.extraTokenTwo.balanceOf(fixture.contributor.address)).to.equal(133n);
+        expect(await fixture.extraTokenTwo.balanceOf(fixture.outsider.address)).to.equal(133n);
+        expect(await fixture.extraToken.balanceOf(await fixture.project.getAddress())).to.equal(2n);
+        expect(await fixture.extraTokenTwo.balanceOf(await fixture.project.getAddress())).to.equal(1n);
     });
 
     it("aggregates rewards across multiple finished projects in one withdrawal", async function () {
