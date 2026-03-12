@@ -86,6 +86,7 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
         Investment storage investment = investments[investmentId];
 
         require(msg.sender == investment.investor, "only investor can end investment");
+        require(investment.end == false, "investment end");
         if (!investment.canEndEarly && block.timestamp < investment.step2EndTime) {
             // if all token sold out but not pass step2EndTime, end investment
             require(investment.investedAmount == 0 || investment.totalAmount == investment.investedAmount, "not all token sold out");
@@ -182,7 +183,7 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
     // if investment not exists or not in step1, return 0
     function getAddressLeftAmount(uint256 investmentId, address addr) external view returns (uint256) {
         Investment storage investment = investments[investmentId];
-        if (block.timestamp > investment.step1EndTime) {
+        if (block.timestamp >= investment.step1EndTime) {
             return 0;
         }
         uint256 selfTotalAmount = investment.totalAmount * investment.firstPercents[addr] / 10000;

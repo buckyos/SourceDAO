@@ -551,3 +551,104 @@
 3. 在复杂路径下保留下来的少量 reward token 与 native 余额，仍然只来自确定性的整数除法舍入
 
 对应新增测试位于：[test/dividend.ts](test/dividend.ts)
+
+---
+
+## 2026-03-12 Acquired 变更记录
+
+### 合约
+
+- 合约：`Acquired`
+- 文件：[contracts/Acquired.sol](contracts/Acquired.sol)
+- 相关测试：[test/acquired.ts](test/acquired.ts)
+
+### 背景
+
+`Acquired` 负责把外部资产销售给白名单用户，并按约定比例回收 DAO `NormalToken`。
+
+它的核心风险点不在于复杂状态机数量，而在于“同一个 investment 是否会被重复结算”以及“ERC20 与原生币两条资产路径是否保持一致”。
+
+这轮工作最初是继续补测试，但新增用例直接暴露出一个真实缺陷：`endInvestment` 缺少已结束状态保护。
+
+### 修改目的
+
+本次修改目标有三个：
+
+1. 补齐 `Acquired` 在原生币销售路径上的回归覆盖
+2. 固定 `canEndEarly` 为 `true` 时的部分销售提前结束语义
+3. 阻止同一笔 investment 被重复执行 `endInvestment`
+
+在继续补边界测试之后，本次目标又补充了第四项：
+
+4. 让 `getAddressLeftAmount` 在 `step1` 精确截止时刻与 `invest` 的阶段判断保持一致
+
+### 具体改动
+
+#### 1. 为 `endInvestment` 增加重复结束保护
+
+修改位置：[contracts/Acquired.sol](contracts/Acquired.sol)
+
+本次在 `endInvestment` 入口新增：
+
+1. `require(investment.end == false, "investment end")`
+
+修复前的问题是：
+
+1. 第一次 `endInvestment` 会把本次投资积累的 DAO Token 和未售出的资产返还给投资发起人
+2. 但合约没有阻止第二次再次调用同一个 `investmentId`
+3. 第二次调用不一定立刻因为业务状态被拒绝，而是可能在后续资产转账处基于“当前合约还剩多少余额”表现为偶然成功或偶然失败
+
+这意味着如果合约里后来又装入了其它 investment 的库存或 DAO Token，旧 investment 就存在复用新资金池余额再次结算的风险。
+
+修复后，同一笔 investment 在第一次结束后会被显式拒绝再次结束，而不是依赖后续资产余额偶然挡住。
+
+#### 2. 修复 `step1` 精确截止时刻的额度查询语义
+
+修改位置：[contracts/Acquired.sol](contracts/Acquired.sol)
+
+后续新增边界测试又暴露出另一个真实问题：
+
+1. `invest` 在 `block.timestamp == step1EndTime` 时，已经因为 `block.timestamp < investment.step1EndTime` 不成立而按 `step2` 语义执行
+2. 但 `getAddressLeftAmount` 之前只有在 `block.timestamp > investment.step1EndTime` 时才返回 `0`
+
+这会导致同一时刻出现读写不一致：
+
+1. 写路径已经视为 `step2`
+2. 读路径却还在返回 `step1` 剩余额度
+
+本次将 `getAddressLeftAmount` 的判断改为 `block.timestamp >= investment.step1EndTime` 时返回 `0`，使它与 `invest` 的阶段切换边界保持一致。
+
+### 新增测试覆盖
+
+这轮对 `Acquired` 重点新增了以下测试：
+
+1. 非法配置补充校验：总白名单百分比超过 100%、`tokenAmount == 0`、`tokenRatio` 非法
+2. `canEndEarly == true` 时，投资人在 step2 结束前也可以对部分已售 investment 提前结算
+3. 原生币销售路径：`tokenAddress == address(0)` 时，买家能收到原生币，投资人结算时能取回未售出的原生币和已回收的 DAO Token
+4. 重复调用 `endInvestment` 必须直接以 `investment end` 被拒绝
+
+继续补充之后，又新增固定了以下边界：
+
+5. `startInvestment` 显式拒绝把 DAO `normalToken` 作为销售资产
+6. 原生币销售启动时，`msg.value` 必须与 `tokenAmount` 精确一致，少 1 或多 1 都会被拒绝
+7. 外部销售 token 的精度高于 DAO token 时，启动阶段直接拒绝
+8. `block.timestamp == step1EndTime` 时，`getAddressLeftAmount` 必须返回 `0`，并且同一时刻的 `invest` 必须按 `step2` 执行
+9. `block.timestamp == step2EndTime` 时允许最后一笔投资，之后 1 秒必须稳定拒绝
+10. 过小的 DAO token 投入如果因为整数除法会换算成 `0` 个 sale token，必须显式返回 `invalid amount`
+11. 库存只差 1 个 sale token 不足时，必须稳定返回 `not enough token`
+
+### 风险说明
+
+这次修复的是一个资产结算类真实缺陷，而不是单纯的输入校验增强。
+
+如果不修：
+
+1. 同一个 `investmentId` 的结束动作可能复用后续新 investment 留在合约里的余额
+2. 问题表面上会看起来像“ERC20 余额不够”或“偶发失败”，但根因其实是缺少业务状态保护
+3. 在多轮连续开售的场景里，这种问题比单次测试更危险，因为它可能跨投资实例串账
+
+### 验证结果
+
+- `npm test -- --grep "acquired"` 通过
+- `npm test` 全量通过
+- 当前全量回归结果：`135 passing`

@@ -47,7 +47,7 @@ async function deployAcquiredFixture() {
 
 describe("acquired", function () {
     it("rejects invalid investment configurations", async function () {
-        const { acquired, saleToken, buyerOne, buyerTwo } = await networkHelpers.loadFixture(deployAcquiredFixture);
+        const { acquired, saleToken, buyerOne, buyerTwo, normalToken } = await networkHelpers.loadFixture(deployAcquiredFixture);
 
         await expect(acquired.startInvestment({
             whitelist: [buyerOne.address, buyerTwo.address],
@@ -61,6 +61,87 @@ describe("acquired", function () {
         })).to.be.revertedWith("whitelist and firstPercent length not equal");
 
         await expect(acquired.invest(999n, 10)).to.be.revertedWith("investment not exist");
+
+        await expect(acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_001],
+            tokenAddress: await saleToken.getAddress(),
+            tokenAmount: 500,
+            tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).to.be.revertedWith("total percents over 100");
+
+        await expect(acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: await saleToken.getAddress(),
+            tokenAmount: 0,
+            tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).to.be.revertedWith("invalid tokenAmount");
+
+        await expect(acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: await saleToken.getAddress(),
+            tokenAmount: 500,
+            tokenRatio: { tokenAmount: 0, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).to.be.revertedWith("invalid tokenRatio");
+
+        await expect(acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: await normalToken.getAddress(),
+            tokenAmount: 500,
+            tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).to.be.revertedWith("cannot invest dao token");
+
+        const highDecimalTokenFactory = await ethers.getContractFactory("TestToken");
+        const highDecimalToken = await highDecimalTokenFactory.deploy("HighDecimal", "HDEC", 19, 1_000_000n, buyerOne.address);
+        await highDecimalToken.waitForDeployment();
+
+        await expect(acquired.connect(buyerOne).startInvestment({
+            whitelist: [buyerTwo.address],
+            firstPercent: [10_000],
+            tokenAddress: await highDecimalToken.getAddress(),
+            tokenAmount: 500,
+            tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).to.be.revertedWith("not support token decimals > 18");
+
+        await expect(acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: ethers.ZeroAddress,
+            tokenAmount: 10n,
+            tokenRatio: { tokenAmount: 1, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        }, { value: 9n })).to.be.revertedWith("main token not enough");
+
+        await expect(acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: ethers.ZeroAddress,
+            tokenAmount: 10n,
+            tokenRatio: { tokenAmount: 1, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        }, { value: 11n })).to.be.revertedWith("main token not enough");
     });
 
     it("enforces whitelist step-one limits and records investments", async function () {
@@ -128,6 +209,110 @@ describe("acquired", function () {
         expect(await acquired.getAddressLeftAmount(1n, buyerOne.address)).to.equal(0n);
     });
 
+    it("treats the exact step-one deadline as step two for both invest and quota queries", async function () {
+        const { buyerOne, buyerTwo, normalToken, acquired, saleToken } = await networkHelpers.loadFixture(deployAcquiredFixture);
+
+        await (await saleToken.approve(await acquired.getAddress(), 500)).wait();
+        await (await acquired.startInvestment({
+            whitelist: [buyerOne.address, buyerTwo.address],
+            firstPercent: [4_000, 6_000],
+            tokenAddress: await saleToken.getAddress(),
+            tokenAmount: 500,
+            tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).wait();
+
+        await (await normalToken.connect(buyerOne).approve(await acquired.getAddress(), 100)).wait();
+        await (await acquired.connect(buyerOne).invest(1n, 20)).wait();
+
+        const info = await acquired.getInvestmentInfo(1n);
+        await networkHelpers.time.increaseTo(info.step1EndTime);
+
+        expect(await acquired.getAddressLeftAmount(1n, buyerOne.address)).to.equal(0n);
+
+        await (await normalToken.connect(buyerOne).approve(await acquired.getAddress(), 30)).wait();
+        await (await acquired.connect(buyerOne).invest(1n, 30)).wait();
+        expect(await acquired.getAddressInvestedAmount(1n, buyerOne.address)).to.equal(250n);
+    });
+
+    it("allows investing exactly at the step-two deadline and rejects one second later", async function () {
+        const { buyerOne, normalToken, acquired, saleToken } = await networkHelpers.loadFixture(deployAcquiredFixture);
+
+        await (await saleToken.approve(await acquired.getAddress(), 500)).wait();
+        await (await acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: await saleToken.getAddress(),
+            tokenAmount: 500,
+            tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).wait();
+
+        await (await normalToken.connect(buyerOne).approve(await acquired.getAddress(), 100)).wait();
+        const info = await acquired.getInvestmentInfo(1n);
+    await networkHelpers.time.setNextBlockTimestamp(info.step2EndTime);
+
+        await (await acquired.connect(buyerOne).invest(1n, 20)).wait();
+        expect(await acquired.getAddressInvestedAmount(1n, buyerOne.address)).to.equal(100n);
+
+        await networkHelpers.time.increase(1n);
+        await expect(acquired.connect(buyerOne).invest(1n, 1)).to.be.revertedWith("investment end");
+    });
+
+    it("rejects invest amounts that round down to zero sale tokens", async function () {
+        const { buyerOne, normalToken, acquired, saleToken } = await networkHelpers.loadFixture(deployAcquiredFixture);
+
+        await (await saleToken.approve(await acquired.getAddress(), 500)).wait();
+        await (await acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: await saleToken.getAddress(),
+            tokenAmount: 500,
+            tokenRatio: { tokenAmount: 1, daoTokenAmount: 3 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).wait();
+
+        await (await normalToken.connect(buyerOne).approve(await acquired.getAddress(), 10)).wait();
+
+        await expect(acquired.connect(buyerOne).invest(1n, 1)).to.be.revertedWith("invalid amount");
+    });
+
+    it("rejects a purchase when remaining inventory is one unit short of the required amount", async function () {
+        const { buyerOne, buyerTwo, normalToken, acquired, saleToken } = await networkHelpers.loadFixture(deployAcquiredFixture);
+
+        await (await saleToken.approve(await acquired.getAddress(), 500)).wait();
+        await (await acquired.startInvestment({
+            whitelist: [buyerOne.address, buyerTwo.address],
+            firstPercent: [4_000, 6_000],
+            tokenAddress: await saleToken.getAddress(),
+            tokenAmount: 500,
+            tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).wait();
+
+        await (await normalToken.connect(buyerOne).approve(await acquired.getAddress(), 100)).wait();
+        await (await normalToken.connect(buyerTwo).approve(await acquired.getAddress(), 100)).wait();
+
+        await (await acquired.connect(buyerOne).invest(1n, 20)).wait();
+        await (await acquired.connect(buyerTwo).invest(1n, 60)).wait();
+
+        await networkHelpers.time.increase(3601n);
+
+        await expect(acquired.connect(buyerOne).invest(1n, 21)).to.be.revertedWith("not enough token");
+        await (await acquired.connect(buyerOne).invest(1n, 20)).wait();
+        const finalInfo = await acquired.getInvestmentInfo(1n);
+        expect(finalInfo.investedAmount).to.equal(500n);
+        expect(finalInfo.daoTokenAmount).to.equal(100n);
+    });
+
     it("only lets the investor end before step two when no sales happened yet or inventory is sold out", async function () {
         const { investor, buyerOne, buyerTwo, outsider, normalToken, acquired, saleToken } = await networkHelpers.loadFixture(deployAcquiredFixture);
 
@@ -180,6 +365,100 @@ describe("acquired", function () {
         const info = await acquired.getInvestmentInfo(2n);
         expect(info.investedAmount).to.equal(500n);
         expect(info.end).to.equal(true);
+    });
+
+    it("allows an early end after partial sales when canEndEarly is enabled", async function () {
+        const { investor, buyerOne, normalToken, acquired, saleToken } = await networkHelpers.loadFixture(deployAcquiredFixture);
+
+        await (await saleToken.approve(await acquired.getAddress(), 500)).wait();
+        await (await acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: await saleToken.getAddress(),
+            tokenAmount: 500,
+            tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: true
+        })).wait();
+
+        await (await normalToken.connect(buyerOne).approve(await acquired.getAddress(), 100)).wait();
+        await (await acquired.connect(buyerOne).invest(1n, 20)).wait();
+
+        const investorDaoBefore = await normalToken.balanceOf(investor.address);
+        const investorSaleBefore = await saleToken.balanceOf(investor.address);
+        await (await acquired.endInvestment(1n)).wait();
+
+        expect(await normalToken.balanceOf(investor.address)).to.equal(investorDaoBefore + 20n);
+        expect(await saleToken.balanceOf(investor.address)).to.equal(investorSaleBefore + 400n);
+        expect((await acquired.getInvestmentInfo(1n)).end).to.equal(true);
+    });
+
+    it("supports native-token sales and returns unsold native inventory on settlement", async function () {
+        const { investor, buyerOne, normalToken, acquired } = await networkHelpers.loadFixture(deployAcquiredFixture);
+
+        const acquiredAddress = await acquired.getAddress();
+        await (await acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: ethers.ZeroAddress,
+            tokenAmount: 10n,
+            tokenRatio: { tokenAmount: 1, daoTokenAmount: 2 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        }, { value: 10n })).wait();
+
+        expect(await ethers.provider.getBalance(acquiredAddress)).to.equal(10n);
+
+        await (await normalToken.connect(buyerOne).approve(acquiredAddress, 20)).wait();
+        const buyerNativeBefore = await ethers.provider.getBalance(buyerOne.address);
+        const buyerTx = await acquired.connect(buyerOne).invest(1n, 8);
+        const buyerReceipt = await buyerTx.wait();
+        const buyerGas = buyerReceipt!.gasUsed * buyerReceipt!.gasPrice;
+
+        expect(await ethers.provider.getBalance(buyerOne.address)).to.equal(buyerNativeBefore + 4n - buyerGas);
+        expect(await acquired.getAddressInvestedAmount(1n, buyerOne.address)).to.equal(4n);
+        const infoAfterInvest = await acquired.getInvestmentInfo(1n);
+        expect(infoAfterInvest.investedAmount).to.equal(4n);
+        expect(infoAfterInvest.daoTokenAmount).to.equal(8n);
+        expect(infoAfterInvest.tokenAddress).to.equal(ethers.ZeroAddress);
+
+        await networkHelpers.time.increase(7201n);
+
+        const investorDaoBefore = await normalToken.balanceOf(investor.address);
+        const investorNativeBefore = await ethers.provider.getBalance(investor.address);
+        const endTx = await acquired.endInvestment(1n);
+        const endReceipt = await endTx.wait();
+        const endGas = endReceipt!.gasUsed * endReceipt!.gasPrice;
+
+        expect(await normalToken.balanceOf(investor.address)).to.equal(investorDaoBefore + 8n);
+        expect(await ethers.provider.getBalance(investor.address)).to.equal(investorNativeBefore + 6n - endGas);
+        expect(await ethers.provider.getBalance(acquiredAddress)).to.equal(0n);
+    });
+
+    it("prevents ending the same investment twice", async function () {
+        const { buyerOne, buyerTwo, normalToken, acquired, saleToken } = await networkHelpers.loadFixture(deployAcquiredFixture);
+
+        await (await saleToken.approve(await acquired.getAddress(), 500)).wait();
+        await (await acquired.startInvestment({
+            whitelist: [buyerOne.address, buyerTwo.address],
+            firstPercent: [4_000, 6_000],
+            tokenAddress: await saleToken.getAddress(),
+            tokenAmount: 500,
+            tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).wait();
+
+        await (await normalToken.connect(buyerOne).approve(await acquired.getAddress(), 100)).wait();
+        await (await acquired.connect(buyerOne).invest(1n, 20)).wait();
+
+        await networkHelpers.time.increase(7201n);
+        await (await acquired.endInvestment(1n)).wait();
+
+        await expect(acquired.endInvestment(1n)).to.be.revertedWith("investment end");
     });
 
     it("returns dao tokens and unsold inventory to the investor when ending an investment", async function () {
