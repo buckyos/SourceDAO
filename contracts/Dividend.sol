@@ -173,6 +173,9 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
      * @param token the token address to update the balance
      */
     function updateTokenBalance(address token) external nonReentrant {
+        require(token != address(getMainContractAddress().normalToken()), "Cannot deposit dao normal token");
+        require(token != address(getMainContractAddress().devToken()), "Cannot deposit dao dev token");
+
         uint256 balance;
         if (token == address(0)) {
             // If the token address is 0, return the ETH balance of the contract
@@ -188,6 +191,45 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
             
             uint256 diff = balance - tokenBalances[token];
             _depositToken(token, diff);
+        }
+    }
+
+    // Reject duplicate cycle/token inputs so estimate and withdraw stay deterministic.
+    function _validateDividendInputs(uint256[] calldata cycleIndexs, address[] calldata tokens) internal pure {
+        for (uint i = 0; i < cycleIndexs.length; i++) {
+            for (uint j = i + 1; j < cycleIndexs.length; j++) {
+                require(cycleIndexs[i] != cycleIndexs[j], "Duplicate cycle index");
+            }
+        }
+
+        for (uint i = 0; i < tokens.length; i++) {
+            for (uint j = i + 1; j < tokens.length; j++) {
+                require(tokens[i] != tokens[j], "Duplicate token");
+            }
+        }
+    }
+
+    // Drop current-cycle checkpoints that no longer add historical information after a round-trip update.
+    function _compactStakeRecords(address user) internal {
+        StakeRecord[] storage stakeRecords = UserStakeRecords[user];
+        if (stakeRecords.length == 0) {
+            return;
+        }
+
+        StakeRecord storage lastStakeRecord = stakeRecords[stakeRecords.length - 1];
+        if (stakeRecords.length == 1) {
+            if (lastStakeRecord.normalAmount == 0 && lastStakeRecord.devAmount == 0) {
+                stakeRecords.pop();
+            }
+            return;
+        }
+
+        StakeRecord storage prevStakeRecord = stakeRecords[stakeRecords.length - 2];
+        if (
+            lastStakeRecord.normalAmount == prevStakeRecord.normalAmount &&
+            lastStakeRecord.devAmount == prevStakeRecord.devAmount
+        ) {
+            stakeRecords.pop();
         }
     }
 
@@ -235,6 +277,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
      */
     function stakeNormal(uint256 amount) external nonReentrant {
         require(amount > 0, "Cannot stake 0 Token");
+        _tryNewCycle();
         require(getMainContractAddress().normalToken().transferFrom(msg.sender, address(this), amount), "Stake failed");
 
         // console.log("user stake ===> amount %d, cycle %d, user %s", amount, currentCycleIndex, msg.sender);
@@ -248,12 +291,13 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
             if (lastStakeRecord.cycleIndex == currentCycleIndex) {
                 lastStakeRecord.normalAmount += amount;
             } else {
-                stakeRecords.push(StakeRecord(currentCycleIndex, lastStakeRecord.normalAmount + amount, 0));
+                stakeRecords.push(StakeRecord(currentCycleIndex, lastStakeRecord.normalAmount + amount, lastStakeRecord.devAmount));
             }
         }
 
         // Update the total staked amount of the contract
         totalStaked += amount;
+        _compactStakeRecords(msg.sender);
 
         // Emit the stake event
         emit Stake(msg.sender, amount);
@@ -265,6 +309,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
      */
     function stakeDev(uint256 amount) external nonReentrant {
         require(amount > 0, "Cannot stake 0 Token");
+        _tryNewCycle();
         require(getMainContractAddress().devToken().transferFrom(msg.sender, address(this), amount), "Stake failed");
 
         // console.log("user stake ===> amount %d, cycle %d, user %s", amount, currentCycleIndex, msg.sender);
@@ -278,12 +323,13 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
             if (lastStakeRecord.cycleIndex == currentCycleIndex) {
                 lastStakeRecord.devAmount += amount;
             } else {
-                stakeRecords.push(StakeRecord(currentCycleIndex, 0, lastStakeRecord.devAmount + amount));
+                stakeRecords.push(StakeRecord(currentCycleIndex, lastStakeRecord.normalAmount, lastStakeRecord.devAmount + amount));
             }
         }
 
         // Update the total staked amount of the contract
         totalStaked += amount;
+        _compactStakeRecords(msg.sender);
 
         // Emit the stake event
         emit Stake(msg.sender, amount);
@@ -298,6 +344,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
      */
     function unstakeNormal(uint256 amount) external nonReentrant {
         require(amount > 0, "Cannot unstake 0");
+        _tryNewCycle();
         StakeRecord[] storage stakeRecords = UserStakeRecords[msg.sender];
         require(stakeRecords.length > 0, "No stake record found");
         
@@ -307,50 +354,14 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
         StakeRecord storage lastStakeRecord = stakeRecords[stakeRecords.length - 1];
         require(lastStakeRecord.normalAmount >= amount, "Insufficient stake amount");
 
-        // If there is a stake operation in the current cycle, this stake operation can be directly revoked without affecting the cycle data (the current stake will enter the cycleInfo in the next cycle).
-        // If it is not a stake operation in the current cycle, or the stake amount in the current cycle is insufficient, then this stake operation needs to be subtracted from the cycleInfo data associated with the previous cycle.
-        
-        // console.log("unstaking amount %d", amount);
-        // console.log("currentCycleIndex %d, lastStakeRecord.cycleIndex %d, amount %d", currentCycleIndex, lastStakeRecord.cycleIndex, lastStakeRecord.amount);
-        // console.log("lastStakeRecord.cycleIndex %d", lastStakeRecord.cycleIndex);
         if (lastStakeRecord.cycleIndex == currentCycleIndex) {
-
-            uint256 newAmount = 0;
-            if (stakeRecords.length > 1) {
-                StakeRecord memory prevStakeRecord = stakeRecords[stakeRecords.length - 2];
-                if (prevStakeRecord.normalAmount < lastStakeRecord.normalAmount) {
-                    newAmount = lastStakeRecord.normalAmount - prevStakeRecord.normalAmount;
-                }
-            } else {
-                newAmount = lastStakeRecord.normalAmount;
-            }
-
-            if (newAmount >= amount) {
-                lastStakeRecord.normalAmount -= amount;
-            } else {
-                uint256 diff = amount - newAmount;
-
-                StakeRecord storage prevStakeRecord = stakeRecords[stakeRecords.length - 2];
-                // console.log("prevStakeRecord.amount %d", prevStakeRecord.amount);
-                // console.log("prevStakeRecord.cycleIndex %d", prevStakeRecord.cycleIndex);
-                // console.log("prevStakeRecord.totalStaked %d", cycles[prevStakeRecord.cycleIndex].totalStaked);
-                
-                // The last record is unstaked all and is empty, delete it
-                stakeRecords.pop();
-
-                // The prev record all unstaked with the diff amount
-                prevStakeRecord.normalAmount -= diff;
-
-                // Unstake only effect the current cycle's total staked amount
-                cycles[currentCycleIndex].totalStaked -= diff;
-            }
-        } else {
             lastStakeRecord.normalAmount -= amount;
-
-            cycles[lastStakeRecord.cycleIndex + 1].totalStaked -= amount;
+        } else {
+            stakeRecords.push(StakeRecord(currentCycleIndex, lastStakeRecord.normalAmount - amount, lastStakeRecord.devAmount));
         }
         
         totalStaked -= amount;
+        _compactStakeRecords(msg.sender);
 
         // console.log("will unstake transfer %s ===> %d", msg.sender, amount);
         require(getMainContractAddress().normalToken().transfer(msg.sender, amount), "Unstake failed");
@@ -366,6 +377,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
      */
     function unstakeDev(uint256 amount) external nonReentrant {
         require(amount > 0, "Cannot unstake 0");
+        _tryNewCycle();
         StakeRecord[] storage stakeRecords = UserStakeRecords[msg.sender];
         require(stakeRecords.length > 0, "No stake record found");
         
@@ -375,50 +387,14 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
         StakeRecord storage lastStakeRecord = stakeRecords[stakeRecords.length - 1];
         require(lastStakeRecord.devAmount >= amount, "Insufficient stake amount");
 
-        // If there is a stake operation in the current cycle, this stake operation can be directly revoked without affecting the cycle data (the current stake will enter the cycleInfo in the next cycle).
-        // If it is not a stake operation in the current cycle, or the stake amount in the current cycle is insufficient, then this stake operation needs to be subtracted from the cycleInfo data associated with the previous cycle.
-        
-        // console.log("unstaking amount %d", amount);
-        // console.log("currentCycleIndex %d, lastStakeRecord.cycleIndex %d, amount %d", currentCycleIndex, lastStakeRecord.cycleIndex, lastStakeRecord.amount);
-        // console.log("lastStakeRecord.cycleIndex %d", lastStakeRecord.cycleIndex);
         if (lastStakeRecord.cycleIndex == currentCycleIndex) {
-
-            uint256 newAmount = 0;
-            if (stakeRecords.length > 1) {
-                StakeRecord memory prevStakeRecord = stakeRecords[stakeRecords.length - 2];
-                if (prevStakeRecord.devAmount < lastStakeRecord.devAmount) {
-                    newAmount = lastStakeRecord.devAmount - prevStakeRecord.devAmount;
-                }
-            } else {
-                newAmount = lastStakeRecord.devAmount;
-            }
-
-            if (newAmount >= amount) {
-                lastStakeRecord.devAmount -= amount;
-            } else {
-                uint256 diff = amount - newAmount;
-
-                StakeRecord storage prevStakeRecord = stakeRecords[stakeRecords.length - 2];
-                // console.log("prevStakeRecord.amount %d", prevStakeRecord.amount);
-                // console.log("prevStakeRecord.cycleIndex %d", prevStakeRecord.cycleIndex);
-                // console.log("prevStakeRecord.totalStaked %d", cycles[prevStakeRecord.cycleIndex].totalStaked);
-                
-                // The last record is unstaked all and is empty, delete it
-                stakeRecords.pop();
-
-                // The prev record all unstaked with the diff amount
-                prevStakeRecord.devAmount -= diff;
-
-                // Unstake only effect the current cycle's total staked amount
-                cycles[currentCycleIndex].totalStaked -= diff;
-            }
-        } else {
             lastStakeRecord.devAmount -= amount;
-
-            cycles[lastStakeRecord.cycleIndex + 1].totalStaked -= amount;
+        } else {
+            stakeRecords.push(StakeRecord(currentCycleIndex, lastStakeRecord.normalAmount, lastStakeRecord.devAmount - amount));
         }
         
         totalStaked -= amount;
+        _compactStakeRecords(msg.sender);
 
         // console.log("will unstake transfer %s ===> %d", msg.sender, amount);
         require(getMainContractAddress().devToken().transfer(msg.sender, amount), "Unstake failed");
@@ -479,6 +455,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
     function estimateDividends(uint256[] calldata cycleIndexs, address[] calldata tokens) external view returns (RewardWithdrawInfo[] memory) {
         require(cycleIndexs.length > 0, "No cycle index");
         require(tokens.length > 0, "No token");
+        _validateDividendInputs(cycleIndexs, tokens);
 
         RewardWithdrawInfo[] memory rewards = new RewardWithdrawInfo[](cycleIndexs.length * tokens.length);
         uint256 realRewardLength = 0;
@@ -549,6 +526,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
     function withdrawDividends(uint256[] calldata cycleIndexs, address[] calldata tokens) external nonReentrant {
         require(cycleIndexs.length > 0, "No cycle index");
         require(tokens.length > 0, "No token");
+        _validateDividendInputs(cycleIndexs, tokens);
         
         // require(UserStakeRecords[msg.sender].length > 0, "No stake record");
 

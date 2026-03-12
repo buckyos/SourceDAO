@@ -294,3 +294,260 @@
 
 1. 如果不改，会出什么业务问题或安全问题？
 2. 改完之后，哪些测试可以证明这个行为已经被固定住？
+
+---
+
+## 2026-03-12 DividendContract 变更记录
+
+### 合约
+
+- 合约：`DividendContract`
+- 文件：[contracts/Dividend.sol](contracts/Dividend.sol)
+- 相关测试：[test/dividend.ts](test/dividend.ts)
+
+### 背景
+
+`DividendContract` 负责记录 `NormalToken` / `DevToken` 质押、按周期累计奖励、并在后续周期中按持仓比例分红。
+
+这个合约的风险不在于简单的 access control，而在于：
+
+1. 周期边界上的 stake / unstake 是否会污染上一轮已经形成的奖励基线
+2. 跨周期追加另一种质押资产时，是否会保留原有的另一侧持仓
+3. `estimateDividends` / `withdrawDividends` 使用的历史快照，是否真的和“上一完整周期”的业务语义一致
+
+这一轮并不是先主动重构，而是先用新的高风险测试去验证两个怀疑点，随后由失败用例确认了真实实现问题。
+
+### 修改目的
+
+本次 `DividendContract` 修改的目标主要有四个：
+
+1. 保证 stake / unstake 在跨过周期边界后，不会回写并污染上一轮奖励快照
+2. 保证用户跨周期混合持有 `normalAmount` 和 `devAmount` 时，不会因为只追加一种资产而丢失另一种资产的历史持仓
+3. 让 `updateTokenBalance` 和 `deposit` 在 DAO 自身 token 的限制语义上保持一致
+4. 在不破坏历史快照的前提下，压缩同一周期内往返操作产生的冗余 `StakeRecord`
+
+前两项属于结算语义修复，第三项属于约束收口，第四项属于存储增长控制。
+
+### 具体改动
+
+#### 1. 在质押和解押入口先执行周期推进
+
+修改位置：[contracts/Dividend.sol](contracts/Dividend.sol#L236)、[contracts/Dividend.sol](contracts/Dividend.sol#L267)、[contracts/Dividend.sol](contracts/Dividend.sol#L301)、[contracts/Dividend.sol](contracts/Dividend.sol#L334)
+
+本次在以下四个入口开头统一加入了 `_tryNewCycle()`：
+
+1. `stakeNormal`
+2. `stakeDev`
+3. `unstakeNormal`
+4. `unstakeDev`
+
+修复原因：
+
+旧实现只有 `deposit`、`receive`、`updateTokenBalance` 会尝试推进周期，而 stake / unstake 不会。
+
+这会导致一种错误语义：
+
+1. 周期实际上已经过期
+2. 但还没有任何操作触发 cycle rollover
+3. 用户此时执行 stake / unstake
+4. 这笔本应属于“新周期”的变更，却被写进了“旧周期”的快照基础里
+
+后果就是上一轮已经形成的分红基线被晚到的操作污染。
+
+修复后，stake / unstake 会先根据时间推进到正确周期，再写入新的变更。
+
+#### 2. 修复跨周期追加另一种质押资产时丢失另一侧余额的问题
+
+修改位置：[contracts/Dividend.sol](contracts/Dividend.sol#L249)、[contracts/Dividend.sol](contracts/Dividend.sol#L280)
+
+旧实现里：
+
+1. 如果用户上一周期有 `normalAmount`，下一周期执行 `stakeDev`，新 `StakeRecord` 会把 `normalAmount` 重置为 0
+2. 如果用户上一周期有 `devAmount`，下一周期执行 `stakeNormal`，新 `StakeRecord` 会把 `devAmount` 重置为 0
+
+这意味着跨周期混合持仓会被错误截断，后续：
+
+1. `getStakeAmount`
+2. `estimateDividends`
+3. `withdrawDividends`
+4. 以及后续再发生的 unstake
+
+都可能基于错误余额继续运作。
+
+修复后：
+
+1. `stakeNormal` 在跨周期创建新记录时，会保留上一条记录里的 `devAmount`
+2. `stakeDev` 在跨周期创建新记录时，会保留上一条记录里的 `normalAmount`
+
+也就是说，新的 `StakeRecord` 表示“本周期开始生效的总持仓”，而不是“只保留本次修改的那一侧”。
+
+#### 3. 修复跨周期 unstake 会回写旧快照的问题
+
+修改位置：[contracts/Dividend.sol](contracts/Dividend.sol#L301)、[contracts/Dividend.sol](contracts/Dividend.sol#L334)
+
+旧实现的另一个更隐蔽问题是：
+
+1. 当用户已经跨入新周期
+2. 但最近一条 `StakeRecord` 还属于上一周期
+3. 此时执行 `unstakeNormal` 或 `unstakeDev`
+
+旧代码会直接修改那条旧记录本身。
+
+这会造成：
+
+1. 上一周期本应固定的奖励基线被 retroactive 改写
+2. `estimateDividends(cycleIndex)` 中用到的 `_getStakeAmount(cycleIndex - 1)` 也被一起污染
+
+修复后改为：
+
+1. 如果当前周期已经有记录，就只更新当前周期记录
+2. 如果当前周期还没有记录，就基于上一条记录复制一份新的当前周期记录，并在这份新记录上扣减对应资产
+
+这样可以保证：
+
+1. 历史周期记录保持不可变
+2. 当前周期之后的有效持仓仍然被正确更新
+3. `totalStaked` 会继续反映当前生效的总持仓，而历史奖励快照不会被回写
+
+#### 4. 收紧 `updateTokenBalance` 对 DAO 自身 token 的处理
+
+修改位置：[contracts/Dividend.sol](contracts/Dividend.sol#L173)
+
+旧实现里：
+
+1. `deposit` 明确拒绝把 DAO 的 `normalToken` / `devToken` 当作奖励 token
+2. 但 `updateTokenBalance` 没有同样的限制
+
+这意味着用户如果先把 DAO 自身 token 直接转到分红合约，再调用 `updateTokenBalance`，就能绕过 `deposit` 的限制语义。
+
+本次修复后，`updateTokenBalance` 也会显式拒绝：
+
+1. DAO normal token
+2. DAO dev token
+
+这样 `deposit` 和 `updateTokenBalance` 对“哪些 token 可以作为 reward”保持一致。
+
+#### 5. 为分红查询和提取增加重复输入保护
+
+修改位置：[contracts/Dividend.sol](contracts/Dividend.sol#L194)、[contracts/Dividend.sol](contracts/Dividend.sol#L453)、[contracts/Dividend.sol](contracts/Dividend.sol#L524)
+
+旧实现允许调用方把重复的 `cycleIndex` 或重复的 `token` 传入：
+
+1. `estimateDividends` 会出现重复估算
+2. `withdrawDividends` 会在同一笔调用里因为重复键走到 `Already claimed`
+
+这不一定会直接损失资金，但接口语义非常脆弱，前端或脚本稍有疏忽就会触发不稳定行为。
+
+本次新增 `_validateDividendInputs`，在两个入口统一拒绝：
+
+1. 重复 `cycleIndex`
+2. 重复 `token`
+
+#### 6. 增加最小安全的 `StakeRecord` 压缩
+
+修改位置：[contracts/Dividend.sol](contracts/Dividend.sol#L209)、[contracts/Dividend.sol](contracts/Dividend.sol#L297)、[contracts/Dividend.sol](contracts/Dividend.sol#L329)、[contracts/Dividend.sol](contracts/Dividend.sol#L360)、[contracts/Dividend.sol](contracts/Dividend.sol#L393)
+
+在修复跨周期快照问题之后，`StakeRecord` 的增长模式会更接近 checkpoint 模型：
+
+1. 每次发生跨周期持仓变化，都可能新增一条新的有效记录
+2. 这些记录不能随意删除，因为它们可能仍然承担历史收益查询的语义
+
+这意味着历史记录必须保留，但同一周期里“先改再改回去”的冗余 checkpoint 其实可以安全回收。
+
+本次新增 `_compactStakeRecords`，只做最小安全压缩：
+
+1. 如果唯一那条记录被同周期往返操作压回 `0 / 0`，则直接 `pop`
+2. 如果最后一条记录和前一条记录的 `normalAmount` / `devAmount` 完全一致，则说明这条当前周期 checkpoint 不再提供新的历史信息，可以 `pop`
+
+这不会删除仍承担历史语义的 checkpoint，但可以避免同一周期来回操作导致的无意义增长。
+
+### 兼容性影响评估
+
+#### ABI / 接口调用兼容性
+
+本次修改没有改变任何外部函数的：
+
+1. 函数名
+2. 参数顺序
+3. 参数类型
+4. 返回值类型
+
+因此：
+
+- 不影响 ABI 编码
+- 不影响现有调用方集成
+- 不影响代理后的函数选择器匹配
+
+#### 代理升级与存储布局兼容性
+
+本次没有新增、删除或重排状态变量，也没有修改 `StakeRecord`、`CycleInfo`、`RewardInfo` 的存储字段定义。
+
+因此：
+
+1. storage layout 不变
+2. 不影响代理合约已有存储解释
+3. 风险集中在运行时行为修复，而不是升级布局风险
+
+### 行为语义补充说明
+
+这轮修复和测试把 `DividendContract` 的几个关键语义固定了下来：
+
+1. 周期边界之后才发生的 stake / unstake，必须先滚动到新周期，再影响新的有效持仓
+2. 上一完整周期已经形成的分红基线，不能被晚到的 stake / unstake retroactive 改写
+3. 用户的 `normalAmount` 和 `devAmount` 是同一份持仓快照的两个维度，跨周期修改任意一侧都不能丢掉另一侧
+4. `updateTokenBalance` 仍然可以把直接转入的普通 ERC20 / 原生币纳入当期奖励池，但不再允许把 DAO 自身的 normal/dev token 作为 reward 同步进来
+5. 零质押周期里的 reward 会被后续空周期继续 carry-over，但只有在后面出现有效 stake 并完整结算一个可领取周期后，才会真正被提取
+6. 空周期里的 carry-over reward 不会因为连续复制到多个 cycleInfo 就被重复兑现，实际仍只受 `tokenBalances[token]` 和单次 withdraw 状态控制
+7. `StakeRecord` 不是“每个周期一份全量快照”，而是“只在持仓变化时写入的 checkpoint”；因此历史上承担收益查询语义的检查点必须保留，但同周期往返产生的冗余 checkpoint 可以安全压缩
+
+### 验证方式
+
+本次围绕高风险路径补充了 `DividendContract` 的专项回归，重点覆盖：
+
+1. `stakeDev` 与 `stakeNormal` 的联合计权
+2. `updateTokenBalance` 对直接转入 ERC20 和原生币奖励的同步
+3. `updateTokenBalance` 拒绝把 DAO 自身 normal/dev token 同步为 reward
+4. 跨周期 `unstakeNormal` / `unstakeDev` 对当前有效持仓的影响
+5. late `normal` / `dev` stake 不得污染上一轮奖励基线
+6. late `normal` / `dev` unstake 不得污染上一轮奖励基线
+7. `normal -> dev` 跨周期追加质押时保留原有 `normalAmount`
+8. `dev -> normal` 跨周期追加质押时保留原有 `devAmount`
+9. 重复 `cycleIndex` / `token` 输入在 `estimateDividends` 和 `withdrawDividends` 中被显式拒绝
+10. 同一 reward token 在同一周期内多次 deposit 的累计行为
+11. 零质押周期 reward carry-over 的延后领取语义
+12. 空周期里的 carried reward 保持不可提取
+13. carried reward 在多个空周期复制后仍只会被兑现一次
+14. 同周期往返操作触发的冗余 checkpoint 压缩
+
+验证结果：
+
+- `npm test -- --grep "dividend"` 通过
+- `npm test` 全量通过
+- 当前全量回归结果：`128 passing`
+
+### 2026-03-12 当日晚些时候的测试扩展补充
+
+在上面的合约修复完成并稳定之后，这一轮又继续沿着高风险路径补充了更强的 `DividendContract` 回归，重点不是再改 Solidity，而是继续证明当前 checkpoint 与 carry-over 语义在更长路径下依然成立。
+
+本次新增测试重点覆盖了以下几类组合场景：
+
+1. 四个参与者在三个 reward cycle 中交错进行 `normal` / `dev` stake、partial unstake、full exit、late entry 和再次变更时，历史分红份额不会串账
+2. 多用户在多个周期里交替执行“只提 ERC20 reward”与“只提原生币 reward”时，`user x cycle x token` 维度的领取状态保持隔离
+3. 更长路径下的部分领取、后续再领取、以及不同领取顺序，不会破坏已经完成或尚未完成的 claim 标记
+4. 四人混合分配下最后留在合约里的少量余额，仍然可以被明确解释为整数除法舍入残值，而不是重复领取或漏记账
+
+这一批测试本身也经历了修正，暴露出的都是测试预期问题而不是新的合约逻辑 bug，主要包括：
+
+1. 奖励 token allowance 低于场景中三次 deposit 的总和
+2. 四人三周期场景里对分母变化后的 reward split 手工计算有误
+3. 交替提取场景里对最终 remainder 的预期高估了 `1`
+
+这些问题修正后，最终结论是：当前 `Dividend.sol` 在这批更极端的状态机式路径下仍然保持行为稳定，无需追加新的合约逻辑修改。
+
+本次补充后，新增被固定下来的行为包括：
+
+1. 四用户跨三周期的混合 stake 转移不会让较晚加入者分享不属于其历史周期的奖励
+2. 一部分用户先提 token、另一部分用户先提 native，不会导致其它 token/cycle 的领取状态被误标为已领取
+3. 在复杂路径下保留下来的少量 reward token 与 native 余额，仍然只来自确定性的整数除法舍入
+
+对应新增测试位于：[test/dividend.ts](test/dividend.ts)
