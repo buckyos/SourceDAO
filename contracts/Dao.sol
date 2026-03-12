@@ -18,6 +18,10 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
         __SourceDaoContractUpgradable_init(address(0));
     }
 
+    function _requireValidAddress(address newAddress) internal pure {
+        require(newAddress != address(0), "invalid address");
+    }
+
     function version() external pure override returns (string memory) {
         return "2.0.0";
     }
@@ -25,42 +29,49 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
     function setDevTokenAddress(
         address newAddress
     ) external onlySetOnce(_devToken) {
+        _requireValidAddress(newAddress);
         _devToken = newAddress;
     }
 
     function setNormalTokenAddress(
         address newAddress
     ) external onlySetOnce(_normalToken) {
+        _requireValidAddress(newAddress);
         _normalToken = newAddress;
     }
 
     function setCommitteeAddress(
         address newAddress
     ) external onlySetOnce(_committee) {
+        _requireValidAddress(newAddress);
         _committee = newAddress;
     }
 
     function setProjectAddress(
         address newAddress
     ) external onlySetOnce(_project) {
+        _requireValidAddress(newAddress);
         _project = newAddress;
     }
 
     function setTokenLockupAddress(
         address newAddress
     ) external onlySetOnce(_tokenLockup) {
+        _requireValidAddress(newAddress);
         _tokenLockup = newAddress;
     }
 
     function setTokenDividendAddress(
         address newAddress
     ) external onlySetOnce(_tokenDividend) {
+        _requireValidAddress(newAddress);
         _tokenDividend = newAddress;
     }
 
     function setAcquiredAddress(
         address newAddress
     ) external onlySetOnce(_acquired) {
+        _requireValidAddress(newAddress);
         _acquired = newAddress;
     }
 

@@ -23,6 +23,19 @@ async function deployDaoFixture() {
 }
 
 describe("dao", function () {
+    it("rejects zero addresses for every module slot", async function () {
+        const fixture = await networkHelpers.loadFixture(deployDaoFixture);
+        const zeroAddress = ethers.ZeroAddress;
+
+        await expect(fixture.dao.setDevTokenAddress(zeroAddress)).to.be.revertedWith("invalid address");
+        await expect(fixture.dao.setNormalTokenAddress(zeroAddress)).to.be.revertedWith("invalid address");
+        await expect(fixture.dao.setCommitteeAddress(zeroAddress)).to.be.revertedWith("invalid address");
+        await expect(fixture.dao.setProjectAddress(zeroAddress)).to.be.revertedWith("invalid address");
+        await expect(fixture.dao.setTokenLockupAddress(zeroAddress)).to.be.revertedWith("invalid address");
+        await expect(fixture.dao.setTokenDividendAddress(zeroAddress)).to.be.revertedWith("invalid address");
+        await expect(fixture.dao.setAcquiredAddress(zeroAddress)).to.be.revertedWith("invalid address");
+    });
+
     it("stores each module address in the expected getter", async function () {
         const fixture = await networkHelpers.loadFixture(deployDaoFixture);
 
@@ -41,6 +54,16 @@ describe("dao", function () {
         expect(await fixture.dao.lockup()).to.equal(fixture.lockupAddress);
         expect(await fixture.dao.dividend()).to.equal(fixture.dividendAddress);
         expect(await fixture.dao.acquired()).to.equal(fixture.acquiredAddress);
+    });
+
+    it("keeps one-time module configuration intact after a rejected zero-address attempt", async function () {
+        const fixture = await networkHelpers.loadFixture(deployDaoFixture);
+
+        await expect(fixture.dao.setDevTokenAddress(ethers.ZeroAddress)).to.be.revertedWith("invalid address");
+        await (await fixture.dao.setDevTokenAddress(fixture.devTokenAddress)).wait();
+
+        expect(await fixture.dao.devToken()).to.equal(fixture.devTokenAddress);
+        await expect(fixture.dao.setDevTokenAddress(fixture.outsiderAddress)).to.be.revertedWith("can set once");
     });
 
     it("allows each module address to be configured only once", async function () {

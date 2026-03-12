@@ -327,6 +327,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
 
     function prepareRemoveMember(address member) external returns (uint) {
         require(isMember(msg.sender), "only committee can remove member");
+        require(isMember(member), "member not found");
         bytes32[] memory params = _prepareParams(member, false);
 
         return _propose(address(this), 7 days, params, false);
@@ -359,6 +360,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             _takeResult(proposalId, params) == ProposalResult.Accept,
             "proposal not accepted"
         );
+
+        require(isMember(member), "member not found");
 
         // Find and delete member
         for (uint i = 0; i < committees.length; i++) {
@@ -454,6 +457,16 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             _takeResult(proposalId, params) == ProposalResult.Accept,
             "proposal not accepted"
         );
+
+        if (getMainContractAddress().project().versionReleasedTime(mainProjectName, finalVersion) > 0) {
+            if (devRatio != finalRatio) {
+                emit DevRatioChanged(devRatio, finalRatio);
+                devRatio = finalRatio;
+            }
+
+            _setProposalExecuted(proposalId, true);
+            return;
+        }
 
         emit DevRatioChanged(devRatio, newDevRatio);
         devRatio = newDevRatio;

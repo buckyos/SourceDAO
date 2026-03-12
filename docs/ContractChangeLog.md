@@ -731,3 +731,215 @@
 - `npm test -- --grep "Lockup"` 通过
 - `npm test` 全量通过
 - 当前全量回归结果：`138 passing`
+
+---
+
+## 2026-03-12 Committee 变更记录
+
+### 合约
+
+- 合约：`SourceDaoCommittee`
+- 文件：[contracts/Committee.sol](contracts/Committee.sol)
+- 相关测试：[test/committee.ts](test/committee.ts)、[test/upgrade.ts](test/upgrade.ts)
+
+### 背景
+
+`SourceDaoCommittee` 是整个 DAO 的治理入口，负责成员变更、委员会整体替换、参数治理，以及 UUPS 升级提案验证。
+
+此前测试只覆盖了最基础的增删成员 happy path，缺少以下几类高价值治理边界：
+
+1. 整组委员会替换之后，旧成员权限是否被立刻撤销
+2. 升级提案在参数不匹配或过期后，队列状态是否能正确保留或清理
+3. “移除成员”提案在目标地址已经不再是委员会成员时，是否还能被空执行
+4. `setDevRatio` 在最终版本发布前后的执行边界是否一致
+5. `fullPropose` 是否真的按 token 权重、投票参与率和同意/反对票差额结算
+
+继续补测试后，除了第三类路径暴露出真实语义缺口外，又进一步发现另一处治理漏洞：如果 `setDevRatio` 提案在最终版本发布前已经通过，但执行发生在发布之后，旧实现仍会把 `devRatio` 改成一个非 `finalRatio` 的值，违背“正式版发布后固定为 finalRatio”的语义。
+
+### 修改目的
+
+本次修改目标有五个：
+
+1. 固定委员会整组替换后的权限切换语义
+2. 固定升级提案在错误实现地址和过期取消场景下的队列行为
+3. 阻止对已经不是委员会成员的地址继续执行旧的移除提案
+4. 阻止最终版本发布后的旧 `setDevRatio` 提案把比例改回非最终值
+5. 固定 full proposal 的加权投票结算语义
+
+### 具体改动
+
+#### 1. 为移除成员提案增加目标成员存在性校验
+
+修改位置：[contracts/Committee.sol](contracts/Committee.sol)
+
+本次在两个位置补上了 `member not found` 校验：
+
+1. `prepareRemoveMember` 提案创建阶段
+2. `removeCommitteeMember` 执行阶段
+
+修复前的问题是：
+
+1. 可以为一个当前并不在委员会中的地址创建移除提案
+2. 更隐蔽的是，即使提案创建时目标地址确实是成员，只要它在执行前已经被其它治理动作移除，旧提案仍会继续走到 `_setProposalExecuted` 并发出 `MemberRemoved`
+3. 这样链上状态虽然不会真的再删除一次地址，但事件与业务语义已经不一致
+
+修复后：
+
+1. 非成员地址不能再进入移除提案流程
+2. 已通过但过时的移除提案，也不能在执行阶段对一个已不再属于委员会的地址“空执行”
+
+#### 2. 补齐整组换届的治理回归覆盖
+
+新增测试固定了 `prepareSetCommittees(..., false)` / `setCommittees(...)` 的关键行为：
+
+1. 非委员会成员不能发起普通换届提案
+2. 过半支持后可以整体替换委员会成员列表
+3. 换届完成后，旧成员必须立即失去 `prepareAddMember` 等治理权限
+
+这类测试不是修合约 bug，而是把当前设计中的“权限立即切换”显式固定下来，避免以后改治理逻辑时悄悄退化。
+
+#### 3. 补齐升级提案的队列保留与过期清理路径
+
+新增测试固定了两个容易漏掉的 UUPS 治理边界：
+
+1. 当提案通过后，若代理升级时传入的实现地址与提案参数不匹配，`verifyContractUpgrade` 必须返回失败，同时保留原升级提案，不得误清队列
+2. 当升级提案过期后，委员会成员调用 `cancelContractUpgrade` 必须清空 `contractUpgradeProposals` 中的挂起记录，并允许同一个代理重新发起升级提案
+
+这两条路径能保证升级治理既不会因为一次错误实现地址调用把合法提案清掉，也不会让过期提案永久占住升级槽位。
+
+#### 4. 修复最终版本发布后旧 `setDevRatio` 提案仍可覆盖 `finalRatio` 的问题
+
+修改位置：[contracts/Committee.sol](contracts/Committee.sol)
+
+本次在 `setDevRatio(...)` 执行路径中增加了最终版本已发布时的特殊处理：
+
+1. 如果主项目 `mainProjectName/finalVersion` 已经有 `versionReleasedTime`
+2. 那么即使当前提案在发布前已经通过，也不会再把 `devRatio` 设成提案中的旧值
+3. 相反，合约会把 `devRatio` 同步到 `finalRatio`，并把该提案标记为已执行
+
+修复前的问题是：
+
+1. `prepareSetDevRatio` 只在提案创建时阻止“发布后再创建新提案”
+2. 但对“发布前已通过、发布后才执行”的旧提案没有保护
+3. 结果是 `devRatio` 可以在最终版本发布后被重新写成 `180` 之类的非最终值
+
+修复后，正式版发布后任何对这类旧提案的执行都会收敛到 `finalRatio`，不再让历史提案破坏最终治理参数。
+
+#### 5. 补齐 full proposal 的 token 加权结算覆盖
+
+新增测试固定了 `fullPropose(...)` / `endFullPropose(...)` 的关键行为：
+
+1. 只有 DAO 模块地址才能发起 full proposal，EOA 直接调用必须拒绝
+2. full proposal 的投票权重来自 `normalToken.balance + devToken.balance * devRatio / 100`
+3. 若总参与权重未达到门槛，即使存在支持票，也必须进入 `Expired`
+4. 只有在参与权重过门槛且 `agree > reject` 时，提案才应进入 `Accepted`
+
+继续补充之后，又把以下更低频但容易被重构破坏的细边界固定了下来：
+
+5. `endFullPropose(...)` 可以分批结算，不会重复统计已经处理过的 voter
+6. 同一个 voter 即使被重复传入后续结算批次，也不能二次计票
+7. 当参与权重已经过门槛但加权结果形成平票或支持票不占优时，提案必须进入 `Rejected`
+8. 如果最终版本已经发布，则 full proposal 结算前要先把 `devRatio` 收敛到 `finalRatio`，并按最终权重计算 `agree`、`reject` 与 `totalReleasedToken`
+
+这批测试把 full proposal 和普通 committee 多数票提案的差异明确固定了下来，避免以后把两套结算语义混淆。
+
+### 风险说明
+
+这次修复的是治理语义错误，而不是单纯测试补洞。
+
+如果不修：
+
+1. 旧的移除提案可能在目标成员已经被换届移出后仍然被执行并发出 `MemberRemoved`
+2. 链上事件会向外部索引器和运维工具暴露错误信号，造成“这次移除是由哪笔提案完成”的审计混淆
+3. 治理状态机会出现“提案是旧的，但执行看起来仍然有效”的假象
+4. 正式版发布后，历史 `setDevRatio` 提案仍可能把治理参数改回非 `finalRatio`，破坏最终版本参数冻结语义
+5. full proposal 的 token 加权门槛如果没有测试固定，后续重构时很容易被误改成普通人数多数票逻辑
+6. full proposal 的分批结算如果没有覆盖，后续优化时很容易引入重复计票或批次间状态污染
+
+### 验证结果
+
+- `npm test -- --grep "Committee|upgrade"` 通过
+- `npm test` 全量通过
+- 当前全量回归结果：`156 passing`
+
+---
+
+## 2026-03-12 SourceDao 变更记录
+
+### 合约
+
+- 合约：`SourceDao`
+- 文件：[contracts/Dao.sol](contracts/Dao.sol)
+- 相关测试：[test/dao.ts](test/dao.ts)
+
+### 背景
+
+`SourceDao` 本身逻辑不复杂，核心职责是保存各模块地址，并作为其它模块判断“谁属于 DAO 白名单”的路由中心。
+
+这一轮继续补 Dao wiring 的低频边界时，暴露出一个之前测试没有覆盖到的真实配置缺口：所有模块地址 setter 都允许传入零地址。
+
+这个问题表面上看像“部署时多传了一个无效值”，但实际会破坏 `onlySetOnce` 的核心语义，因为：
+
+1. 当前 slot 初始值本来就是 `address(0)`
+2. 如果第一次调用把它再次设成 `address(0)`，状态不会发生任何变化
+3. 后续仍然可以继续调用同一个 setter，把该模块地址改成任意非零地址
+
+也就是说，零地址写入虽然看起来像一次配置，实际上不会消耗掉“一次性设置”的机会。
+
+### 修改目的
+
+本次修改目标有两个：
+
+1. 阻止所有模块地址 slot 接受零地址配置
+2. 固定“被拒绝的零地址尝试不能破坏后续一次性配置语义”
+
+### 具体改动
+
+#### 1. 为所有模块地址 setter 增加统一零地址校验
+
+修改位置：[contracts/Dao.sol](contracts/Dao.sol)
+
+本次新增内部函数 `_requireValidAddress(address)`，并在以下入口统一调用：
+
+1. `setDevTokenAddress`
+2. `setNormalTokenAddress`
+3. `setCommitteeAddress`
+4. `setProjectAddress`
+5. `setTokenLockupAddress`
+6. `setTokenDividendAddress`
+7. `setAcquiredAddress`
+
+所有这些入口现在都会对 `address(0)` 直接返回 `invalid address`。
+
+修复前的问题是：
+
+1. 零地址写入会“看起来调用成功”，但实际上 slot 仍保持在默认零值
+2. `onlySetOnce` 因为检查的是“当前值是否为零”，所以下一次调用仍然不会被阻止
+3. 这让部署或运维流程中的一次无效写入悄悄绕过了一次性配置的设计初衷
+
+修复后，模块地址 slot 必须第一次就写入有效非零地址，失败的零地址尝试不会污染状态，也不会改变后续一次性配置语义。
+
+#### 2. 补齐 Dao wiring 的零地址回归覆盖
+
+新增测试固定了两类以前没被钉住的边界：
+
+1. 所有模块地址 setter 对零地址都必须稳定拒绝
+2. 一次被拒绝的零地址尝试之后，后续第一次有效配置仍然必须成功，而且第二次有效配置仍必须因 `can set once` 被拒绝
+
+这批测试把“输入校验”和“一次性配置语义”绑定在一起，避免以后只看 getter happy path 时遗漏这类部署期漏洞。
+
+### 风险说明
+
+这次修复的是一个真实配置漏洞，而不是低价值的校验美化。
+
+如果不修：
+
+1. 任何模块 slot 都可以先被写成零地址，再在后续重新写入另一个地址
+2. `onlySetOnce` 名义上存在，但零地址路径会让它失去“首次写入即锁定”的实际含义
+3. 部署脚本、手工运维或错误交易都可能在不显眼的情况下留下可重写配置窗口
+
+### 验证结果
+
+- `npm test -- --grep "dao"` 通过
+- `npm test` 全量通过
+- 当前全量回归结果：`158 passing`

@@ -109,4 +109,49 @@ describe("upgrade", function () {
         const clearedProposal = await committee.getContractUpgradeProposal(committeeAddress);
         expect(clearedProposal.state).to.equal(3n);
     });
+
+    it("keeps a queued upgrade proposal when verification params do not match", async function () {
+        const { committee, members, nextImplementationAddress } = await networkHelpers.loadFixture(deployUpgradeFixture);
+        const committeeAddress = await committee.getAddress();
+        const otherImplementation = await (await ethers.getContractFactory("SourceDaoCommitteeV2Mock")).deploy();
+        await otherImplementation.waitForDeployment();
+        const proposalId = 1n;
+        const params = upgradeParams(committeeAddress, nextImplementationAddress);
+
+        await (await committee.connect(members[0]).prepareContractUpgrade(committeeAddress, nextImplementationAddress)).wait();
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+        await (await committee.connect(members[1]).support(proposalId, params)).wait();
+
+        await expect(committee.upgradeToAndCall(await otherImplementation.getAddress(), "0x")).to.be.revertedWith(
+            "verify proposal fail"
+        );
+
+        const stillQueued = await committee.getContractUpgradeProposal(committeeAddress);
+        expect(stillQueued.state).to.equal(1n);
+
+        await expect(committee.upgradeToAndCall(nextImplementationAddress, "0x"))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId)
+            .to.emit(committee, "ProposalExecuted")
+            .withArgs(proposalId);
+    });
+
+    it("clears an expired upgrade proposal when a committee member cancels it", async function () {
+        const { committee, members, nextImplementationAddress } = await networkHelpers.loadFixture(deployUpgradeFixture);
+        const committeeAddress = await committee.getAddress();
+        const proposalId = 1n;
+
+        await (await committee.connect(members[0]).prepareContractUpgrade(committeeAddress, nextImplementationAddress)).wait();
+
+        await networkHelpers.time.increase(7 * 24 * 60 * 60 + 1);
+
+        await committee.connect(members[1]).cancelContractUpgrade(committeeAddress);
+
+        const clearedProposal = await committee.getContractUpgradeProposal(committeeAddress);
+        expect(clearedProposal.state).to.equal(0n);
+
+        await expect(committee.connect(members[0]).prepareContractUpgrade(committeeAddress, nextImplementationAddress))
+            .to.emit(committee, "ProposalStart")
+            .withArgs(proposalId + 1n, false);
+    });
 });
