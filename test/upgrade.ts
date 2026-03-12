@@ -1,64 +1,112 @@
-import { ethers, upgrades } from "hardhat";
-import { SourceDaoCommittee, SourceDao } from "../typechain-types";
-import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import hre from "hardhat";
 import { expect } from "chai";
-import fs from 'node:fs';
 
-describe("upgrade", () => {
-    async function deployContracts() {
-        const signers = await ethers.getSigners();
-        let committees = [];
-        for (let i = 0; i < 5; i++) {
-        committees.push(signers[i].address);
-        }
-        console.log(`comittees ${JSON.stringify(committees)}`);
+import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
 
-        console.log('deploy main contract')
-        const MainFactory = await ethers.getContractFactory("SourceDao");
+const { ethers, networkHelpers } = await hre.network.connect();
 
-        const dao = await (await upgrades.deployProxy(MainFactory, undefined, {kind: "uups"})).deployed() as SourceDao;
-        console.log('main proxy address', dao.address);
+function upgradeParams(proxyAddress: string, implementationAddress: string) {
+    return [
+        ethers.zeroPadValue(proxyAddress, 32),
+        ethers.zeroPadValue(implementationAddress, 32),
+        ethers.encodeBytes32String("upgradeContract")
+    ];
+}
 
-        console.log('deploy committee contract')
-        const CommitteeFactory = await ethers.getContractFactory("SourceDaoCommittee");
+async function deployUpgradeFixture() {
+    const signers = await ethers.getSigners();
+    const members = signers.slice(0, 3);
 
-        const committee = await (await upgrades.deployProxy(CommitteeFactory, [committees, dao.address], {kind: "uups"})).deployed() as SourceDaoCommittee;
-        console.log('committee proxy address', committee.address);
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        members.map((signer: { address: string }) => signer.address),
+        1,
+        200,
+        ethers.encodeBytes32String("main"),
+        1,
+        150,
+        await dao.getAddress()
+    ]);
 
-        console.log('set committee address to main');
-        await (await dao.setCommitteeAddress(committee.address)).wait();
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
 
-        // console.log('set main address to committee');
-        // await (await committee.setMainContractAddress(dao.address)).wait();
+    const nextImplementation = await (await ethers.getContractFactory("SourceDaoCommitteeV2Mock")).deploy();
+    await nextImplementation.waitForDeployment();
 
-        return {signers, committees, committee, dao};
-    }
+    return {
+        committee,
+        dao,
+        members,
+        outsider: signers[4],
+        nextImplementationAddress: await nextImplementation.getAddress()
+    };
+}
 
+describe("upgrade", function () {
+    it("only allows committee members to start an upgrade proposal", async function () {
+        const { committee, outsider, nextImplementationAddress } = await networkHelpers.loadFixture(deployUpgradeFixture);
 
-    it("deploy and committee and upgrade", async function () {
-        const {signers, committees, committee, dao} = await loadFixture(deployContracts);
+        await expect(
+            committee.connect(outsider).prepareContractUpgrade(await committee.getAddress(), nextImplementationAddress)
+        ).to.be.revertedWith("only committee can upgrade contract");
+    });
 
-        console.log("begin upgrade");
-        console.log("deploy new impl contract first");
+    it("upgrades the committee proxy after majority approval", async function () {
+        const { committee, members, nextImplementationAddress } = await networkHelpers.loadFixture(deployUpgradeFixture);
+        const committeeAddress = await committee.getAddress();
+        const params = upgradeParams(committeeAddress, nextImplementationAddress);
+        const proposalId = 1n;
 
-        const CommitteeFactory = await ethers.getContractFactory("SourceDaoCommittee");
-        const newProxyAddress = await upgrades.deployImplementation(CommitteeFactory, {kind: 'uups'});
-        console.log("deployed impl contract address:", newProxyAddress);
+        await expect(committee.connect(members[0]).prepareContractUpgrade(committeeAddress, nextImplementationAddress))
+            .to.emit(committee, "ProposalStart")
+            .withArgs(proposalId, false);
 
-        let receipt = await (await committee.prepareContractUpgrade(committee.address, newProxyAddress as string)).wait();
-        let proposalId = receipt.events![0].args![0];
-        console.log('upgrade proposal id', proposalId);
+        const queuedProposal = await committee.getContractUpgradeProposal(committeeAddress);
+        expect(queuedProposal.state).to.equal(1n);
+        expect(queuedProposal.fromGroup).to.equal(committeeAddress);
 
-        for (const signer of signers) {
-            if (committees.includes(signer.address)) {
-                console.log(`committee ${signer.address} support upgrade`);
-                await (await committee.connect(signer).support(proposalId)).wait()
-            }
-        }
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+        await (await committee.connect(members[1]).support(proposalId, params)).wait();
 
-        console.log('execute upgrade');
-        await (await committee.upgradeTo(newProxyAddress as string)).wait();
-        console.log('upgrade complete')
-    })
+        await expect(committee.upgradeToAndCall(nextImplementationAddress, "0x"))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId)
+            .to.emit(committee, "ProposalExecuted")
+            .withArgs(proposalId);
 
-})
+        expect(await committee.version()).to.equal("2.1.0");
+
+        const executedProposal = await committee.proposalOf(proposalId);
+        expect(executedProposal.state).to.equal(4n);
+
+        const clearedProposal = await committee.getContractUpgradeProposal(committeeAddress);
+        expect(clearedProposal.state).to.equal(0n);
+    });
+
+    it("rejects an upgrade when the proposal has no accepted result", async function () {
+        const { committee, members, nextImplementationAddress } = await networkHelpers.loadFixture(deployUpgradeFixture);
+        const committeeAddress = await committee.getAddress();
+        const proposalId = 1n;
+        const params = upgradeParams(committeeAddress, nextImplementationAddress);
+
+        await (await committee.connect(members[0]).prepareContractUpgrade(committeeAddress, nextImplementationAddress)).wait();
+        await (await committee.connect(members[0]).reject(proposalId, params)).wait();
+        await (await committee.connect(members[1]).reject(proposalId, params)).wait();
+
+        await expect(committee.settleProposal(proposalId))
+            .to.emit(committee, "ProposalReject")
+            .withArgs(proposalId);
+
+        await expect(committee.upgradeToAndCall(nextImplementationAddress, "0x")).to.be.revertedWith(
+            "verify proposal fail"
+        );
+
+        expect(await committee.version()).to.equal("2.0.0");
+
+        const rejectedProposal = await committee.proposalOf(proposalId);
+        expect(rejectedProposal.state).to.equal(3n);
+
+        const clearedProposal = await committee.getContractUpgradeProposal(committeeAddress);
+        expect(clearedProposal.state).to.equal(3n);
+    });
+});

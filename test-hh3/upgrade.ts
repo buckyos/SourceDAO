@@ -1,0 +1,1 @@
+import "../test/upgrade.js";

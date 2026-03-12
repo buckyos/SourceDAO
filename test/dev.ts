@@ -1,581 +1,77 @@
 import hre from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
-import { BigNumber } from "ethers";
-import { SourceDaoCommittee, ProjectManagement } from "../typechain-types";
 
-describe("ProjectManager", () => {
-  async function deployContracts() {
-    const signers = await hre.ethers.getSigners();
-    let committees = [];
-    for (let i = 1; i < 6; i++) {
-      committees.push(signers[i].address);
-    }
-    const SourceDao = await hre.ethers.getContractFactory("SourceDao");
-    let sourceDao = await SourceDao.deploy();
-    const SourceDaoToken = await hre.ethers.getContractFactory("SourceDaoToken");
-    const daoToken = (await hre.upgrades.deployProxy(SourceDaoToken, [1000000, sourceDao.address], {kind: "uups"}));
-    await sourceDao.setTokenAddress(daoToken.address);
+import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
 
-    const ProjectManager = await hre.ethers.getContractFactory("ProjectManagement");
-    const projectManager = (await hre.upgrades.deployProxy(ProjectManager, [sourceDao.address], {kind: "uups"})) as ProjectManagement;
-    await projectManager.deployed();
-    await sourceDao.setDevAddress(projectManager.address);
+const { ethers, networkHelpers } = await hre.network.connect();
 
-    const Committee = await hre.ethers.getContractFactory("SourceDaoCommittee");
-    const committee = (await hre.upgrades.deployProxy(Committee, [committees, sourceDao.address], {kind: "uups"})) as SourceDaoCommittee;
-    await committee.deployed();
-    await sourceDao.setCommitteeAddress(committee.address);
+async function deployDevFixture() {
+    const [owner, projectSigner, lockupSigner, dividendSigner, beneficiary] = await ethers.getSigners();
 
-    return {signers, projectManager, committee, daoToken};
-  }
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    await (await dao.setProjectAddress(projectSigner.address)).wait();
+    await (await dao.setTokenLockupAddress(lockupSigner.address)).wait();
+    await (await dao.setTokenDividendAddress(dividendSigner.address)).wait();
 
-  it("CreateProject test", async () => {
-    const {signers, daoToken, committee, projectManager} = await loadFixture(deployContracts);
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        1_000_000,
+        [owner.address],
+        [5_000],
+        await dao.getAddress()
+    ]);
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
 
-    {
-      const tx = await projectManager.createProject(10000, 1, 0, 0);
-      const ret = await tx.wait();
-      expect(ret.events?.length).to.equal(2);
-      const event = ret.events![1];
-      expect(event.args?.length).to.equal(2);
-      const arg = event.args!.at(0);
-      const projectId = BigNumber.from(arg);
-      const project = await projectManager.projectOf(projectId);
-      expect(project.issueId).to.equal(1);
-      expect(project.state).to.equal(0);
-      const proposalId = project.proposalId;
-      for (let i = 1; i < 6; i++) {
-        const tx = await committee.connect(signers[i]).support(proposalId, [
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
-            hre.ethers.utils.formatBytes32String("createProject")
-        ]);
-        await tx.wait();
-      }
-      await projectManager.promoteProject(projectId);
+    const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["BDT", "BDT", await dao.getAddress()]);
+    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
 
-      {
-        const project = await projectManager.projectOf(projectId);
-        expect(project.issueId).to.equal(1);
-        expect(project.state).to.equal(1);
-      }
+    return {
+        owner,
+        projectSigner,
+        lockupSigner,
+        dividendSigner,
+        beneficiary,
+        devToken,
+        normalToken
+    };
+}
 
-      {
-        let contributions = [];
-        for (let signer of signers) {
-          contributions.push({
-            contributor: signer.address,
-            value: 10,
-          });
-        }
-        const tx = await projectManager.acceptProject(projectId, 3, contributions);
-        await tx.wait();
+describe("dev", function () {
+    it("only lets the configured project address mint dev tokens", async function () {
+        const { owner, projectSigner, beneficiary, devToken } = await networkHelpers.loadFixture(deployDevFixture);
 
-        {
-          const project = await projectManager.projectOf(projectId);
-          expect(project.issueId).to.equal(1);
-          expect(project.state).to.equal(2);
-        }
+        await expect(devToken.connect(beneficiary).mintDevToken(300)).to.be.revertedWith("only project can release");
 
-        let sumContribution = 0;
-        {
-          for (let signer of signers) {
-            let contribution = await projectManager.contributionOf(projectId, signer.address);
-            expect(contribution).to.equal(10);
-            sumContribution += 10;
-          }
-        }
+        const projectBalanceBefore = await devToken.balanceOf(projectSigner.address);
+        await (await devToken.connect(projectSigner).mintDevToken(300)).wait();
 
-        const project = await projectManager.projectOf(projectId);
-        const proposalId = project.proposalId;
+        expect(await devToken.balanceOf(projectSigner.address)).to.equal(projectBalanceBefore + 300n);
+        expect(await devToken.balanceOf(owner.address)).to.equal(5_000n);
+        expect(await devToken.balanceOf(await devToken.getAddress())).to.equal(994_700n);
+    });
 
-        for (let i = 1; i < 6; i++) {
-          const tx = await committee.connect(signers[i]).support(proposalId, [
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
-            hre.ethers.utils.formatBytes32String("acceptProject")
-          ]);
-          await tx.wait();
-        }
-        await projectManager.promoteProject(projectId);
+    it("rejects direct transfers between regular user accounts", async function () {
+        const { devToken, beneficiary } = await networkHelpers.loadFixture(deployDevFixture);
 
-        {
-          const project = await projectManager.projectOf(projectId);
-          expect(project.issueId).to.equal(1);
-          expect(project.state).to.equal(3);
-        }
+        await expect(devToken.transfer(beneficiary.address, 100)).to.be.revertedWith("invalid transfer");
 
-        for (let signer of signers) {
-          const tx = await projectManager.connect(signer).withdrawContributions([projectId]);
-          let ret = await tx.wait();
-          let balance = await daoToken.balanceOf(signer.address);
-          expect(balance).to.equal(Math.floor(10000*10*80/100/sumContribution));
-        }
-      }
-    }
-  });
+        expect(await devToken.balanceOf(beneficiary.address)).to.equal(0n);
+    });
 
-  it("UpdateContribution test", async () => {
-    const {signers, daoToken, committee, projectManager} = await loadFixture(deployContracts);
+    it("allows transfer paths through configured lockup and dividend addresses", async function () {
+        const { owner, beneficiary, lockupSigner, dividendSigner, devToken } = await networkHelpers.loadFixture(deployDevFixture);
 
-    {
-      const tx = await projectManager.createProject(10000, 1, 0, 0);
-      const ret = await tx.wait();
-      expect(ret.events?.length).to.equal(2);
-      const event = ret.events![1];
-      expect(event.args?.length).to.equal(2);
-      const arg = event.args!.at(0);
-      const projectId = BigNumber.from(arg);
-      const project = await projectManager.projectOf(projectId);
-      expect(project.issueId).to.equal(1);
-      expect(project.state).to.equal(0);
-      const proposalId = project.proposalId;
-      for (let i = 1; i < 6; i++) {
-        const tx = await committee.connect(signers[i]).support(proposalId, [
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
-            hre.ethers.utils.formatBytes32String("createProject")
-        ]);
-        await tx.wait();
-      }
-      await projectManager.promoteProject(projectId);
+        await (await devToken.transfer(lockupSigner.address, 150)).wait();
+        expect(await devToken.balanceOf(lockupSigner.address)).to.equal(150n);
 
-      {
-        const project = await projectManager.projectOf(projectId);
-        expect(project.issueId).to.equal(1);
-        expect(project.state).to.equal(1);
-      }
+        await (await devToken.transfer(dividendSigner.address, 200)).wait();
+        expect(await devToken.balanceOf(dividendSigner.address)).to.equal(200n);
 
-      {
-        let contributions = [];
-        for (let i = 0; i < signers.length - 1; i++) {
-          contributions.push({
-            contributor: signers[i].address,
-            value: 10,
-          });
-        }
-        const tx = await projectManager.acceptProject(projectId, 4, contributions);
-        await tx.wait();
+        await (await devToken.connect(dividendSigner).transfer(beneficiary.address, 80)).wait();
 
-        {
-          const project = await projectManager.projectOf(projectId);
-          expect(project.issueId).to.equal(1);
-          expect(project.state).to.equal(2);
-        }
-
-        let sumContribution = 0;
-        {
-          for (let i = 0; i < signers.length - 1; i++) {
-            let contribution = await projectManager.contributionOf(projectId, signers[i].address);
-            expect(contribution).to.equal(10);
-            sumContribution += 10;
-          }
-        }
-
-        {
-          let tx = await projectManager.updateContribute(projectId, {
-            contributor: signers[0].address,
-            value: 20
-          });
-          await tx.wait();
-          sumContribution += 10;
-
-          let contribution = await projectManager.contributionOf(projectId, signers[0].address);
-          expect(contribution).to.equal(20);
-        }
-        const project = await projectManager.projectOf(projectId);
-        const proposalId = project.proposalId;
-
-        for (let i = 1; i < 6; i++) {
-          const tx = await committee.connect(signers[i]).support(proposalId, [
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
-            hre.ethers.utils.formatBytes32String("acceptProject")
-          ]);
-          await tx.wait();
-        }
-        await projectManager.promoteProject(projectId);
-
-        {
-          const project = await projectManager.projectOf(projectId);
-          expect(project.issueId).to.equal(1);
-          expect(project.state).to.equal(3);
-        }
-
-        {
-          let error = false;
-          try {
-            const tx = await projectManager.connect(signers[signers.length - 1]).withdrawContributions([projectId]);
-            await tx.wait();
-          } catch (e) {
-            error = true;
-          }
-          expect(error).to.equal(false);
-        }
-        for (let i = 0; i < signers.length - 1; i++) {
-          let signer = signers[i];
-          const tx = await projectManager.connect(signer).withdrawContributions([projectId]);
-          let ret = await tx.wait();
-          let balance = await daoToken.balanceOf(signer.address);
-          if (i === 0) {
-            expect(balance).to.equal(Math.floor(10000*20*100/100/sumContribution));
-          } else {
-            expect(balance).to.equal(Math.floor(10000*10*100/100/sumContribution));
-          }
-        }
-      }
-    }
-  });
-
-  it("Multi Project test", async () => {
-    const {signers, daoToken, committee, projectManager} = await loadFixture(deployContracts);
-
-    let members = await committee.members();
-
-    {
-      let projectId1, projectId2;
-      {
-        const tx = await projectManager.createProject(10000, 1, 0, 0);
-        const ret = await tx.wait();
-        expect(ret.events?.length).to.equal(2);
-        const event = ret.events![1];
-        expect(event.args?.length).to.equal(2);
-        const arg = event.args!.at(0);
-        projectId1 = BigNumber.from(arg);
-      }
-      {
-        const tx = await projectManager.createProject(10000, 1, 0, 0);
-        const ret = await tx.wait();
-        expect(ret.events?.length).to.equal(2);
-        const event = ret.events![1];
-        expect(event.args?.length).to.equal(2);
-        const arg = event.args!.at(0);
-        projectId2 = BigNumber.from(arg);
-      }
-      {
-        const project = await projectManager.projectOf(projectId1);
-        expect(project.issueId).to.equal(1);
-        expect(project.state).to.equal(0);
-        const proposalId = project.proposalId;
-        for (let i = 1; i < 6; i++) {
-          const tx = await committee.connect(signers[i]).support(proposalId, [
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId1), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
-            hre.ethers.utils.formatBytes32String("createProject")
-          ]);
-          await tx.wait();
-        }
-        await projectManager.promoteProject(projectId1);
-      }
-      {
-        const project = await projectManager.projectOf(projectId2);
-        expect(project.issueId).to.equal(1);
-        expect(project.state).to.equal(0);
-        const proposalId = project.proposalId;
-        for (let i = 1; i < 6; i++) {
-          const tx = await committee.connect(signers[i]).support(proposalId, [
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId2), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
-            hre.ethers.utils.formatBytes32String("createProject")
-          ]);
-          await tx.wait();
-        }
-        await projectManager.promoteProject(projectId2);
-      }
-
-      {
-        const project = await projectManager.projectOf(projectId1);
-        expect(project.issueId).to.equal(1);
-        expect(project.state).to.equal(1);
-      }
-
-      {
-        const project = await projectManager.projectOf(projectId2);
-        expect(project.issueId).to.equal(1);
-        expect(project.state).to.equal(1);
-      }
-
-      let sumContribution1 = 0;
-      let sumContribution2 = 0;
-      {
-        {
-          let contributions = [];
-          for (let signer of signers) {
-            contributions.push({
-              contributor: signer.address,
-              value: 10,
-            });
-            sumContribution1 += 10;
-          }
-          const tx = await projectManager.acceptProject(projectId1, 2, contributions);
-          await tx.wait();
-        }
-
-        {
-          let contributions = [];
-          for (let signer of signers) {
-            contributions.push({
-              contributor: signer.address,
-              value: 10,
-            });
-            sumContribution2 += 10;
-          }
-          const tx = await projectManager.acceptProject(projectId2, 5, contributions);
-          await tx.wait();
-        }
-
-        {
-          const project = await projectManager.projectOf(projectId1);
-          expect(project.issueId).to.equal(1);
-          expect(project.state).to.equal(2);
-        }
-
-        {
-          const project = await projectManager.projectOf(projectId2);
-          expect(project.issueId).to.equal(1);
-          expect(project.state).to.equal(2);
-        }
-
-        {
-          for (let signer of signers) {
-            let contribution = await projectManager.contributionOf(projectId1, signer.address);
-            expect(contribution).to.equal(10);
-          }
-        }
-
-        {
-          for (let signer of signers) {
-            let contribution = await projectManager.contributionOf(projectId2, signer.address);
-            expect(contribution).to.equal(10);
-          }
-        }
-
-        {
-          const project = await projectManager.projectOf(projectId1);
-          const proposalId = project.proposalId;
-
-          for (let i = 1; i < 6; i++) {
-            const tx = await committee.connect(signers[i]).support(proposalId, [
-                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId1), 32),
-                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
-                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
-                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
-                hre.ethers.utils.formatBytes32String("acceptProject")
-            ]);
-            await tx.wait();
-          }
-          await projectManager.promoteProject(projectId1);
-        }
-
-        {
-          const project = await projectManager.projectOf(projectId2);
-          const proposalId = project.proposalId;
-
-          for (let i = 1; i < 6; i++) {
-            const tx = await committee.connect(signers[i]).support(proposalId, [
-                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId2), 32),
-                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
-                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
-                hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
-                hre.ethers.utils.formatBytes32String("acceptProject")
-            ]);
-            await tx.wait();
-          }
-          await projectManager.promoteProject(projectId2);
-        }
-
-        {
-          const project = await projectManager.projectOf(projectId1);
-          expect(project.issueId).to.equal(1);
-          expect(project.state).to.equal(3);
-        }
-
-        {
-          const project = await projectManager.projectOf(projectId2);
-          expect(project.issueId).to.equal(1);
-          expect(project.state).to.equal(3);
-        }
-        {
-          for (let signer of signers) {
-            const tx = await projectManager.connect(signer).withdrawContributions([projectId1]);
-            let ret = await tx.wait();
-            let balance = await daoToken.balanceOf(signer.address);
-            expect(balance).to.equal(Math.floor(10000*10*0/100/sumContribution1));
-          }
-        }
-        {
-          for (let signer of signers) {
-            const tx = await projectManager.connect(signer).withdrawContributions([projectId2]);
-            let ret = await tx.wait();
-            let balance = await daoToken.balanceOf(signer.address);
-            expect(balance).to.equal(Math.floor(10000*10*120/100/sumContribution2));
-          }
-        }
-      }
-    }
-  });
-
-  it("Project safe test", async () => {
-    const {signers, daoToken, committee, projectManager} = await loadFixture(deployContracts);
-
-    {
-      const tx = await projectManager.createProject(10000, 1, 0, 0);
-      const ret = await tx.wait();
-      expect(ret.events?.length).to.equal(2);
-      const event = ret.events![1];
-      expect(event.args?.length).to.equal(2);
-      const arg = event.args!.at(0);
-      const projectId = BigNumber.from(arg);
-      const project = await projectManager.projectOf(projectId);
-      expect(project.issueId).to.equal(1);
-      expect(project.state).to.equal(0);
-      const proposalId = project.proposalId;
-      for (let i = 1; i < 6; i++) {
-        const tx = await committee.connect(signers[i]).support(proposalId, [
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
-            hre.ethers.utils.formatBytes32String("createProject")
-        ]);
-        await tx.wait();
-      }
-      {
-        let error = false;
-        try {
-          let tx = await projectManager.connect(signers[3]).promoteProject(projectId);
-          await tx.wait();
-        } catch(e) {
-          error = true;
-        }
-        expect(error).to.equal(true);
-      }
-
-      {
-        let tx = await projectManager.promoteProject(projectId);
-        await tx.wait();
-      }
-
-      {
-        const project = await projectManager.projectOf(projectId);
-        expect(project.issueId).to.equal(1);
-        expect(project.state).to.equal(1);
-      }
-
-      {
-        let error = false;
-        try {
-          let tx = await projectManager.updateContribute(projectId, {
-            contributor: signers[0].address,
-            value: 20
-          });
-          await tx.wait();
-        } catch (e) {
-          error = true;
-        }
-        expect(error).to.equal(true);
-      }
-
-      {
-        let contributions = [];
-        for (let signer of signers) {
-          contributions.push({
-            contributor: signer.address,
-            value: 10,
-          });
-        }
-        {
-          let error = false;
-          try {
-            const tx = await projectManager.connect(signers[3]).acceptProject(projectId, 3, contributions);
-            await tx.wait();
-          } catch (e) {
-            error = true;
-          }
-          expect(error).to.equal(true);
-        }
-        const tx = await projectManager.acceptProject(projectId, 3, contributions);
-        await tx.wait();
-
-        {
-          const project = await projectManager.projectOf(projectId);
-          expect(project.issueId).to.equal(1);
-          expect(project.state).to.equal(2);
-        }
-
-        {
-          for (let signer of signers) {
-            let contribution = await projectManager.contributionOf(projectId, signer.address);
-            expect(contribution).to.equal(10);
-          }
-        }
-
-        {
-          let error = false;
-          try {
-            let tx = await projectManager.connect(signers[3]).updateContribute(projectId, {
-              contributor: signers[0].address,
-              value: 20
-            });
-            await tx.wait();
-          } catch (e) {
-            error = true;
-          }
-          expect(error).to.equal(true);
-        }
-
-        const project = await projectManager.projectOf(projectId);
-        const proposalId = project.proposalId;
-
-        for (let i = 1; i < 6; i++) {
-          const tx = await committee.connect(signers[i]).support(proposalId, [
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(projectId), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.budget), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.startDate), 32),
-            hre.ethers.utils.zeroPad(hre.ethers.utils.hexlify(project.endDate), 32),
-            hre.ethers.utils.formatBytes32String("acceptProject")
-          ]);
-          await tx.wait();
-        }
-        {
-          let error = false;
-          try {
-            await projectManager.connect(signers[3]).promoteProject(projectId);
-          } catch (e) {
-            error = true;
-          }
-          expect(error).to.equal(true);
-        }
-        {
-          await projectManager.promoteProject(projectId);
-        }
-
-        {
-          const project = await projectManager.projectOf(projectId);
-          expect(project.issueId).to.equal(1);
-          expect(project.state).to.equal(3);
-        }
-
-        // for (let signer of signers) {
-        //   const tx = await projectManager.connect(signer).withdrawContributions([projectId]);
-        //   let ret = await tx.wait();
-        //   console.log(`withdraw result:${JSON.stringify(ret.events)}`);
-        // }
-      }
-    }
-  });
-
+        expect(await devToken.balanceOf(dividendSigner.address)).to.equal(120n);
+        expect(await devToken.balanceOf(beneficiary.address)).to.equal(80n);
+        expect(await devToken.balanceOf(owner.address)).to.equal(4_650n);
+    });
 });

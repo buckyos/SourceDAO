@@ -1,210 +1,262 @@
-import { ethers, upgrades } from "hardhat";
-import { DevToken, SourceDao, SourceDaoCommittee, SourceTokenLockup } from "../typechain-types";
-import { mine } from "@nomicfoundation/hardhat-network-helpers";
+import hre from "hardhat";
 import { expect } from "chai";
-import { normalizeToBigInt } from "hardhat/common";
-import { HardhatEthersSigner } from '@nomicfoundation/hardhat-ethers/signers';
-import chai from "chai";
 
-function convertVersion(version: string): number {
-    let versions = version.split('.');
-    if (versions.length < 3) {
-        throw new Error(`Invalid version format: ${version}. Expected format is 'major.minor.patch'.`);
+import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
+
+const { ethers, networkHelpers } = await hre.network.connect();
+
+const MAIN_PROJECT_NAME = ethers.encodeBytes32String("SourceDao");
+const ONE_DAY = 24n * 60n * 60n;
+const THIRTY_DAYS = 30n * ONE_DAY;
+const SIX_MONTHS = 180n * ONE_DAY;
+
+function convertVersion(version: string): bigint {
+    const versions = version.split(".");
+    if (versions.length !== 3) {
+        throw new Error(`Invalid version format: ${version}`);
     }
 
-    let major = parseInt(versions[0], 10);
-    let minor = parseInt(versions[1], 10);
-    let patch = parseInt(versions[2], 10);
-
-    return major*10000000000+minor*100000+patch
+    return (
+        BigInt(versions[0]) * 10_000_000_000n +
+        BigInt(versions[1]) * 100_000n +
+        BigInt(versions[2])
+    );
 }
 
-function zeroPadLeft(value: number | string | undefined): string {
-    if (undefined === value) {
-        throw new Error('value is undefined')
+function toBytes32(value: bigint) {
+    return ethers.zeroPadValue(ethers.toBeHex(value), 32);
+}
+
+function projectProposalParams(
+    projectId: bigint,
+    version: bigint,
+    startDate: bigint,
+    endDate: bigint,
+    action: "createProject" | "acceptProject"
+) {
+    return [
+        toBytes32(projectId),
+        MAIN_PROJECT_NAME,
+        toBytes32(version),
+        toBytes32(startDate),
+        toBytes32(endDate),
+        ethers.encodeBytes32String(action)
+    ];
+}
+
+async function deployLockupFixture() {
+    const signers = await ethers.getSigners();
+    const [owner, beneficiary] = signers;
+    const releaseVersion = convertVersion("1.0.0");
+
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        [owner.address],
+        1,
+        400,
+        MAIN_PROJECT_NAME,
+        releaseVersion,
+        150,
+        daoAddress
+    ]);
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+
+    const project = await deployUUPSProxy(ethers, "ProjectManagement", [1, daoAddress]);
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        1_000_000,
+        [owner.address],
+        [5_000],
+        daoAddress
+    ]);
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+
+    const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["BDT", "BDT", daoAddress]);
+    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
+
+    await (await devToken.dev2normal(2_500)).wait();
+
+    const lockup = await deployUUPSProxy(ethers, "SourceTokenLockup", [
+        MAIN_PROJECT_NAME,
+        releaseVersion,
+        daoAddress
+    ]);
+    await (await dao.setTokenLockupAddress(await lockup.getAddress())).wait();
+
+    return {
+        owner,
+        beneficiary,
+        dao,
+        committee,
+        project,
+        devToken,
+        normalToken,
+        lockup,
+        releaseVersion
+    };
+}
+
+async function releaseMainProject(fixture: any) {
+    const latestBlock = await ethers.provider.getBlock("latest");
+
+    if (latestBlock === null) {
+        throw new Error("latest block not found");
     }
-    const big = ethers.toBigInt(value.toString())
-    const hex = ethers.toBeHex(big)
-    const result = ethers.zeroPadValue(hex, 32)
-    return result
+
+    const startDate = BigInt(latestBlock.timestamp);
+    const endDate = startDate + THIRTY_DAYS;
+
+    await (await fixture.project.createProject(
+        1_000,
+        MAIN_PROJECT_NAME,
+        fixture.releaseVersion,
+        startDate,
+        endDate,
+        [],
+        []
+    )).wait();
+
+    await (await fixture.committee.support(
+        1n,
+        projectProposalParams(1n, fixture.releaseVersion, startDate, endDate, "createProject")
+    )).wait();
+
+    await (await fixture.project.promoteProject(1n)).wait();
+
+    await (await fixture.project.acceptProject(1n, 4, [
+        {
+            contributor: fixture.owner.address,
+            value: 100
+        }
+    ])).wait();
+
+    await (await fixture.committee.support(
+        2n,
+        projectProposalParams(1n, fixture.releaseVersion, startDate, endDate, "acceptProject")
+    )).wait();
+
+    await (await fixture.project.promoteProject(1n)).wait();
+
+    return fixture.project.versionReleasedTime(MAIN_PROJECT_NAME, fixture.releaseVersion);
+}
+
+async function deployReleasedLockupFixture() {
+    const fixture = await deployLockupFixture();
+
+    await (await fixture.devToken.approve(await fixture.lockup.getAddress(), 2_000)).wait();
+    await (await fixture.lockup.convertAndLock(
+        [fixture.owner.address, fixture.beneficiary.address],
+        [1_000, 1_000]
+    )).wait();
+
+    await (await fixture.normalToken.approve(await fixture.lockup.getAddress(), 2_000)).wait();
+    await (await fixture.lockup.transferAndLock(
+        [fixture.owner.address, fixture.beneficiary.address],
+        [1_000, 1_000]
+    )).wait();
+
+    const releaseTime = await releaseMainProject(fixture);
+
+    return {
+        ...fixture,
+        releaseTime
+    };
 }
 
 describe("Lockup", function () {
-    let signers: HardhatEthersSigner[];
-    let dao: SourceDao;
+    it("locks converted and transferred tokens for the sender before release", async function () {
+        const { owner, devToken, normalToken, lockup } = await networkHelpers.loadFixture(deployLockupFixture);
 
-    before(async function () {
-        signers = await ethers.getSigners();
+        expect(await devToken.balanceOf(owner.address)).to.equal(2_500n);
+        expect(await normalToken.balanceOf(owner.address)).to.equal(2_500n);
+        expect(await lockup.totalAssigned(owner.address)).to.equal(0n);
 
-        // simple committee: only one member, the first signer
-        const daoFactory = await ethers.getContractFactory('SourceDao')
-        dao = await (await upgrades.deployProxy(daoFactory, undefined, {
-            initializer: 'initialize',
-            kind: "uups"
-        })).waitForDeployment() as unknown as SourceDao;
-        let daoAddr = await dao.getAddress();
+        await (await devToken.approve(await lockup.getAddress(), 1_000)).wait();
+        await (await lockup.convertAndLock([owner.address], [1_000])).wait();
 
-        let committee = (await upgrades.deployProxy(
-            await ethers.getContractFactory("SourceDaoCommittee"),
-            [[signers[0].address], 1, 400, ethers.encodeBytes32String("SourceDao"), convertVersion("1.0.0"), 150, daoAddr],
-            { kind: "uups" })) as unknown as SourceDaoCommittee;
-        await(await dao.setCommitteeAddress(await committee.getAddress())).wait();
+        await (await normalToken.approve(await lockup.getAddress(), 1_000)).wait();
+        await (await lockup.transferAndLock([owner.address], [1_000])).wait();
 
-        // project contract
-        const projectFactory = await ethers.getContractFactory("ProjectManagement")
-        let project = await (await upgrades.deployProxy(projectFactory, [1, daoAddr], {
-            initializer: 'initialize',
-            kind: "uups"
-        })).waitForDeployment();
+        expect(await devToken.balanceOf(owner.address)).to.equal(1_500n);
+        expect(await normalToken.balanceOf(owner.address)).to.equal(1_500n);
+        expect(await lockup.totalAssigned(owner.address)).to.equal(2_000n);
+        expect(await lockup.totalAssigned(ethers.ZeroAddress)).to.equal(2_000n);
+        expect(await lockup.getCanClaimTokens()).to.equal(0n);
 
-        await (await dao.setProjectAddress(await project.getAddress())).wait();
-
-        // dev token, total 10000, signer[0] get 5000
-        const devTokenFactory = await ethers.getContractFactory('DevToken')
-        let devToken = await (await upgrades.deployProxy(devTokenFactory, ["BDDT", "BDDT", 1000000, [signers[0].address], [5000], daoAddr], {
-            initializer: 'initialize',
-            kind: "uups"
-        })).waitForDeployment() as unknown as DevToken;
-        await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
-
-        // normal token
-        const normalTokenFactory = await ethers.getContractFactory('NormalToken')
-        let normalToken = await (await upgrades.deployProxy(normalTokenFactory, ["BDT", "BDT", daoAddr], {
-            initializer: 'initialize',
-            kind: "uups"
-        })).waitForDeployment();
-        await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
-
-        // signer[0] exchange 2500 dev to normal
-        // now 2500 dev and 2500 normal
-        expect((await devToken.balanceOf(signers[0].address))).to.equal(5000n);
-
-        await (await devToken.dev2normal(2500)).wait();
-
-        // lockup
-        const lockupFactory = await ethers.getContractFactory("SourceTokenLockup")
-        let lockup = await (await upgrades.deployProxy(lockupFactory, [ethers.encodeBytes32String("SourceDao"), convertVersion("1.0.0"), daoAddr], {
-            initializer: 'initialize',
-            kind: "uups"
-        })).waitForDeployment();
-        await (await dao.setTokenLockupAddress(await lockup.getAddress())).wait();
-
-        console.log("sourceDao address: ", daoAddr);
-    })
-
-    it("lockup to myself 1000", async function () {
-        let lockup = await ethers.getContractAt("SourceTokenLockup", await dao.lockup());
-
-        let devToken = await ethers.getContractAt("DevToken", await dao.devToken());
-        let normalToken = await ethers.getContractAt("NormalToken", await dao.normalToken());
-
-        expect((await devToken.balanceOf(signers[0].address))).to.equal(2500n);
-        expect((await normalToken.balanceOf(signers[0].address))).to.equal(2500n);
-
-        await (await devToken.approve(await lockup.getAddress(), 1000)).wait();
-        await (await lockup.convertAndLock([signers[0].address], [1000])).wait();
-
-        expect((await devToken.balanceOf(signers[0].address))).to.equal(1500n);
-
-        await (await normalToken.approve(await lockup.getAddress(), 1000)).wait();
-        await (await lockup.transferAndLock([signers[0].address], [1000])).wait();
-
-        expect((await normalToken.balanceOf(signers[0].address))).to.equal(1500n);
-
-        // 这里由于是自己转给自己，显示的是signer[0]有2000被锁定
-        expect((await lockup.totalAssigned(signers[0].address))).to.equal(2000n);
-
-        // 此时不能claim
-        await expect(lockup.claimTokens(1000)).to.be.revertedWith("Tokens are not unlocked yet");
-    })
-
-    it("lockup to others 1000", async function () {
-        let lockup = await ethers.getContractAt("SourceTokenLockup", await dao.lockup());
-
-        let devToken = await ethers.getContractAt("DevToken", await dao.devToken());
-        let normalToken = await ethers.getContractAt("NormalToken", await dao.normalToken());
-
-        await (await devToken.approve(await lockup.getAddress(), 1000)).wait();
-        await (await lockup.convertAndLock([signers[1].address], [1000])).wait();
-
-        await (await normalToken.approve(await lockup.getAddress(), 1000)).wait();
-        await (await lockup.transferAndLock([signers[1].address], [1000])).wait();
-
-        expect((await devToken.balanceOf(signers[0].address))).to.equal(500);
-        expect((await normalToken.balanceOf(signers[0].address))).to.equal(500);
-
-        // signer[1] should have 2000 locked now
-        expect((await lockup.totalAssigned(signers[1].address))).to.equal(2000n);
-
-        // 此时不能claim
-        await expect(lockup.connect(signers[1]).claimTokens(1000)).to.be.revertedWith("Tokens are not unlocked yet");
+        await expect(lockup.claimTokens(1_000)).to.be.revertedWith("Tokens are not unlocked yet");
     });
 
-    it("create release project", async function () {
-        let project = await ethers.getContractAt("ProjectManagement", await dao.project());
-        let committee = await ethers.getContractAt("SourceDaoCommittee", await dao.committee());
+    it("tracks locked balances independently for another beneficiary", async function () {
+        const { owner, beneficiary, devToken, normalToken, lockup } = await networkHelpers.loadFixture(deployLockupFixture);
 
-        let startDate = Math.floor(Date.now() / 1000);
-        let endDate = startDate + 30*24*3600;
-        await (await project.createProject(1000, ethers.encodeBytes32String("SourceDao"), convertVersion("1.0.0"), startDate, endDate, [], [])).wait()
+        await (await devToken.approve(await lockup.getAddress(), 1_000)).wait();
+        await (await lockup.convertAndLock([beneficiary.address], [1_000])).wait();
 
-        // vote for create, proposal 1
-        await (await committee.support(1, [
-            zeroPadLeft(1),                 // project id
-            ethers.encodeBytes32String("SourceDao"), // name
-            zeroPadLeft(convertVersion("1.0.0")),                 // version
-            zeroPadLeft(startDate),
-            zeroPadLeft(endDate),
-            ethers.encodeBytes32String("createProject"),
-        ])).wait();
+        await (await normalToken.approve(await lockup.getAddress(), 1_000)).wait();
+        await (await lockup.transferAndLock([beneficiary.address], [1_000])).wait();
 
-        // execute proposal 1
-        await (await project.promoteProject(1)).wait();
+        expect(await devToken.balanceOf(owner.address)).to.equal(1_500n);
+        expect(await normalToken.balanceOf(owner.address)).to.equal(1_500n);
+        expect(await lockup.totalAssigned(owner.address)).to.equal(0n);
+        expect(await lockup.totalAssigned(beneficiary.address)).to.equal(2_000n);
+        expect(await lockup.connect(beneficiary).getCanClaimTokens()).to.equal(0n);
 
-        // finish project
-        await (await project.acceptProject(1, 4, [{contributor: signers[0].address, value: 100}])).wait();
+        await expect(lockup.connect(beneficiary).claimTokens(1_000)).to.be.revertedWith(
+            "Tokens are not unlocked yet"
+        );
+    });
 
-        // vote for accept, proposal 2
-        await (await committee.support(2, [
-            zeroPadLeft(1),                 // project id
-            ethers.encodeBytes32String("SourceDao"), // name
-            zeroPadLeft(convertVersion("1.0.0")),                 // version
-            zeroPadLeft(startDate),
-            zeroPadLeft(endDate),
-            ethers.encodeBytes32String("acceptProject"),
-        ])).wait();
+    it("releases only part of the locked tokens after 30 days", async function () {
+        const { owner, beneficiary, normalToken, lockup, releaseTime } = await networkHelpers.loadFixture(deployReleasedLockupFixture);
 
-        // execute proposal 2
-        await (await project.promoteProject(1)).wait();
-    })
+        expect(releaseTime).to.be.greaterThan(0n);
+        expect(await lockup.totalAssigned(owner.address)).to.equal(2_000n);
+        expect(await lockup.totalAssigned(beneficiary.address)).to.equal(2_000n);
+        expect(await lockup.getCanClaimTokens()).to.equal(0n);
 
-    it("after 30 days, claim tokens", async function () {
-        await mine(2, { interval: 30*24*3600});
-        // 此时最多可解锁 2000/6=333
-        let lockup = await ethers.getContractAt("SourceTokenLockup", await dao.lockup());
-        let normal = await ethers.getContractAt("NormalToken", await dao.normalToken());
+        await networkHelpers.time.increase(THIRTY_DAYS);
+
+        expect(await lockup.getCanClaimTokens()).to.equal(333n);
+        expect(await lockup.connect(beneficiary).getCanClaimTokens()).to.equal(333n);
 
         await expect(lockup.claimTokens(350)).to.be.revertedWith("Claim amount exceeds unlocked tokens");
 
-        await expect(lockup.claimTokens(200)).to.be.changeTokenBalance(normal, signers[0], 200);
-        expect((await lockup.totalClaimed(signers[0].address))).to.equal(200);
+        const ownerBalanceBefore = await normalToken.balanceOf(owner.address);
+        await (await lockup.claimTokens(200)).wait();
+        expect(await normalToken.balanceOf(owner.address)).to.equal(ownerBalanceBefore + 200n);
 
+        const beneficiaryBalanceBefore = await normalToken.balanceOf(beneficiary.address);
+        await (await lockup.connect(beneficiary).claimTokens(250)).wait();
+        expect(await normalToken.balanceOf(beneficiary.address)).to.equal(beneficiaryBalanceBefore + 250n);
 
-        await expect(lockup.connect(signers[1]).claimTokens(250)).to.be.changeTokenBalance(normal, signers[1], 250);
-        expect((await lockup.totalClaimed(signers[1].address))).to.equal(250n);
-    })
+        expect(await lockup.totalClaimed(owner.address)).to.equal(200n);
+        expect(await lockup.totalClaimed(beneficiary.address)).to.equal(250n);
+        expect(await lockup.getCanClaimTokens()).to.equal(133n);
+        expect(await lockup.connect(beneficiary).getCanClaimTokens()).to.equal(83n);
+    });
 
-    it("after 180 days, claim all tokens", async function () {
-        await mine(2, { interval: 150*24*3600});
-        let lockup = await ethers.getContractAt("SourceTokenLockup", await dao.lockup());
-        let normal = await ethers.getContractAt("NormalToken", await dao.normalToken());
+    it("releases the full remaining balance after 180 days", async function () {
+        const { owner, beneficiary, normalToken, lockup } = await networkHelpers.loadFixture(deployReleasedLockupFixture);
 
-        // signers[0] claim all remain 1800
-        await expect(lockup.claimTokens(1800)).to.be.changeTokenBalance(normal, signers[0], 1800);
-        expect((await lockup.totalClaimed(signers[0].address))).to.equal(2000n);
+        await networkHelpers.time.increase(SIX_MONTHS);
 
-        // signers[0] claim all remain 1750
-        await expect(lockup.connect(signers[1]).claimTokens(1750)).to.be.changeTokenBalance(normal, signers[1], 1750);
-        expect((await lockup.totalClaimed(signers[1].address))).to.equal(2000n);
-    })
-})
+        const ownerBalanceBefore = await normalToken.balanceOf(owner.address);
+        await (await lockup.claimTokens(2_000)).wait();
+        expect(await normalToken.balanceOf(owner.address)).to.equal(ownerBalanceBefore + 2_000n);
+
+        const beneficiaryBalanceBefore = await normalToken.balanceOf(beneficiary.address);
+        await (await lockup.connect(beneficiary).claimTokens(2_000)).wait();
+        expect(await normalToken.balanceOf(beneficiary.address)).to.equal(beneficiaryBalanceBefore + 2_000n);
+
+        expect(await lockup.totalClaimed(owner.address)).to.equal(2_000n);
+        expect(await lockup.totalClaimed(beneficiary.address)).to.equal(2_000n);
+        expect(await lockup.totalAssigned(ethers.ZeroAddress)).to.equal(4_000n);
+        expect(await lockup.totalClaimed(ethers.ZeroAddress)).to.equal(4_000n);
+        expect(await lockup.getCanClaimTokens()).to.equal(0n);
+    });
+});

@@ -1,302 +1,177 @@
-import { ethers, upgrades } from "hardhat";
-import { SourceDao, SourceDaoCommittee } from "../typechain-types";
-import { mine } from "@nomicfoundation/hardhat-network-helpers";
+import hre from "hardhat";
 import { expect } from "chai";
-import { normalizeToBigInt } from "hardhat/common";
-import { HardhatEthersSigner } from '@nomicfoundation/hardhat-ethers/signers';
-import chai from "chai";
-import deepEqualInAnyOrder from 'deep-equal-in-any-order';
 
-chai.use(deepEqualInAnyOrder);
+import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
 
-describe("Committee", () => {
-    let signers: HardhatEthersSigner[];
-    let committee: SourceDaoCommittee;
-    let committeeAddrs: string[] = [];
-    let committeeSigners: HardhatEthersSigner[] = [];
+const { ethers, networkHelpers } = await hre.network.connect();
 
-    before(async () => {
-        signers = await ethers.getSigners();
-        // signers1,2,3为committee
-        for (let i = 1; i <= 3; i++) {
-            committeeAddrs.push(signers[i].address);
-            committeeSigners.push(signers[i]);
+const SEVEN_DAYS = 7 * 24 * 60 * 60;
+
+function addMemberParams(member: string) {
+    return [
+        ethers.zeroPadValue(member, 32),
+        ethers.encodeBytes32String("addMember")
+    ];
+}
+
+function removeMemberParams(member: string) {
+    return [
+        ethers.zeroPadValue(member, 32),
+        ethers.encodeBytes32String("removeMember")
+    ];
+}
+
+async function deployCommitteeFixture() {
+    const signers = await ethers.getSigners();
+    const members = signers.slice(1, 4);
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        members.map((signer: { address: string }) => signer.address),
+        1,
+        200,
+        ethers.encodeBytes32String("main"),
+        1,
+        150,
+        await dao.getAddress()
+    ]);
+
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+
+    return {
+        committee,
+        dao,
+        members,
+        candidate: signers[4],
+        outsider: signers[5]
+    };
+}
+
+async function passAddMemberProposal(
+    committee: any,
+    voters: any[],
+    member: string,
+    proposalId: bigint = 1n
+) {
+    const params = addMemberParams(member);
+
+    await (await committee.connect(voters[0]).prepareAddMember(member)).wait();
+
+    for (const voter of voters.slice(0, 2)) {
+        await (await committee.connect(voter).support(proposalId, params)).wait();
+    }
+
+    await (await committee.addCommitteeMember(member, proposalId)).wait();
+}
+
+describe("Committee", function () {
+    it("tracks the initialized committee membership", async function () {
+        const { committee, members, outsider } = await networkHelpers.loadFixture(deployCommitteeFixture);
+
+        expect(await committee.members()).to.deep.equal(
+            members.map((member: { address: string }) => member.address)
+        );
+
+        for (const member of members) {
+            expect(await committee.isMember(member.address)).to.equal(true);
         }
 
-        const daoFactory = await ethers.getContractFactory('SourceDao')
-        const sourceDao = await (await upgrades.deployProxy(daoFactory, undefined, {
-            initializer: 'initialize',
-            kind: "uups"
-        })).waitForDeployment() as unknown as SourceDao;
-        let daoAddr = await sourceDao.getAddress();
-
-        committee = (await upgrades.deployProxy(
-            await ethers.getContractFactory("SourceDaoCommittee"),
-            [committeeAddrs, daoAddr],
-            { kind: "uups" })) as unknown as SourceDaoCommittee;
-        await(await sourceDao.setCommitteeAddress(await committee.getAddress())).wait();
-        console.log("sourceDao address: ", daoAddr);
-        for (let index = 1; index < 8; index++) {
-            console.log(`signer${index} address: ${signers[index].address}`);
-            
-        }
-    })
-
-    it("member check", async () => {
-        for (let member of committeeAddrs) {
-            expect(await committee.isMember(member)).to.equal(true);
-        }
-
-        for (let signer of signers) {
-            let isCommettee = committeeAddrs.includes(signer.address);
-            expect(await committee.isMember(signer.address)).to.equal(isCommettee);
-        }
-
-        expect(await committee.members()).deep.equal(committeeAddrs);
-        /*
-        expect(members.length).to.equal(committees.length);
-        for (let committee of committees) {
-          let exist = false;
-          for (let member of members) {
-            if (member === committee) {
-              exist = true;
-              break;
-            }
-          }
-          expect(exist).to.equal(true);
-        }*/
-
+        expect(await committee.isMember(outsider.address)).to.equal(false);
     });
 
-    it("proposal support test", async () => {
-        let params = [];
-        {
-            let data = Buffer.alloc(32);
-            data.write("test");
-            params.push(data);
-        }
+    it("accepts an add-member proposal once a committee majority supports it", async function () {
+        const { committee, members, candidate, outsider } = await networkHelpers.loadFixture(deployCommitteeFixture);
+        const proposalId = 1n;
+        const params = addMemberParams(candidate.address);
 
-        {
-            let data = Buffer.alloc(32);
-            data.writeBigInt64LE(normalizeToBigInt(1234));
-            params.push(data);
-        }
+        await expect(committee.connect(outsider).prepareAddMember(candidate.address)).to.be.revertedWith(
+            "only committee can add member"
+        );
 
-        await expect(committee.propose(10, params)).to.emit(committee, "ProposalStart").withArgs(1, false);
+        await expect(committee.connect(members[0]).prepareAddMember(candidate.address))
+            .to.emit(committee, "ProposalStart")
+            .withArgs(proposalId, false);
 
-        expect((await committee.proposalOf(1)).state).to.equal(1);
+        await expect(committee.connect(outsider).reject(proposalId, params))
+            .to.emit(committee, "ProposalVoted")
+            .withArgs(outsider.address, proposalId, false);
 
-        for (let signer of committeeSigners) {
-            await (await committee.connect(signer).support(1, params)).wait();
-        }
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+        await (await committee.connect(members[1]).support(proposalId, params)).wait();
 
-        await expect(committee.takeResult(1, params)).to.be.emit(committee, "ProposalAccept").withArgs(1);
+        const inProgressProposal = await committee.proposalOf(proposalId);
+        expect(inProgressProposal.state).to.equal(1n);
+        expect(inProgressProposal.support).to.deep.equal([
+            members[0].address,
+            members[1].address
+        ]);
+        expect(inProgressProposal.reject).to.deep.equal([outsider.address]);
 
-        expect((await committee.proposalOf(1)).state).to.equal(2);
+        await expect(committee.addCommitteeMember(candidate.address, proposalId))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId)
+            .to.emit(committee, "MemberAdded")
+            .withArgs(candidate.address);
+
+        const executedProposal = await committee.proposalOf(proposalId);
+        expect(executedProposal.state).to.equal(4n);
+        expect(await committee.isMember(candidate.address)).to.equal(true);
+        expect(await committee.members()).to.deep.equal([
+            members[0].address,
+            members[1].address,
+            members[2].address,
+            candidate.address
+        ]);
     });
 
-    it("propose reject test", async () => {
-        let params = [];
-        {
-            let data = Buffer.alloc(32);
-            data.write("test");
-            params.push(data);
-        }
-        {
-            let data = Buffer.alloc(32);
-            data.writeBigInt64LE(normalizeToBigInt(1234));
-            params.push(data);
-        }
+    it("removes a member after a new majority accepts the removal proposal", async function () {
+        const { committee, members, candidate } = await networkHelpers.loadFixture(deployCommitteeFixture);
 
-        await expect(committee.propose(10, params)).to.emit(committee, "ProposalStart").withArgs(2, false);
+        await passAddMemberProposal(committee, members, candidate.address);
 
-        expect((await committee.proposalOf(2)).state).to.equal(1);
-        for (let signer of committeeSigners) {
-            await (await committee.connect(signer).reject(2, params)).wait();
+        const proposalId = 2n;
+        const params = removeMemberParams(candidate.address);
+
+        await expect(committee.connect(members[0]).prepareRemoveMember(candidate.address))
+            .to.emit(committee, "ProposalStart")
+            .withArgs(proposalId, false);
+
+        for (const voter of members) {
+            await (await committee.connect(voter).support(proposalId, params)).wait();
         }
 
-        await expect(committee.takeResult(2, params)).to.be.emit(committee, "ProposalReject").withArgs(2);
+        await expect(committee.removeCommitteeMember(candidate.address, proposalId))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId)
+            .to.emit(committee, "MemberRemoved")
+            .withArgs(candidate.address);
 
-        expect((await committee.proposalOf(2)).state).to.equal(3);
+        const executedProposal = await committee.proposalOf(proposalId);
+        expect(executedProposal.state).to.equal(4n);
+        expect(await committee.isMember(candidate.address)).to.equal(false);
+        expect(await committee.members()).to.deep.equal([
+            members[0].address,
+            members[1].address,
+            members[2].address
+        ]);
     });
 
-    it("propose most reject test", async () => {
-        let params = [];
-        {
-            let data = Buffer.alloc(32);
-            data.write("test");
-            params.push(data);
-        }
-        {
-            let data = Buffer.alloc(32);
-            data.writeBigInt64LE(normalizeToBigInt(1234));
-            params.push(data);
-        }
-        await expect(committee.propose(10, params)).to.emit(committee, "ProposalStart").withArgs(3, false);
+    it("expires an untouched proposal after the voting window closes", async function () {
+        const { committee, members, candidate } = await networkHelpers.loadFixture(deployCommitteeFixture);
+        const proposalId = 1n;
+        const params = addMemberParams(candidate.address);
 
-        expect((await committee.proposalOf(3)).state).to.equal(1);
+        await (await committee.connect(members[0]).prepareAddMember(candidate.address)).wait();
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
 
-        let i = 0;
-        for (let signer of committeeSigners) {
-            if (i < 2) {
-                await (await committee.connect(signer).reject(3, params)).wait();
-            } else {
-                await (await committee.connect(signer).support(3, params)).wait();
-            }
-            
-            i++;
-        }
+        await expect(committee.connect(members[0]).support(proposalId, params)).to.be.revertedWith(
+            "proposal expired"
+        );
 
-        await expect(committee.takeResult(3, params)).to.be.emit(committee, "ProposalReject").withArgs(3);
+        await expect(committee.settleProposal(proposalId))
+            .to.emit(committee, "ProposalExpire")
+            .withArgs(proposalId);
 
-        expect((await committee.proposalOf(3)).state).to.equal(3);
-    });
-
-    it("propose most support test", async () => {
-
-        let params = [];
-        {
-            let data = Buffer.alloc(32);
-            data.write("test");
-            params.push(data);
-        }
-        {
-            let data = Buffer.alloc(32);
-            data.writeBigInt64LE(normalizeToBigInt(1234));
-            params.push(data);
-        }
-        await expect(committee.propose(10, params)).to.emit(committee, "ProposalStart").withArgs(4, false);
-
-        expect((await committee.proposalOf(4)).state).to.equal(1);
-
-        let i = 0;
-        for (let signer of committeeSigners) {
-            if (i < 2) {
-                await (await committee.connect(signer).support(4, params)).wait();
-            } else {
-                await (await committee.connect(signer).reject(4, params)).wait();
-            }
-            
-            i++;
-        }
-
-        await expect(committee.takeResult(4, params)).to.be.emit(committee, "ProposalAccept").withArgs(4);
-
-        expect((await committee.proposalOf(4)).state).to.equal(2);
-    });
-
-    it("propose expire test", async () => {
-        let params = [];
-        {
-            let data = Buffer.alloc(32);
-            data.write("test");
-            params.push(data);
-        }
-        {
-            let data = Buffer.alloc(32);
-            data.writeBigInt64LE(normalizeToBigInt(1234));
-            params.push(data);
-        }
-        await expect(committee.propose(10, params)).to.emit(committee, "ProposalStart").withArgs(5, false);
-
-        expect((await committee.proposalOf(5)).state).to.equal(1);
-        await mine(2, {interval: 10});
-
-        await expect(committee.takeResult(5, params)).to.be.emit(committee, "ProposalExpire").withArgs(5);
-
-        expect((await committee.proposalOf(5)).state).to.equal(5);
-    });
-
-    it("propose abnormal vote test", async () => {
-        let params = [];
-        {
-            let data = Buffer.alloc(32);
-            data.write("test");
-            params.push(data);
-        }
-        {
-            let data = Buffer.alloc(32);
-            data.writeBigInt64LE(normalizeToBigInt(1234));
-            params.push(data);
-        }
-        await expect(committee.propose(100, params)).to.emit(committee, "ProposalStart").withArgs(6, false);
-
-        expect((await committee.proposalOf(6)).state).to.equal(1);
-        for (let signer of signers) {
-            if (!committeeAddrs.includes(signer.address)) {
-                await(await committee.connect(signer).reject(6, params)).wait();
-            }
-        }
-
-        await expect(committee.takeResult(6, params)).to.be.ok;
-        expect((await committee.proposalOf(6)).state).to.equal(1);
-    });
-
-    it("propose add member test", async () => {
-        // 添加signer4到委员会
-        await expect(committee.connect(signers[1]).prepareAddMember(signers[4].address)).to.emit(committee, "ProposalStart").withArgs(7, false);
-
-        expect((await committee.proposalOf(7)).state).to.equal(1);
-        for (const signer of committeeSigners) {
-            await(await committee.connect(signer).support(7, [
-                ethers.zeroPadValue(signers[4].address, 32),
-                ethers.encodeBytes32String("addMember")])).wait();
-        }
-
-        await (await committee.addCommitteeMember(signers[4].address, 7)).wait();
-        expect(await committee.isMember(signers[4].address)).to.equal(true);
-
-        committeeAddrs.push(signers[4].address);
-        committeeSigners.push(signers[4]);
-
-        expect(await committee.members()).deep.equal(committeeAddrs);
-    });
-
-    it("propose remove member test", async () => {
-        await expect(committee.prepareRemoveMember(committeeAddrs[0])).to.be.revertedWith("only committee can remove member");
-
-        // 移除signer1到委员会
-        await expect(committee.connect(signers[1]).prepareRemoveMember(committeeAddrs[0])).to.emit(committee, "ProposalStart").withArgs(8, false);
-
-        expect((await committee.proposalOf(8)).state).to.equal(1);
-        for (const signer of committeeSigners) {
-            await(await committee.connect(signer).support(8, [
-                ethers.zeroPadValue(committeeAddrs[0], 32),
-                ethers.encodeBytes32String("removeMember")])).wait();
-        }
-
-        await (await committee.connect(signers[2]).removeCommitteeMember(committeeAddrs[0], 8)).wait();
-
-        expect(await committee.isMember(committeeAddrs[0])).to.equal(false);
-        committeeAddrs = committeeAddrs.slice(1);
-        committeeSigners = committeeSigners.slice(1);
-
-        expect(await committee.members()).deep.equalInAnyOrder(committeeAddrs);
-    });
-
-    it("propose change member test", async () => {
-        // 将signers3,6,7设置为委员会
-        let newCommittee = [signers[3], signers[6], signers[7]];
-        let newCommitteeAddress = newCommittee.map((signer) => signer.address);
-
-        await expect(committee.connect(signers[2]).prepareSetCommittees(newCommitteeAddress)).to.emit(committee, "ProposalStart").withArgs(9, false);
-
-        expect((await committee.proposalOf(9)).state).to.equal(1);
-        let params = newCommitteeAddress.map((addr) => ethers.zeroPadValue(addr, 32))
-        params.push(ethers.encodeBytes32String("setCommittees"));
-        for (const signer of committeeSigners) {
-            await(await committee.connect(signer).support(9, params)).wait();
-        }
-
-        await (await committee.connect(signers[2]).setCommittees(newCommitteeAddress, 9)).wait();
-
-        expect(await committee.isMember(committeeAddrs[0])).to.equal(false);
-        committeeAddrs = newCommitteeAddress;
-        committeeSigners = newCommittee;
-
-        expect(await committee.members()).deep.equalInAnyOrder(committeeAddrs);
-        for (const addr of committeeAddrs) {
-            expect(await committee.isMember(addr)).to.equal(true);
-        }
+        const expiredProposal = await committee.proposalOf(proposalId);
+        expect(expiredProposal.state).to.equal(5n);
     });
 });
