@@ -15,6 +15,11 @@ import "./SourceDaoUpgradeable.sol";
 contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
 
+    function _sendNative(address to, uint256 amount) internal {
+        (bool success, ) = payable(to).call{value: amount}("");
+        require(success, "native transfer failed");
+    }
+
     // 支持DevToken和NormalToken的质押, 就不在初始化时传入了
 
     // the max length of the cycle in seconds
@@ -599,7 +604,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
             RewardInfo memory reward = rewards[i];
             // console.log("will withdraw transfer %s %s ===> %d", reward.token, msg.sender, reward.amount);
             if (reward.token == address(0)) {
-                payable(msg.sender).transfer(reward.amount);
+                _sendNative(msg.sender, reward.amount);
             } else {
                 IERC20(reward.token).safeTransfer(msg.sender, reward.amount);
             }

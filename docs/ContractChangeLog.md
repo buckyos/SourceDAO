@@ -1280,3 +1280,128 @@
 - `npm test -- --grep "dividend|Lockup|lockup"` 通过
 - `npm test` 全量通过
 - 当前全量回归结果：`174 passing`
+
+---
+
+## 2026-03-13 Acquired / Dividend 原生币发送修正记录
+
+### 合约
+
+- 合约：`Acquired`、`DividendContract`
+- 文件：[contracts/Acquired.sol](contracts/Acquired.sol)、[contracts/Dividend.sol](contracts/Dividend.sol)
+- 测试与 mock：[test/acquired.ts](test/acquired.ts)、[test/dividend.ts](test/dividend.ts)、[contracts/mocks/NativeReceiverMock.sol](contracts/mocks/NativeReceiverMock.sol)
+
+### 背景
+
+这一轮修改来自原生币发送路径的兼容性复查。
+
+旧实现中，`Acquired` 和 `Dividend` 在向用户发送链上原生币时使用的是 Solidity 自带的 `transfer(...)`。这种写法依赖一个较强的前提：
+
+1. 接收方地址是 EOA，或者
+2. 接收方是合约，但其 `receive` / `fallback` 逻辑能在 `transfer` 提供的 gas stipend 内完成
+
+这个前提在现实里并不稳固。只要接收方合约的收款逻辑稍微复杂一些，例如记录计数、更新统计、触发简单的状态写入，`transfer(...)` 就可能因为 gas 不足而直接回滚。
+
+这会带来两个实际问题：
+
+1. `Acquired` 中以原生币作为标的资产的投资轮，可能无法向合约买家发放标的，或者无法把剩余库存退回给合约投资人
+2. `Dividend` 中以原生币作为奖励的分红，可能无法发放给合约类型的领取者
+
+换句话说，旧实现不是“逻辑错误”，而是原生币发送方式过于保守，导致对合约接收方兼容性不足。
+
+### 修改目的
+
+本次修改目标有三个：
+
+1. 让 `Acquired` 支持向需要更多 gas 的合约接收方发送原生币
+2. 让 `Dividend` 支持向需要更多 gas 的合约领取者发送原生币
+3. 用专门的合约接收方 mock 把这类回归固定下来，避免未来又退回到 `transfer(...)`
+
+### 具体改动
+
+#### 1. 为 `Acquired` 增加统一的原生币发送辅助函数
+
+修改位置：[contracts/Acquired.sol](contracts/Acquired.sol)
+
+新增内部函数：
+
+- `_sendNative(address to, uint256 amount)`
+
+实现改为：
+
+- `payable(to).call{value: amount}("")`
+- 若发送失败，显式 `revert("native transfer failed")`
+
+并将以下原先使用 `transfer(...)` 的路径统一切换到 `_sendNative(...)`：
+
+1. `invest(...)` 中向买方发送原生币标的
+2. `endInvestment(...)` 中向投资人退回未售出的原生币库存
+
+#### 2. 为 `Dividend` 增加统一的原生币发送辅助函数
+
+修改位置：[contracts/Dividend.sol](contracts/Dividend.sol)
+
+同样新增：
+
+- `_sendNative(address to, uint256 amount)`
+
+并将 `withdrawDividends(...)` 中原先使用 `transfer(...)` 的原生币发放路径切换为 `_sendNative(...)`。
+
+#### 3. 保持重入边界不变
+
+虽然本次从 `transfer(...)` 改成了低级 `call(...)`，但本轮没有放宽重入保护：
+
+1. `Acquired.invest(...)`
+2. `Acquired.endInvestment(...)`
+3. `Dividend.withdrawDividends(...)`
+
+这些函数本身仍然处于 `nonReentrant` 保护下，因此兼容性提高的同时，没有额外打开新的原生币重入入口。
+
+### 兼容性影响
+
+#### ABI / 外部接口
+
+本次修改没有新增、删除或重排外部函数参数。
+
+因此：
+
+1. 不影响 ABI
+2. 不影响已有前端或脚本的 calldata 编码
+3. 不改变代理合约的外部调用方式
+
+#### 存储布局
+
+本次只新增了内部函数，没有新增状态变量，也没有调整现有状态变量顺序。
+
+因此：
+
+1. 不影响 UUPS 代理的存储布局
+2. 不影响已有链上状态解释
+3. 不引入代理升级布局风险
+
+#### 行为语义
+
+本次行为变化只体现在一处：
+
+1. 过去某些“合约接收方”在收原生币时会因为 `transfer(...)` 的 gas 限制而失败
+2. 现在这些接收方在收原生币时可以正常完成接收逻辑
+
+也就是说，这是一项兼容性修复，不是资产记账规则或业务状态机的变更。
+
+### 验证方式
+
+新增专用 mock：
+
+1. `NativeReceiverMock`：在 `receive()` 中执行状态写入，用来模拟需要超过 `transfer(...)` stipend 的合约接收方
+
+基于这个 mock，本次补了以下关键回归：
+
+1. `Acquired` 支持向合约买家发放原生币标的
+2. `Acquired` 支持向合约投资人退回未售出的原生币库存
+3. `Dividend` 支持向合约领取者发放原生币分红
+
+### 验证结果
+
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "acquired|dividend"'` 通过
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
+- 当前全量回归结果：`177 passing`

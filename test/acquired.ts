@@ -475,7 +475,7 @@ describe("acquired", function () {
         const buyerNativeBefore = await ethers.provider.getBalance(buyerOne.address);
         const buyerTx = await acquired.connect(buyerOne).invest(1n, 8);
         const buyerReceipt = await buyerTx.wait();
-        const buyerGas = buyerReceipt!.gasUsed * buyerReceipt!.gasPrice;
+        const buyerGas = BigInt(buyerReceipt!.gasUsed.toString()) * BigInt(buyerReceipt!.gasPrice.toString());
 
         expect(await ethers.provider.getBalance(buyerOne.address)).to.equal(buyerNativeBefore + 4n - buyerGas);
         expect(await acquired.getAddressInvestedAmount(1n, buyerOne.address)).to.equal(4n);
@@ -490,11 +490,64 @@ describe("acquired", function () {
         const investorNativeBefore = await ethers.provider.getBalance(investor.address);
         const endTx = await acquired.endInvestment(1n);
         const endReceipt = await endTx.wait();
-        const endGas = endReceipt!.gasUsed * endReceipt!.gasPrice;
+        const endGas = BigInt(endReceipt!.gasUsed.toString()) * BigInt(endReceipt!.gasPrice.toString());
 
         expect(await normalToken.balanceOf(investor.address)).to.equal(investorDaoBefore + 8n);
         expect(await ethers.provider.getBalance(investor.address)).to.equal(investorNativeBefore + 6n - endGas);
         expect(await ethers.provider.getBalance(acquiredAddress)).to.equal(0n);
+    });
+
+    it("supports native-token purchases by contract buyers that need more than transfer gas", async function () {
+        const { investor, normalToken, acquired } = await networkHelpers.loadFixture(deployAcquiredFixture);
+        const receiverDeployment = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+        await receiverDeployment.waitForDeployment();
+        const receiver = await ethers.getContractAt("NativeReceiverMock", await receiverDeployment.getAddress());
+
+        await (await acquired.startInvestment({
+            whitelist: [await receiver.getAddress()],
+            firstPercent: [10_000],
+            tokenAddress: ethers.ZeroAddress,
+            tokenAmount: 10n,
+            tokenRatio: { tokenAmount: 1, daoTokenAmount: 2 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        }, { value: 10n })).wait();
+
+        await (await normalToken.transfer(await receiver.getAddress(), 20n)).wait();
+        await (await receiver.approveToken(await normalToken.getAddress(), await acquired.getAddress(), 20n)).wait();
+        await (await receiver.invest(await acquired.getAddress(), 1n, 8n)).wait();
+
+        expect(await receiver.receiveCount()).to.equal(1n);
+        expect(await receiver.totalReceived()).to.equal(4n);
+
+        const info = await acquired.getInvestmentInfo(1n);
+        expect(info.investedAmount).to.equal(4n);
+        expect(info.daoTokenAmount).to.equal(8n);
+    });
+
+    it("returns unsold native inventory to contract investors that need more than transfer gas", async function () {
+        const { buyerOne, acquired } = await networkHelpers.loadFixture(deployAcquiredFixture);
+        const receiverDeployment = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+        await receiverDeployment.waitForDeployment();
+        const receiver = await ethers.getContractAt("NativeReceiverMock", await receiverDeployment.getAddress());
+
+        await (await receiver.startNativeInvestment(await acquired.getAddress(), {
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: ethers.ZeroAddress,
+            tokenAmount: 10n,
+            tokenRatio: { tokenAmount: 1, daoTokenAmount: 2 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        }, { value: 10n })).wait();
+
+        await (await receiver.endInvestment(await acquired.getAddress(), 1n)).wait();
+
+        expect(await receiver.receiveCount()).to.equal(1n);
+        expect(await receiver.totalReceived()).to.equal(10n);
+        expect((await acquired.getInvestmentInfo(1n)).end).to.equal(true);
     });
 
     it("prevents ending the same investment twice", async function () {

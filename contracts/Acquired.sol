@@ -13,6 +13,11 @@ import "hardhat/console.sol";
 contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpgradeable {
     using SafeERC20 for IERC20;
 
+    function _sendNative(address to, uint256 amount) internal {
+        (bool success, ) = payable(to).call{value: amount}("");
+        require(success, "native transfer failed");
+    }
+
     struct Investment {
         bool canEndEarly;
         bool end;
@@ -99,7 +104,7 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
         uint256 remainAmount = investment.totalAmount - investment.investedAmount;
         if (remainAmount > 0) {
             if (investment.tokenAddress == address(0)) {
-                payable(investment.investor).transfer(remainAmount);
+                _sendNative(investment.investor, remainAmount);
             } else {
                 IERC20(investment.tokenAddress).safeTransfer(investment.investor, remainAmount);
             }
@@ -147,7 +152,7 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
         investment.daoTokenAmount += amount;
 
         if (investment.tokenAddress == address(0)) {
-            payable(msg.sender).transfer(tokenAmount);
+            _sendNative(msg.sender, tokenAmount);
         } else {
             IERC20(investment.tokenAddress).safeTransfer(msg.sender, tokenAmount);
         }
