@@ -6,12 +6,20 @@ import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
 const { ethers, networkHelpers } = await hre.network.connect();
 
 async function deployDevFixture() {
-    const [owner, projectSigner, lockupSigner, dividendSigner, beneficiary] = await ethers.getSigners();
+    const [owner, beneficiary] = await ethers.getSigners();
 
     const dao = await deployUUPSProxy(ethers, "SourceDao");
-    await (await dao.setProjectAddress(projectSigner.address)).wait();
-    await (await dao.setTokenLockupAddress(lockupSigner.address)).wait();
-    await (await dao.setTokenDividendAddress(dividendSigner.address)).wait();
+    const operatorFactory = await ethers.getContractFactory("TokenOperatorMock");
+    const projectOperator = await operatorFactory.deploy();
+    await projectOperator.waitForDeployment();
+    const lockupOperator = await operatorFactory.deploy();
+    await lockupOperator.waitForDeployment();
+    const dividendOperator = await operatorFactory.deploy();
+    await dividendOperator.waitForDeployment();
+
+    await (await dao.setProjectAddress(await projectOperator.getAddress())).wait();
+    await (await dao.setTokenLockupAddress(await lockupOperator.getAddress())).wait();
+    await (await dao.setTokenDividendAddress(await dividendOperator.getAddress())).wait();
 
     const devToken = await deployUUPSProxy(ethers, "DevToken", [
         "BDDT",
@@ -28,10 +36,10 @@ async function deployDevFixture() {
 
     return {
         owner,
-        projectSigner,
-        lockupSigner,
-        dividendSigner,
         beneficiary,
+        projectOperator,
+        lockupOperator,
+        dividendOperator,
         devToken,
         normalToken
     };
@@ -66,25 +74,26 @@ describe("dev", function () {
     });
 
     it("only lets the configured project address mint dev tokens", async function () {
-        const { owner, projectSigner, beneficiary, devToken } = await networkHelpers.loadFixture(deployDevFixture);
+        const { owner, beneficiary, projectOperator, devToken } = await networkHelpers.loadFixture(deployDevFixture);
 
         await expect(devToken.connect(beneficiary).mintDevToken(300)).to.be.revertedWith("only project can release");
 
-        const projectBalanceBefore = await devToken.balanceOf(projectSigner.address);
-        await (await devToken.connect(projectSigner).mintDevToken(300)).wait();
+        const projectAddress = await projectOperator.getAddress();
+        const projectBalanceBefore = await devToken.balanceOf(projectAddress);
+        await (await projectOperator.mintDevToken(await devToken.getAddress(), 300)).wait();
 
-        expect(await devToken.balanceOf(projectSigner.address)).to.equal(projectBalanceBefore + 300n);
+        expect(await devToken.balanceOf(projectAddress)).to.equal(projectBalanceBefore + 300n);
         expect(await devToken.balanceOf(owner.address)).to.equal(5_000n);
         expect(await devToken.balanceOf(await devToken.getAddress())).to.equal(994_700n);
     });
 
     it("lets the configured project route released dev tokens onward to contributors", async function () {
-        const { projectSigner, beneficiary, devToken } = await networkHelpers.loadFixture(deployDevFixture);
+        const { projectOperator, beneficiary, devToken } = await networkHelpers.loadFixture(deployDevFixture);
 
-        await (await devToken.connect(projectSigner).mintDevToken(300)).wait();
-        await (await devToken.connect(projectSigner).transfer(beneficiary.address, 120)).wait();
+        await (await projectOperator.mintDevToken(await devToken.getAddress(), 300)).wait();
+        await (await projectOperator.transferToken(await devToken.getAddress(), beneficiary.address, 120)).wait();
 
-        expect(await devToken.balanceOf(projectSigner.address)).to.equal(180n);
+        expect(await devToken.balanceOf(await projectOperator.getAddress())).to.equal(180n);
         expect(await devToken.balanceOf(beneficiary.address)).to.equal(120n);
     });
 
@@ -97,32 +106,34 @@ describe("dev", function () {
     });
 
     it("allows transfer paths through configured lockup and dividend addresses", async function () {
-        const { owner, beneficiary, lockupSigner, dividendSigner, devToken } = await networkHelpers.loadFixture(deployDevFixture);
+        const { owner, beneficiary, lockupOperator, dividendOperator, devToken } = await networkHelpers.loadFixture(deployDevFixture);
 
-        await (await devToken.transfer(lockupSigner.address, 150)).wait();
-        expect(await devToken.balanceOf(lockupSigner.address)).to.equal(150n);
+        await (await devToken.transfer(await lockupOperator.getAddress(), 150)).wait();
+        expect(await devToken.balanceOf(await lockupOperator.getAddress())).to.equal(150n);
 
-        await (await devToken.transfer(dividendSigner.address, 200)).wait();
-        expect(await devToken.balanceOf(dividendSigner.address)).to.equal(200n);
+        await (await devToken.transfer(await dividendOperator.getAddress(), 200)).wait();
+        expect(await devToken.balanceOf(await dividendOperator.getAddress())).to.equal(200n);
 
-        await (await devToken.connect(dividendSigner).transfer(beneficiary.address, 80)).wait();
+        await (await dividendOperator.transferToken(await devToken.getAddress(), beneficiary.address, 80)).wait();
 
-        expect(await devToken.balanceOf(dividendSigner.address)).to.equal(120n);
+        expect(await devToken.balanceOf(await dividendOperator.getAddress())).to.equal(120n);
         expect(await devToken.balanceOf(beneficiary.address)).to.equal(80n);
         expect(await devToken.balanceOf(owner.address)).to.equal(4_650n);
     });
 
     it("keeps the lockup route inbound-only while allowing the dividend route to send back out", async function () {
-        const { beneficiary, lockupSigner, dividendSigner, devToken } = await networkHelpers.loadFixture(deployDevFixture);
+        const { beneficiary, lockupOperator, dividendOperator, devToken } = await networkHelpers.loadFixture(deployDevFixture);
 
-        await (await devToken.transfer(lockupSigner.address, 150)).wait();
-        await expect(devToken.connect(lockupSigner).transfer(beneficiary.address, 10)).to.be.revertedWith("invalid transfer");
+        await (await devToken.transfer(await lockupOperator.getAddress(), 150)).wait();
+        await expect(
+            lockupOperator.transferToken(await devToken.getAddress(), beneficiary.address, 10)
+        ).to.be.revertedWith("invalid transfer");
 
-        await (await devToken.transfer(dividendSigner.address, 90)).wait();
-        await (await devToken.connect(dividendSigner).transfer(beneficiary.address, 30)).wait();
+        await (await devToken.transfer(await dividendOperator.getAddress(), 90)).wait();
+        await (await dividendOperator.transferToken(await devToken.getAddress(), beneficiary.address, 30)).wait();
 
-        expect(await devToken.balanceOf(lockupSigner.address)).to.equal(150n);
-        expect(await devToken.balanceOf(dividendSigner.address)).to.equal(60n);
+        expect(await devToken.balanceOf(await lockupOperator.getAddress())).to.equal(150n);
+        expect(await devToken.balanceOf(await dividendOperator.getAddress())).to.equal(60n);
         expect(await devToken.balanceOf(beneficiary.address)).to.equal(30n);
     });
 });

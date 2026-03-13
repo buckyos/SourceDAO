@@ -14,63 +14,94 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
     address _tokenDividend;
     address _acquired;
 
+    address public bootstrapAdmin;
+    bool public bootstrapFinalized;
+
     function initialize() public initializer {
         __SourceDaoContractUpgradable_init(address(this));
+        bootstrapAdmin = msg.sender;
+        bootstrapFinalized = false;
     }
 
-    function _requireValidAddress(address newAddress) internal pure {
-        require(newAddress != address(0), "invalid address");
+    modifier onlyBootstrapAdmin() {
+        require(msg.sender == bootstrapAdmin, "only bootstrap admin");
+        _;
+    }
+
+    modifier onlyBeforeBootstrapFinalized() {
+        require(!bootstrapFinalized, "bootstrap finalized");
+        _;
+    }
+
+    function _requireValidAddress(address newAddress) internal view {
+        require(newAddress != address(0) && newAddress.code.length > 0, "invalid address");
+    }
+
+    function _allModulesConfigured() internal view returns (bool) {
+        return
+            _devToken != address(0) &&
+            _normalToken != address(0) &&
+            _committee != address(0) &&
+            _project != address(0) &&
+            _tokenLockup != address(0) &&
+            _tokenDividend != address(0) &&
+            _acquired != address(0);
     }
 
     function version() external pure virtual override returns (string memory) {
         return "2.0.0";
     }
 
+    function finalizeInitialization() external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
+        require(_allModulesConfigured(), "modules not configured");
+        bootstrapFinalized = true;
+    }
+
     function setDevTokenAddress(
         address newAddress
-    ) external onlySetOnce(_devToken) {
+    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
         _requireValidAddress(newAddress);
         _devToken = newAddress;
     }
 
     function setNormalTokenAddress(
         address newAddress
-    ) external onlySetOnce(_normalToken) {
+    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
         _requireValidAddress(newAddress);
         _normalToken = newAddress;
     }
 
     function setCommitteeAddress(
         address newAddress
-    ) external onlySetOnce(_committee) {
+    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
         _requireValidAddress(newAddress);
         _committee = newAddress;
     }
 
     function setProjectAddress(
         address newAddress
-    ) external onlySetOnce(_project) {
+    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
         _requireValidAddress(newAddress);
         _project = newAddress;
     }
 
     function setTokenLockupAddress(
         address newAddress
-    ) external onlySetOnce(_tokenLockup) {
+    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
         _requireValidAddress(newAddress);
         _tokenLockup = newAddress;
     }
 
     function setTokenDividendAddress(
         address newAddress
-    ) external onlySetOnce(_tokenDividend) {
+    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
         _requireValidAddress(newAddress);
         _tokenDividend = newAddress;
     }
 
     function setAcquiredAddress(
         address newAddress
-    ) external onlySetOnce(_acquired) {
+    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
         _requireValidAddress(newAddress);
         _acquired = newAddress;
     }

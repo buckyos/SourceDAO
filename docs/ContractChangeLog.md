@@ -1477,3 +1477,135 @@
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "Committee"'` 通过
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
 - 当前全量回归结果：`183 passing`
+
+---
+
+## 2026-03-13 SourceDao bootstrap admin / finalize 收口记录
+
+### 合约
+
+- 合约：`SourceDao`
+- 文件：[contracts/Dao.sol](contracts/Dao.sol)
+- 测试：[test/dao.ts](test/dao.ts)、[test/dev.ts](test/dev.ts)、[test/token.ts](test/token.ts)
+
+### 背景
+
+在前一轮风险表征里，`SourceDao` 的两个初始化问题已经被固定下来：
+
+1. 任意 caller 都能抢先写入未初始化模块 slot
+2. 模块 slot 接受 EOA 地址，不要求目标地址有合约代码
+
+这两个问题本质上都发生在 bootstrap 阶段，因此不适合简单套用长期治理权限，而更适合单独引入一个“初始化管理员 + 完成冻结”的短生命周期方案。
+
+### 修改目的
+
+本次 `SourceDao` 收口目标有四个：
+
+1. 为模块地址初始化引入明确的 bootstrap 权限边界
+2. 阻止 EOA 地址被写入正式模块 slot
+3. 允许 bootstrap 阶段修正配置错误，而不是被 `set once` 语义直接锁死
+4. 在 bootstrap 完成后显式 finalize，彻底冻结后续配置入口
+
+### 具体改动
+
+#### 1. 新增 bootstrap admin 状态
+
+`initialize()` 现在会记录：
+
+1. `bootstrapAdmin = msg.sender`
+2. `bootstrapFinalized = false`
+
+后续所有模块地址入口都要求：
+
+1. 只能由 `bootstrapAdmin` 调用
+2. 只能在 `bootstrapFinalized == false` 时调用
+
+#### 2. 模块地址校验收紧为“非零且有代码”
+
+`_requireValidAddress(...)` 现在不再只检查非零地址，而是同时要求：
+
+1. `newAddress != address(0)`
+2. `newAddress.code.length > 0`
+
+这样 bootstrap 阶段就不会再把 EOA 地址写进正式模块 slot。
+
+#### 3. 引入 `finalizeInitialization()`
+
+新增 `finalizeInitialization()`，只有在所有核心模块地址都已配置后，bootstrap admin 才能调用。
+
+一旦 finalize 成功：
+
+1. `bootstrapFinalized = true`
+2. 所有 `setXAddress(...)` 入口永久关闭
+3. `SourceDao` 不再接受后续 bootstrap 配置修改
+
+#### 4. 调整原来的“set once”语义
+
+原先的 `onlySetOnce(...)` 对 `SourceDao` 本身不再适用。
+
+新的语义改成：
+
+1. finalize 之前：bootstrap admin 可以修正配置
+2. finalize 之后：任何人都不能再改
+
+这比“首次写入后永久锁死”更适合真实部署流程，因为它允许在 bootstrap 完成前纠正地址配置失误。
+
+### 兼容性影响
+
+#### ABI
+
+本次 `SourceDao` 新增了外部可读/可调接口：
+
+1. `bootstrapAdmin()`
+2. `bootstrapFinalized()`
+3. `finalizeInitialization()`
+
+因此：
+
+1. `SourceDao` ABI 发生了扩展
+2. 现有 getter 和模块地址入口签名没有变化
+3. 依赖旧 ABI 但只使用原有接口的调用方不受影响
+
+#### 行为变化
+
+本次最核心的行为变化有两点：
+
+1. 模块地址不再能由任意 caller 抢先写入
+2. 模块地址不再接受 EOA
+
+此外，原先“每个 slot 只能写一次”的语义，被替换为“bootstrap 阶段可修正，finalize 后冻结”。
+
+因为模块地址现在必须是合约，原先在 `dev/token` 测试里用 signer 地址伪装 `project/lockup/dividend` 的夹具也一并调整为最小化 module caller mock，以保证测试环境和生产约束一致。
+
+#### 存储布局
+
+本次为 `SourceDao` 追加了新的状态变量：
+
+1. `bootstrapAdmin`
+2. `bootstrapFinalized`
+
+它们都追加在 `SourceDao` 现有状态变量之后，没有重排已有存储顺序。
+
+### 验证方式
+
+`test/dao.ts` 现在覆盖以下路径：
+
+1. `bootstrapAdmin` 和 `bootstrapFinalized` 的初始状态
+2. zero address 和 EOA 地址拒绝写入
+3. 非 bootstrap admin 不能设置模块地址，也不能 finalize
+4. bootstrap admin 在 finalize 前可以修正配置
+5. 未配置完整时不能 finalize
+6. finalize 后所有模块地址入口永久关闭
+7. 完成 finalize 后，`isDAOContract(...)` 仍正确识别已配置模块
+
+`test/dev.ts` 与 `test/token.ts` 额外验证：
+
+1. `project/lockup/dividend` 角色在真实合约地址约束下仍能满足 `DevToken` / `NormalToken` 的既有授权路径
+2. `code.length` 校验不会破坏现有 token 行为，只会淘汰原先不真实的 signer-address 夹具
+
+### 验证结果
+
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "dao"'` 通过
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "dev|token|dao"'` 通过
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
+- 当前全量回归结果：`184 passing`

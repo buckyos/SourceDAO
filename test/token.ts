@@ -6,12 +6,20 @@ import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
 const { ethers, networkHelpers } = await hre.network.connect();
 
 async function deployTokenFixture() {
-    const [owner, projectSigner, lockupSigner, dividendSigner, beneficiary] = await ethers.getSigners();
+    const [owner, beneficiary] = await ethers.getSigners();
 
     const dao = await deployUUPSProxy(ethers, "SourceDao");
-    await (await dao.setProjectAddress(projectSigner.address)).wait();
-    await (await dao.setTokenLockupAddress(lockupSigner.address)).wait();
-    await (await dao.setTokenDividendAddress(dividendSigner.address)).wait();
+    const operatorFactory = await ethers.getContractFactory("TokenOperatorMock");
+    const projectOperator = await operatorFactory.deploy();
+    await projectOperator.waitForDeployment();
+    const lockupOperator = await operatorFactory.deploy();
+    await lockupOperator.waitForDeployment();
+    const dividendOperator = await operatorFactory.deploy();
+    await dividendOperator.waitForDeployment();
+
+    await (await dao.setProjectAddress(await projectOperator.getAddress())).wait();
+    await (await dao.setTokenLockupAddress(await lockupOperator.getAddress())).wait();
+    await (await dao.setTokenDividendAddress(await dividendOperator.getAddress())).wait();
 
     const devToken = await deployUUPSProxy(ethers, "DevToken", [
         "BDDT",
