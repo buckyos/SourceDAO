@@ -134,6 +134,68 @@ async function passAddMemberProposal(
 }
 
 describe("Committee", function () {
+    it("rejects invalid committee lists during initialization and replacement", async function () {
+        const signers = await ethers.getSigners();
+        const dao = await deployUUPSProxy(ethers, "SourceDao");
+        const daoAddress = await dao.getAddress();
+
+        await expect(deployUUPSProxy(ethers, "SourceDaoCommittee", [
+            [signers[1].address],
+            0,
+            200,
+            MAIN_PROJECT_NAME,
+            1,
+            150,
+            daoAddress
+        ])).to.be.revertedWith("invalid proposal id");
+
+        await expect(deployUUPSProxy(ethers, "SourceDaoCommittee", [
+            [],
+            1,
+            200,
+            MAIN_PROJECT_NAME,
+            1,
+            150,
+            daoAddress
+        ])).to.be.revertedWith("committee required");
+
+        await expect(deployUUPSProxy(ethers, "SourceDaoCommittee", [
+            [ethers.ZeroAddress],
+            1,
+            200,
+            MAIN_PROJECT_NAME,
+            1,
+            150,
+            daoAddress
+        ])).to.be.revertedWith("invalid committee member");
+
+        await expect(deployUUPSProxy(ethers, "SourceDaoCommittee", [
+            [signers[1].address, signers[1].address],
+            1,
+            200,
+            MAIN_PROJECT_NAME,
+            1,
+            150,
+            daoAddress
+        ])).to.be.revertedWith("duplicate committee member");
+
+        const { committee, members, outsider } = await networkHelpers.loadFixture(deployCommitteeFixture);
+
+        await expect(committee.connect(members[0]).prepareSetCommittees([], false)).to.be.revertedWith(
+            "committee required"
+        );
+        await expect(committee.connect(members[0]).prepareSetCommittees([members[0].address, ethers.ZeroAddress], false)).to.be.revertedWith(
+            "invalid committee member"
+        );
+        await expect(committee.connect(members[0]).prepareSetCommittees([members[0].address, members[0].address], false)).to.be.revertedWith(
+            "duplicate committee member"
+        );
+
+        await expect(committee.connect(outsider).prepareSetCommittees([members[0].address], false)).to.be.revertedWith(
+            "only committee can set member"
+        );
+    });
+
     it("tracks the initialized committee membership", async function () {
         const { committee, members, outsider } = await networkHelpers.loadFixture(deployCommitteeFixture);
 
@@ -275,6 +337,10 @@ describe("Committee", function () {
 
         await expect(committee.connect(members[1]).prepareAddMember(members[2].address)).to.be.revertedWith(
             "only committee can add member"
+        );
+
+        await expect(committee.setCommittees([members[0].address, members[0].address], proposalId)).to.be.revertedWith(
+            "duplicate committee member"
         );
     });
 

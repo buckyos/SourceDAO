@@ -29,10 +29,22 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         _disableInitializers();
     }
 
+    function _validateCommitteeList(address[] memory memberList) internal pure {
+        require(memberList.length > 0, "committee required");
+        for (uint i = 0; i < memberList.length; i++) {
+            require(memberList[i] != address(0), "invalid committee member");
+            for (uint j = i + 1; j < memberList.length; j++) {
+                require(memberList[i] != memberList[j], "duplicate committee member");
+            }
+        }
+    }
+
     // devRatio支持两位小数，必须大于100, 使用时除100
     function initialize(address[] memory initialCommittees, uint initProposalId, uint _initDevRatio, bytes32 _mainProjectName, uint64 _finalVersion, uint _finalDevRatio, address mainAddr) public initializer {
+        require(initProposalId > 0, "invalid proposal id");
         require(_initDevRatio > 100, "dev ratio must greater than 100");
         require(_finalDevRatio > 100, "final dev ratio must greater than 100");
+        _validateCommitteeList(initialCommittees);
 
         __SourceDaoContractUpgradable_init(mainAddr);
 
@@ -386,6 +398,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     }
 
     function prepareSetCommittees(address[] calldata newCommittees, bool isFullProposal) public returns (uint) {
+        _validateCommitteeList(newCommittees);
         if (!isFullProposal) {
             require(
                 isMember(msg.sender),
@@ -411,6 +424,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     }
 
     function setCommittees(address[] calldata newCommittees, uint256 proposalId) public {
+        _validateCommitteeList(newCommittees);
         bytes32[] memory params = _prepareSetCommitteesParam(newCommittees);
         require(
             _takeResult(proposalId, params) == ProposalResult.Accept,

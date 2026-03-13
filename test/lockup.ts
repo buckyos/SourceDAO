@@ -110,7 +110,6 @@ async function deployLockupFixture(options?: {
 
 async function releaseMainProject(fixture: any) {
     const latestBlock = await ethers.provider.getBlock("latest");
-
     if (latestBlock === null) {
         throw new Error("latest block not found");
     }
@@ -180,6 +179,23 @@ async function deployUnreleasedTrackedVersionLockupFixture() {
 }
 
 describe("Lockup", function () {
+    it("rejects invalid tracked unlock configuration during initialization", async function () {
+        const dao = await deployUUPSProxy(ethers, "SourceDao");
+        const daoAddress = await dao.getAddress();
+
+        await expect(deployUUPSProxy(ethers, "SourceTokenLockup", [
+            ethers.ZeroHash,
+            convertVersion("1.0.0"),
+            daoAddress
+        ])).to.be.revertedWith("invalid unlock project");
+
+        await expect(deployUUPSProxy(ethers, "SourceTokenLockup", [
+            MAIN_PROJECT_NAME,
+            0,
+            daoAddress
+        ])).to.be.revertedWith("invalid unlock version");
+    });
+
     it("rejects lock operations with mismatched recipient and amount arrays", async function () {
         const { owner, devToken, normalToken, lockup } = await networkHelpers.loadFixture(deployLockupFixture);
 

@@ -943,3 +943,215 @@
 - `npm test -- --grep "dao"` 通过
 - `npm test` 全量通过
 - 当前全量回归结果：`158 passing`
+
+---
+
+## 2026-03-12 SourceDao 初始化与 Token 路由补充记录
+
+### 合约
+
+- 合约：`SourceDao`、`DevToken`、`NormalToken`
+- 文件：[contracts/Dao.sol](contracts/Dao.sol)、[contracts/DevToken.sol](contracts/DevToken.sol)、[contracts/NormalToken.sol](contracts/NormalToken.sol)
+- 相关测试：[test/upgrade.ts](test/upgrade.ts)、[test/dev.ts](test/dev.ts)、[test/token.ts](test/token.ts)
+
+### 背景
+
+继续往底层初始化和权限边界推进时，这一轮暴露出两个更靠近根因的问题：
+
+1. `SourceDao.initialize()` 没有把 `mainContractAddress` 绑定到代理自身
+2. `SourceDao.version()` 没有声明成 `virtual`，导致 DAO 自身升级 mock 甚至无法构造
+
+第一个问题不是测试洁癖，而是实质性的升级授权漏洞。因为 `SourceDaoContractUpgradeable._authorizeUpgrade()` 依赖 `getMainContractAddress().committee()`，如果 DAO 自己没有在初始化时把 `mainContractAddress` 指向自己，那么：
+
+1. DAO 代理的升级授权链会落到零地址调用
+2. 任意地址还可以抢先调用一次 `setMainContractAddress(...)`，把 DAO 主地址绑定到错误目标
+
+此外，这一轮也顺手补齐了 `DevToken` 和 `NormalToken` 先前没被固定的几条路由与初始化边界。
+
+### 修改目的
+
+本次修改目标有三个：
+
+1. 让 `SourceDao` 在初始化后立刻拥有正确且不可抢占的主合约绑定
+2. 让 DAO 自身的 UUPS 升级路径可以被真实测试和验证
+3. 固定 `DevToken` / `NormalToken` 的初始化、转换和路由边界
+
+### 具体改动
+
+#### 1. 修复 `SourceDao` 初始化时未自绑定主合约地址的问题
+
+修改位置：[contracts/Dao.sol](contracts/Dao.sol)
+
+本次把：
+
+1. `__SourceDaoContractUpgradable_init(address(0))`
+
+改成：
+
+2. `__SourceDaoContractUpgradable_init(address(this))`
+
+修复前的问题是：
+
+1. `mainContractAddress` 在 DAO 代理初始化后仍为零地址
+2. DAO 自身调用 `_authorizeUpgrade()` 时无法通过正确的 committee 路径完成验证
+3. 因为 `setMainContractAddress` 仍处于“可首次设置”状态，外部地址理论上还能抢先把它绑定到错误目标
+
+修复后，DAO 代理一部署完成就会把主地址固定到自己，升级授权链和后续模块路由都使用一致的根地址。
+
+#### 2. 为 `SourceDao.version()` 增加 `virtual`
+
+修改位置：[contracts/Dao.sol](contracts/Dao.sol)
+
+这项改动本身不改变运行时逻辑，但它修复了一个真实的可升级性缺口：此前 DAO 自身的 V2 mock 无法覆盖 `version()`，意味着我们连最基本的“DAO 代理自身能否升级”都无法通过继承 mock 进行回归验证。
+
+加上 `virtual` 之后，DAO 自身升级路径终于可以像其它 UUPS 合约一样被直接测试。
+
+#### 3. 补齐 `DevToken` / `NormalToken` 的初始化与路由测试
+
+新增测试固定了以下边界：
+
+1. `DevToken.initialize(...)` 在地址数组和金额数组长度不一致时必须拒绝
+2. `DevToken.initialize(...)` 在初始分配总额超过总供应量时必须拒绝
+3. `project` 地址领取到的 DevToken 可以继续向贡献者分发
+4. `lockup` 路由只能接收 DevToken，不能再向外普通转出
+5. `dividend` 路由既可以接收，也可以按当前设计继续向外转出
+6. `dev2normal` 在余额不足时必须稳定失败
+
+这些测试没有引出新的 token 合约逻辑 bug，但把此前只靠代码阅读推断的行为正式固定了下来。
+
+### 风险说明
+
+这次 `SourceDao` 的初始化修复属于高价值根因修复。
+
+如果不修：
+
+1. DAO 自身升级授权链从初始化开始就是断的
+2. `setMainContractAddress(...)` 会在 DAO 代理上留下一个可被外部首次写入的抢占窗口
+3. 后续即使 committee 和 upgrade proposal 逻辑本身正确，DAO 代理也可能因为主地址根配置错误而无法安全升级
+
+### 验证结果
+
+- `npm test -- --grep "upgrade"` 通过
+- `npm test -- --grep "token|dev"` 通过
+- `npm test` 全量通过
+- 当前全量回归结果：`162 passing`
+
+---
+
+## 2026-03-13 SourceDaoUpgradeable 与根配置边界补充记录
+
+### 合约
+
+- 合约：`SourceDaoUpgradeable`、`SourceDaoCommittee`、`DividendContract`、`SourceTokenLockup`
+- 文件：[contracts/SourceDaoUpgradeable.sol](contracts/SourceDaoUpgradeable.sol)、[contracts/Committee.sol](contracts/Committee.sol)、[contracts/Dividend.sol](contracts/Dividend.sol)、[contracts/TokenLockup.sol](contracts/TokenLockup.sol)
+- 相关测试：[test/source_dao_upgradeable.ts](test/source_dao_upgradeable.ts)、[test-hh3/source_dao_upgradeable.ts](test-hh3/source_dao_upgradeable.ts)、[test/committee.ts](test/committee.ts)、[test/dividend.ts](test/dividend.ts)、[test/lockup.ts](test/lockup.ts)
+
+### 背景
+
+在把 `SourceDao` 自绑定和 DAO 自升级路径补齐之后，剩下的高价值风险基本都集中在“根配置是否允许进入无意义或可劫持状态”这一层。
+
+这一轮继续往下看时，发现还有几类输入虽然不常走到，但一旦写入就会直接污染系统根状态：
+
+1. `SourceDaoUpgradeable` 允许以零地址初始化，未初始化代理还允许把主地址晚绑定到 EOA
+2. `Committee.initialize(...)` 允许 `initProposalId == 0`，而 0 又是升级 proposal 内部状态的哨兵值
+3. committee 成员列表在初始化和替换路径里都没有拒绝空列表、零地址或重复成员
+4. `Dividend.initialize(...)` 允许 `cycleMinLength == 0`
+5. `TokenLockup.initialize(...)` 允许空项目名和 `unlockVersion == 0`
+
+这些都不是表面的参数洁癖，而是会把治理、周期推进或解锁语义直接带入错误初始状态的根配置缺口。
+
+### 修改目的
+
+本次修改目标有四个：
+
+1. 把 `mainContractAddress` 绑定规则收紧到“初始化即有效，晚绑定只能指向真实合约”
+2. 消除 committee 初始化和成员替换中的无效治理配置
+3. 拒绝会破坏周期语义和解锁语义的无效初始化参数
+4. 通过独立回归测试把这些基础层边界长期固定下来
+
+### 具体改动
+
+#### 1. 收紧 `SourceDaoUpgradeable` 的主地址绑定规则
+
+修改位置：[contracts/SourceDaoUpgradeable.sol](contracts/SourceDaoUpgradeable.sol)
+
+本次修改后：
+
+1. `__SourceDaoContractUpgradable_init(address mainAddr)` 必须接收非零主地址
+2. `setMainContractAddress(address newAddr)` 只能把未绑定代理晚绑定到非零且带代码的合约地址
+
+这意味着：
+
+1. 初始化阶段不能再留下“主地址为空”的半配置状态
+2. 晚绑定路径不能再把根路由指向 EOA 或零地址
+3. 一次性绑定语义终于和“绑定的是有效 DAO 合约”这件事绑定在一起
+
+同时新增了专门的 `SourceDaoUpgradeableMock` 与独立 HH3 测试入口，直接覆盖：
+
+1. 零地址初始化拒绝
+2. 已初始化代理不可重绑
+3. 未初始化代理只能晚绑定到真实合约
+
+#### 2. 补齐 `Committee` 的根配置校验
+
+修改位置：[contracts/Committee.sol](contracts/Committee.sol)
+
+本次新增了 `_validateCommitteeList(...)`，并把它接入：
+
+1. `initialize(...)`
+2. `prepareSetCommittees(...)`
+3. `setCommittees(...)`
+
+新的约束是：
+
+1. committee 列表不能为空
+2. 不能包含零地址成员
+3. 不能包含重复成员
+4. `initProposalId` 必须大于 0
+
+这里的核心点不只是“成员列表更整洁”，而是避免系统在初始化后就进入：
+
+1. 没有任何 committee 的不可治理状态
+2. 含零地址成员的错误投票集合
+3. 重复成员导致的计票/语义混乱
+4. 与 proposal 哨兵值冲突的初始 proposal 编号
+
+#### 3. 拒绝 `Dividend` 的零周期长度配置
+
+修改位置：[contracts/Dividend.sol](contracts/Dividend.sol)
+
+`cycleMinLength` 现在必须大于 0。
+
+如果允许为 0，那么 dividend 的“新周期是否应该开启”判断会在每次交互时都具备立即滚动条件，整个周期模型会退化成无稳定边界的状态机。
+
+#### 4. 拒绝 `TokenLockup` 的无效跟踪解锁配置
+
+修改位置：[contracts/TokenLockup.sol](contracts/TokenLockup.sol)
+
+现在要求：
+
+1. `unlockProjectName` 不能是空 `bytes32`
+2. `unlockVersion` 必须大于 0
+
+此前如果接受这些值，Lockup 就可能从部署开始就跟踪一个不存在、无意义、或者永远不可能正确匹配的 release 目标。
+
+### 风险说明
+
+这一轮修复的共同特点是：它们都位于“系统还没真正运行起来之前”的根配置层。
+
+如果不修：
+
+1. 某些模块会在初始化后立刻处于不可授权或可误绑定状态
+2. committee 可能以无成员、脏成员或哨兵 proposal id 启动
+3. dividend 周期边界会退化
+4. lockup 解锁条件可能从部署时起就是伪配置
+
+这类问题平时不一定频繁触发，但一旦写入链上状态，后果通常比普通业务分支 bug 更难纠正。
+
+### 验证结果
+
+- `npx hardhat test test-hh3/source_dao_upgradeable.ts` 通过
+- `npm test -- --grep "Committee|dividend"` 通过
+- `npm test -- --grep "Committee|Lockup"` 通过
+- `npm test` 全量通过
+- 当前全量回归结果：`169 passing`

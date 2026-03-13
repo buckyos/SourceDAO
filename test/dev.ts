@@ -38,6 +38,33 @@ async function deployDevFixture() {
 }
 
 describe("dev", function () {
+    it("rejects invalid initialization data for the dev token", async function () {
+        const [owner] = await ethers.getSigners();
+        const dao = await deployUUPSProxy(ethers, "SourceDao");
+        const factory = await ethers.getContractFactory("DevToken");
+
+        await expect(deployUUPSProxy(ethers, "DevToken", [
+            "BDDT",
+            "BDDT",
+            1_000_000,
+            [owner.address],
+            [5_000, 1_000],
+            await dao.getAddress()
+        ])).to.be.revertedWith("init data error");
+
+        const implementation = await factory.deploy();
+        await implementation.waitForDeployment();
+
+        await expect(deployUUPSProxy(ethers, "DevToken", [
+            "BDDT",
+            "BDDT",
+            1_000,
+            [owner.address],
+            [5_000],
+            await dao.getAddress()
+        ])).to.be.revertedWith("initAmount exceeds totalSupply");
+    });
+
     it("only lets the configured project address mint dev tokens", async function () {
         const { owner, projectSigner, beneficiary, devToken } = await networkHelpers.loadFixture(deployDevFixture);
 
@@ -49,6 +76,16 @@ describe("dev", function () {
         expect(await devToken.balanceOf(projectSigner.address)).to.equal(projectBalanceBefore + 300n);
         expect(await devToken.balanceOf(owner.address)).to.equal(5_000n);
         expect(await devToken.balanceOf(await devToken.getAddress())).to.equal(994_700n);
+    });
+
+    it("lets the configured project route released dev tokens onward to contributors", async function () {
+        const { projectSigner, beneficiary, devToken } = await networkHelpers.loadFixture(deployDevFixture);
+
+        await (await devToken.connect(projectSigner).mintDevToken(300)).wait();
+        await (await devToken.connect(projectSigner).transfer(beneficiary.address, 120)).wait();
+
+        expect(await devToken.balanceOf(projectSigner.address)).to.equal(180n);
+        expect(await devToken.balanceOf(beneficiary.address)).to.equal(120n);
     });
 
     it("rejects direct transfers between regular user accounts", async function () {
@@ -73,5 +110,19 @@ describe("dev", function () {
         expect(await devToken.balanceOf(dividendSigner.address)).to.equal(120n);
         expect(await devToken.balanceOf(beneficiary.address)).to.equal(80n);
         expect(await devToken.balanceOf(owner.address)).to.equal(4_650n);
+    });
+
+    it("keeps the lockup route inbound-only while allowing the dividend route to send back out", async function () {
+        const { beneficiary, lockupSigner, dividendSigner, devToken } = await networkHelpers.loadFixture(deployDevFixture);
+
+        await (await devToken.transfer(lockupSigner.address, 150)).wait();
+        await expect(devToken.connect(lockupSigner).transfer(beneficiary.address, 10)).to.be.revertedWith("invalid transfer");
+
+        await (await devToken.transfer(dividendSigner.address, 90)).wait();
+        await (await devToken.connect(dividendSigner).transfer(beneficiary.address, 30)).wait();
+
+        expect(await devToken.balanceOf(lockupSigner.address)).to.equal(150n);
+        expect(await devToken.balanceOf(dividendSigner.address)).to.equal(60n);
+        expect(await devToken.balanceOf(beneficiary.address)).to.equal(30n);
     });
 });

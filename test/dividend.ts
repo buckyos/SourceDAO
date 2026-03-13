@@ -53,6 +53,14 @@ async function deployDividendFixture() {
 }
 
 describe("dividend", function () {
+    it("rejects a zero cycle length during initialization", async function () {
+        const dao = await deployUUPSProxy(ethers, "SourceDao");
+
+        await expect(deployUUPSProxy(ethers, "DividendContract", [0, await dao.getAddress()])).to.be.revertedWith(
+            "invalid cycle length"
+        );
+    });
+
     it("tracks stakes in the current cycle", async function () {
         const { owner, beneficiary, normalToken, dividend } = await networkHelpers.loadFixture(deployDividendFixture);
 

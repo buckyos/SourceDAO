@@ -43,6 +43,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
     
 
     function initialize(uint256 _cycleMinLength, address mainAddr) public initializer {
+        require(_cycleMinLength > 0, "invalid cycle length");
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
         __SourceDaoContractUpgradable_init(mainAddr);

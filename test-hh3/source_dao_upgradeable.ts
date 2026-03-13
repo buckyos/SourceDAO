@@ -1,0 +1,1 @@
+import "../test/source_dao_upgradeable.js";

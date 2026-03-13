@@ -33,12 +33,16 @@ async function deployUpgradeFixture() {
     const nextImplementation = await (await ethers.getContractFactory("SourceDaoCommitteeV2Mock")).deploy();
     await nextImplementation.waitForDeployment();
 
+    const nextDaoImplementation = await (await ethers.getContractFactory("SourceDaoV2Mock")).deploy();
+    await nextDaoImplementation.waitForDeployment();
+
     return {
         committee,
         dao,
         members,
         outsider: signers[4],
-        nextImplementationAddress: await nextImplementation.getAddress()
+        nextImplementationAddress: await nextImplementation.getAddress(),
+        nextDaoImplementationAddress: await nextDaoImplementation.getAddress()
     };
 }
 
@@ -153,5 +157,28 @@ describe("upgrade", function () {
         await expect(committee.connect(members[0]).prepareContractUpgrade(committeeAddress, nextImplementationAddress))
             .to.emit(committee, "ProposalStart")
             .withArgs(proposalId + 1n, false);
+    });
+
+    it("upgrades the dao proxy after committee approval", async function () {
+        const { committee, dao, members, outsider, nextDaoImplementationAddress } = await networkHelpers.loadFixture(deployUpgradeFixture);
+        const daoAddress = await dao.getAddress();
+        const proposalId = 1n;
+        const params = upgradeParams(daoAddress, nextDaoImplementationAddress);
+
+        await expect(dao.connect(outsider).setMainContractAddress(outsider.address)).to.be.revertedWith("can set once");
+
+        await expect(committee.connect(members[0]).prepareContractUpgrade(daoAddress, nextDaoImplementationAddress))
+            .to.emit(committee, "ProposalStart")
+            .withArgs(proposalId, false);
+
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+        await (await committee.connect(members[1]).support(proposalId, params)).wait();
+
+        await expect(dao.upgradeToAndCall(nextDaoImplementationAddress, "0x"))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        const upgradedDao = await ethers.getContractAt("SourceDaoV2Mock", daoAddress);
+        expect(await upgradedDao.version()).to.equal("2.1.0");
     });
 });

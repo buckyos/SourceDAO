@@ -35,6 +35,8 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
     }
 
     function initialize(bytes32 _unlockProjectName, uint64 _unlockVersion, address mainAddr) public initializer {
+        require(_unlockProjectName != bytes32(0), "invalid unlock project");
+        require(_unlockVersion > 0, "invalid unlock version");
         __SourceDaoContractUpgradable_init(mainAddr);
         __ReentrancyGuard_init();
 

@@ -16,9 +16,8 @@ abstract contract SourceDaoContractUpgradeable is Initializable, UUPSUpgradeable
 
     function __SourceDaoContractUpgradable_init(address mainAddr) internal onlyInitializing {
         __UUPSUpgradeable_init();
-        if (mainAddr != address(0)) {
-            mainContractAddress = mainAddr;
-        }
+        require(mainAddr != address(0), "invalid main address");
+        mainContractAddress = mainAddr;
     }
 
     function getMainContractAddress() internal view returns(ISourceDao) {
@@ -26,6 +25,7 @@ abstract contract SourceDaoContractUpgradeable is Initializable, UUPSUpgradeable
     }
 
     function setMainContractAddress(address newAddr) external onlySetOnce(mainContractAddress) {
+        require(newAddr != address(0) && newAddr.code.length > 0, "invalid main address");
         mainContractAddress = newAddr;
     }
 

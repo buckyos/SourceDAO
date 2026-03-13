@@ -50,6 +50,19 @@ describe("token", function () {
         expect(await devToken.totalReleased()).to.equal(3_800n);
     });
 
+    it("rejects conversions that exceed the holder's dev balance", async function () {
+        const { beneficiary, devToken } = await networkHelpers.loadFixture(deployTokenFixture);
+
+        let reverted = false;
+        try {
+            await (await devToken.connect(beneficiary).dev2normal(1)).wait();
+        } catch {
+            reverted = true;
+        }
+
+        expect(reverted).to.equal(true);
+    });
+
     it("prevents direct minting on the normal token contract", async function () {
         const { beneficiary, normalToken } = await networkHelpers.loadFixture(deployTokenFixture);
 

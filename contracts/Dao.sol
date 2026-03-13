@@ -15,14 +15,14 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
     address _acquired;
 
     function initialize() public initializer {
-        __SourceDaoContractUpgradable_init(address(0));
+        __SourceDaoContractUpgradable_init(address(this));
     }
 
     function _requireValidAddress(address newAddress) internal pure {
         require(newAddress != address(0), "invalid address");
     }
 
-    function version() external pure override returns (string memory) {
+    function version() external pure virtual override returns (string memory) {
         return "2.0.0";
     }
 
