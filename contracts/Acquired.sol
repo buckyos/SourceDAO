@@ -3,6 +3,7 @@ pragma solidity ^0.8.18;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./SourceDaoUpgradeable.sol";
 import "./Interface.sol";
@@ -10,6 +11,8 @@ import "./Interface.sol";
 import "hardhat/console.sol";
 
 contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpgradeable {
+    using SafeERC20 for IERC20;
+
     struct Investment {
         bool canEndEarly;
         bool end;
@@ -64,7 +67,7 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
             uint8 tokenDecimals = IERC20Metadata(param.tokenAddress).decimals();
             uint8 daoTokenDecimals = daoToken.decimals();
             require(daoTokenDecimals >= tokenDecimals, "not support token decimals > 18");
-            IERC20(param.tokenAddress).transferFrom(msg.sender, address(this), param.tokenAmount);
+            IERC20(param.tokenAddress).safeTransferFrom(msg.sender, address(this), param.tokenAmount);
         }
         
         investments[investmentCount].investor = msg.sender;
@@ -92,13 +95,13 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
             require(investment.investedAmount == 0 || investment.totalAmount == investment.investedAmount, "not all token sold out");
         }
 
-        getMainContractAddress().normalToken().transfer(investment.investor, investment.daoTokenAmount);
+        IERC20(address(getMainContractAddress().normalToken())).safeTransfer(investment.investor, investment.daoTokenAmount);
         uint256 remainAmount = investment.totalAmount - investment.investedAmount;
         if (remainAmount > 0) {
             if (investment.tokenAddress == address(0)) {
                 payable(investment.investor).transfer(remainAmount);
             } else {
-                IERC20(investment.tokenAddress).transfer(investment.investor, remainAmount);
+                IERC20(investment.tokenAddress).safeTransfer(investment.investor, remainAmount);
             }
         }
 
@@ -137,7 +140,7 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
         }
         // in step 2, only need to check enough token
 
-        daoToken.transferFrom(msg.sender, address(this), amount);
+        IERC20(address(daoToken)).safeTransferFrom(msg.sender, address(this), amount);
 
         investment.investedAmounts[msg.sender] += tokenAmount;
         investment.investedAmount += tokenAmount;
@@ -146,7 +149,7 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
         if (investment.tokenAddress == address(0)) {
             payable(msg.sender).transfer(tokenAmount);
         } else {
-            IERC20(investment.tokenAddress).transfer(msg.sender, tokenAmount);
+            IERC20(investment.tokenAddress).safeTransfer(msg.sender, tokenAmount);
         }
 
         emit Invest(investmentId, msg.sender, amount, tokenAmount);

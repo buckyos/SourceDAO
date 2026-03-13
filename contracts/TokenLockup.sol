@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./Interface.sol";
 import "./SourceDaoUpgradeable.sol";
@@ -13,6 +15,8 @@ import "./SourceDaoUpgradeable.sol";
 // 锁定并不是一个高频操作，只是一些资本运作的需要。因此不需要分批锁定
 
 contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, ReentrancyGuardUpgradeable {
+    using SafeERC20 for IERC20;
+
     struct UnlockInfo {
         uint256 totalAssigned;  // 曾锁定的总量
         uint256 totalClaimed;  // 已经提取了多少
@@ -62,7 +66,7 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
             _unlockInfo[to[i]].totalAssigned += amount[i];
         }
 
-        token.transferFrom(msg.sender, address(this), totalAmount);
+        IERC20(address(token)).safeTransferFrom(msg.sender, address(this), totalAmount);
 
         _totalAssigned += totalAmount;
     }
@@ -79,7 +83,7 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
             totalAmount += amount[i];
             _unlockInfo[to[i]].totalAssigned += amount[i];
         }
-        devToken.transferFrom(msg.sender, address(this), totalAmount);
+        IERC20(address(devToken)).safeTransferFrom(msg.sender, address(this), totalAmount);
         devToken.dev2normal(totalAmount);
 
         _totalAssigned += totalAmount;
@@ -116,7 +120,7 @@ contract SourceTokenLockup is ISourceTokenLockup, SourceDaoContractUpgradeable, 
 
         _unlockInfo[msg.sender].totalClaimed += amount;
 
-        getMainContractAddress().normalToken().transfer(msg.sender, amount);
+        IERC20(address(getMainContractAddress().normalToken())).safeTransfer(msg.sender, amount);
 
         _totalClaimed += amount;
 

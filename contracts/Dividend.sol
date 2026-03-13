@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
@@ -12,6 +13,8 @@ import "./Interface.sol";
 import "./SourceDaoUpgradeable.sol";
 
 contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, ReentrancyGuardUpgradeable {
+    using SafeERC20 for IERC20;
+
     // 支持DevToken和NormalToken的质押, 就不在初始化时传入了
 
     // the max length of the cycle in seconds
@@ -164,7 +167,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
         require(token != address(getMainContractAddress().devToken()), "Cannot deposit dao dev token");
         require(token != address(0), "Use native transfer to deposit default token");
 
-        IERC20(token).transferFrom(msg.sender, address(this), amount);
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 
         _depositToken(token, amount);
     }
@@ -279,7 +282,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
     function stakeNormal(uint256 amount) external nonReentrant {
         require(amount > 0, "Cannot stake 0 Token");
         _tryNewCycle();
-        require(getMainContractAddress().normalToken().transferFrom(msg.sender, address(this), amount), "Stake failed");
+        IERC20(address(getMainContractAddress().normalToken())).safeTransferFrom(msg.sender, address(this), amount);
 
         // console.log("user stake ===> amount %d, cycle %d, user %s", amount, currentCycleIndex, msg.sender);
 
@@ -311,7 +314,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
     function stakeDev(uint256 amount) external nonReentrant {
         require(amount > 0, "Cannot stake 0 Token");
         _tryNewCycle();
-        require(getMainContractAddress().devToken().transferFrom(msg.sender, address(this), amount), "Stake failed");
+        IERC20(address(getMainContractAddress().devToken())).safeTransferFrom(msg.sender, address(this), amount);
 
         // console.log("user stake ===> amount %d, cycle %d, user %s", amount, currentCycleIndex, msg.sender);
 
@@ -365,7 +368,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
         _compactStakeRecords(msg.sender);
 
         // console.log("will unstake transfer %s ===> %d", msg.sender, amount);
-        require(getMainContractAddress().normalToken().transfer(msg.sender, amount), "Unstake failed");
+        IERC20(address(getMainContractAddress().normalToken())).safeTransfer(msg.sender, amount);
 
         emit Unstake(msg.sender, amount);
     }
@@ -398,7 +401,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
         _compactStakeRecords(msg.sender);
 
         // console.log("will unstake transfer %s ===> %d", msg.sender, amount);
-        require(getMainContractAddress().devToken().transfer(msg.sender, amount), "Unstake failed");
+        IERC20(address(getMainContractAddress().devToken())).safeTransfer(msg.sender, amount);
 
         emit Unstake(msg.sender, amount);
     }
@@ -598,7 +601,7 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
             if (reward.token == address(0)) {
                 payable(msg.sender).transfer(reward.amount);
             } else {
-                IERC20(reward.token).transfer(msg.sender, reward.amount);
+                IERC20(reward.token).safeTransfer(msg.sender, reward.amount);
             }
 
             // Then update the token balance in the contract

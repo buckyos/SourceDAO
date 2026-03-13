@@ -144,6 +144,66 @@ describe("acquired", function () {
         }, { value: 11n })).to.be.revertedWith("main token not enough");
     });
 
+    it("rejects starting an investment when escrow token transferFrom returns false", async function () {
+        const { investor, buyerOne, acquired } = await networkHelpers.loadFixture(deployAcquiredFixture);
+        const falseToken = await (await ethers.getContractFactory("FalseReturnToken")).deploy(1_000_000n, investor.address);
+        await falseToken.waitForDeployment();
+        await (await falseToken.approve(await acquired.getAddress(), 500n)).wait();
+
+        let reverted = false;
+        try {
+            await (await acquired.startInvestment({
+                whitelist: [buyerOne.address],
+                firstPercent: [10_000],
+                tokenAddress: await falseToken.getAddress(),
+                tokenAmount: 500,
+                tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+                step1Duration: 3600,
+                step2Duration: 3600,
+                canEndEarly: false
+            })).wait();
+        } catch {
+            reverted = true;
+        }
+
+        expect(reverted).to.equal(true);
+    });
+
+    it("rejects purchases when the sale token payout returns false", async function () {
+        const { buyerOne, normalToken, acquired, investor } = await networkHelpers.loadFixture(deployAcquiredFixture);
+        const flakyToken = await (await ethers.getContractFactory("ConfigurableReturnToken")).deploy(1_000_000n, investor.address);
+        await flakyToken.waitForDeployment();
+
+        await (await flakyToken.approve(await acquired.getAddress(), 500n)).wait();
+        await (await acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: await flakyToken.getAddress(),
+            tokenAmount: 500,
+            tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).wait();
+
+        await (await flakyToken.setFailTransfer(true)).wait();
+        await (await normalToken.connect(buyerOne).approve(await acquired.getAddress(), 100)).wait();
+
+        let reverted = false;
+        try {
+            await (await acquired.connect(buyerOne).invest(1n, 20)).wait();
+        } catch {
+            reverted = true;
+        }
+
+        expect(reverted).to.equal(true);
+
+        const info = await acquired.getInvestmentInfo(1n);
+        expect(info.investedAmount).to.equal(0n);
+        expect(info.daoTokenAmount).to.equal(0n);
+        expect(await flakyToken.balanceOf(buyerOne.address)).to.equal(0n);
+    });
+
     it("enforces whitelist step-one limits and records investments", async function () {
         const { investor, buyerOne, buyerTwo, outsider, normalToken, acquired, saleToken } = await networkHelpers.loadFixture(deployAcquiredFixture);
 

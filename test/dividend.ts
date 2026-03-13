@@ -61,6 +61,56 @@ describe("dividend", function () {
         );
     });
 
+    it("rejects reward deposits when the ERC20 transferFrom returns false", async function () {
+        const { dividend, owner } = await networkHelpers.loadFixture(deployDividendFixture);
+        const falseToken = await (await ethers.getContractFactory("FalseReturnToken")).deploy(1_000_000n, owner.address);
+        await falseToken.waitForDeployment();
+        await (await falseToken.approve(await dividend.getAddress(), 100n)).wait();
+
+        let reverted = false;
+        try {
+            await (await dividend.deposit(100n, await falseToken.getAddress())).wait();
+        } catch {
+            reverted = true;
+        }
+
+        expect(reverted).to.equal(true);
+        expect(await dividend.getDepositTokenBalance(await falseToken.getAddress())).to.equal(0n);
+    });
+
+    it("keeps claim state and balances unchanged when reward token transfer returns false", async function () {
+        const { owner, normalToken, dividend } = await networkHelpers.loadFixture(deployDividendFixture);
+        const flakyTokenDeployment = await (await ethers.getContractFactory("ConfigurableReturnToken")).deploy(1_000_000n, owner.address);
+        await flakyTokenDeployment.waitForDeployment();
+        const flakyToken = await ethers.getContractAt("ConfigurableReturnToken", await flakyTokenDeployment.getAddress());
+
+        await (await normalToken.approve(await dividend.getAddress(), 400)).wait();
+        await (await dividend.stakeNormal(400)).wait();
+
+        await networkHelpers.time.increase(3601n);
+        await (await dividend.tryNewCycle()).wait();
+
+        await (await flakyToken.approve(await dividend.getAddress(), 400n)).wait();
+        await (await dividend.deposit(400n, await flakyToken.getAddress())).wait();
+
+        await (await flakyToken.setFailTransfer(true)).wait();
+
+        await networkHelpers.time.increase(3601n);
+        await (await dividend.tryNewCycle()).wait();
+
+        let reverted = false;
+        try {
+            await (await dividend.withdrawDividends([1n], [await flakyToken.getAddress()])).wait();
+        } catch {
+            reverted = true;
+        }
+
+        expect(reverted).to.equal(true);
+        expect(await dividend.isDividendWithdrawed(1n, await flakyToken.getAddress())).to.equal(false);
+        expect(await dividend.getDepositTokenBalance(await flakyToken.getAddress())).to.equal(400n);
+        expect(await flakyToken.balanceOf(owner.address)).to.equal(999_600n);
+    });
+
     it("tracks stakes in the current cycle", async function () {
         const { owner, beneficiary, normalToken, dividend } = await networkHelpers.loadFixture(deployDividendFixture);
 

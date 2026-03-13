@@ -252,6 +252,39 @@ describe("project", function () {
         ).to.be.revertedWith("extra token length mismatch");
     });
 
+    it("rejects createProject when extra token escrow transfer returns false", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const falseToken = await (await ethers.getContractFactory("FalseReturnToken")).deploy(
+            1_000_000n,
+            fixture.manager.address
+        );
+        await falseToken.waitForDeployment();
+
+        await (await falseToken.approve(await fixture.project.getAddress(), 500n)).wait();
+
+        let reverted = false;
+        try {
+            await (await fixture.project.createProject(
+                10_000,
+                PROJECT_NAME,
+                PROJECT_VERSION,
+                BigInt(latestBlock.timestamp),
+                BigInt(latestBlock.timestamp) + THIRTY_DAYS,
+                [await falseToken.getAddress()],
+                [500n]
+            )).wait();
+        } catch {
+            reverted = true;
+        }
+
+        expect(reverted).to.equal(true);
+    });
+
     it("moves a project from preparing to developing after committee approval", async function () {
         const fixture = await networkHelpers.loadFixture(deployProjectFixture);
         const { startDate, endDate } = await createAndPromoteProject(fixture);

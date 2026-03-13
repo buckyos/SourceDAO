@@ -1155,3 +1155,128 @@
 - `npm test -- --grep "Committee|Lockup"` 通过
 - `npm test` 全量通过
 - 当前全量回归结果：`169 passing`
+
+---
+
+## 2026-03-13 ERC20 转账风险收口记录
+
+### 合约
+
+- 合约：`ProjectManagement`、`DividendContract`、`Acquired`、`SourceTokenLockup`
+- 文件：[contracts/Project.sol](contracts/Project.sol)、[contracts/Dividend.sol](contracts/Dividend.sol)、[contracts/Acquired.sol](contracts/Acquired.sol)、[contracts/TokenLockup.sol](contracts/TokenLockup.sol)
+- 测试与 mock：[test/project.ts](test/project.ts)、[test/dividend.ts](test/dividend.ts)、[test/acquired.ts](test/acquired.ts)、[contracts/mocks/FalseReturnToken.sol](contracts/mocks/FalseReturnToken.sol)、[contracts/mocks/ConfigurableReturnToken.sol](contracts/mocks/ConfigurableReturnToken.sol)
+
+### 背景
+
+这一轮从 `Project` 的额外代币托管路径开始，向仓库里所有 ERC20 转账入口做了同类风险复查。
+
+复查结果表明，仓库里原先默认依赖了一个并不可靠的前提：只要 ERC20 转账失败，它就会 `revert`。但现实里存在另一类合法实现：
+
+1. `transferFrom(...)` 返回 `false`，但不回滚
+2. `transfer(...)` 返回 `false`，但不回滚
+
+在这种 token 语义下，如果合约没有检查返回值，就会出现“业务状态已经推进，但真实资产并没有完成转移”的账实分叉问题。
+
+### 修改目的
+
+本次修改目标有三个：
+
+1. 修复 `Project`、`Dividend`、`Acquired` 中对任意外部 ERC20 的高风险静默失败路径
+2. 用专门的 false-return mock 把这些边界固定为长期回归
+3. 顺手把 `TokenLockup` 与 `Dividend` 中 DAO 自有 token 的转账语义也统一到 `SafeERC20`
+
+### 具体改动
+
+#### 1. 修复 `Project` 的额外代币托管与分发静默失败问题
+
+修改位置：[contracts/Project.sol](contracts/Project.sol)
+
+`Project` 现在使用 `SafeERC20` 处理：
+
+1. `createProject(...)` 中的额外代币托管
+2. `cancelProject(...)` 中的额外代币退回
+3. `promoteProject(...)` 中低评分项目的未分配额外代币返还
+4. `withdrawContributions(...)` 中的额外代币和 DevToken 发放
+
+修复前，如果额外代币 `transferFrom(...)` 返回 `false`，项目仍可能被创建成功，但合约并没有真正托管对应资产。
+
+#### 2. 修复 `Dividend` 的奖励代币入账与提现静默失败问题
+
+修改位置：[contracts/Dividend.sol](contracts/Dividend.sol)
+
+高风险点主要有两处：
+
+1. `deposit(...)` 过去会在 `transferFrom(...)` 未真正成功时仍把奖励记入 cycle 和 `tokenBalances`
+2. `withdrawDividends(...)` 过去会在 ERC20 `transfer(...)` 返回 `false` 时仍走后续状态路径，造成“已领取状态”和真实到账脱节的风险
+
+现在这两条外部奖励 token 路径都改为 `SafeERC20`。
+
+另外，这一轮也把以下 DAO 内部 token 路径统一成了 `SafeERC20`：
+
+1. `stakeNormal(...)`
+2. `stakeDev(...)`
+3. `unstakeNormal(...)`
+4. `unstakeDev(...)`
+
+这部分不是新发现的高危漏洞，而是为了把仓库内 ERC20 交互语义收敛成一致实现。
+
+#### 3. 修复 `Acquired` 的标的托管与发放静默失败问题
+
+修改位置：[contracts/Acquired.sol](contracts/Acquired.sol)
+
+`Acquired` 中的以下路径现在都改为 `SafeERC20`：
+
+1. `startInvestment(...)` 托管外部标的 token
+2. `invest(...)` 收取 DAO normal token
+3. `invest(...)` 向买方发放外部标的 token
+4. `endInvestment(...)` 向投资人结算 DAO normal token 和剩余外部标的 token
+
+修复前，如果标的 token 在托管或发放阶段返回 `false`，投资轮仍可能被创建或推进，但真实资产并未同步完成移动。
+
+#### 4. 统一 `TokenLockup` 的 DAO 内部 token 转账语义
+
+修改位置：[contracts/TokenLockup.sol](contracts/TokenLockup.sol)
+
+这一轮把以下路径统一成 `SafeERC20`：
+
+1. `transferAndLock(...)`
+2. `convertAndLock(...)`
+3. `claimTokens(...)`
+
+这里主要是工程一致性收口。因为这些路径操作的是 DAO 自有 token，现实风险低于任意外部 ERC20 输入面，但统一后能减少未来继续演化时的语义分叉。
+
+### 测试补充
+
+新增两个专用 mock：
+
+1. `FalseReturnToken`：`transfer` / `transferFrom` 恒定返回 `false`
+2. `ConfigurableReturnToken`：可按测试场景切换 `transfer` 或 `transferFrom` 返回 `false`
+
+基于这两个 mock，本次补了以下关键回归：
+
+1. `Project.createProject(...)` 在额外代币 escrow `transferFrom` 返回 `false` 时必须拒绝
+2. `Dividend.deposit(...)` 在奖励 token `transferFrom` 返回 `false` 时必须拒绝
+3. `Dividend.withdrawDividends(...)` 在奖励 token `transfer` 返回 `false` 时必须整体回滚，并保持 claim 状态与余额不变
+4. `Acquired.startInvestment(...)` 在标的 token escrow `transferFrom` 返回 `false` 时必须拒绝
+5. `Acquired.invest(...)` 在标的 token payout `transfer` 返回 `false` 时必须整体回滚，并保持 investment 统计不变
+
+### 风险说明
+
+这轮收口修复的是典型的“账实分叉型”基础资产路径问题。
+
+如果不修：
+
+1. 项目可能在没有真实托管额外代币的情况下创建成功
+2. 分红池可能记录了从未真正到账的奖励
+3. 用户分红可能在未真正收到代币时被错误视为已领取
+4. 投资轮可能在没有真实托管或没有真实发放标的资产的情况下推进状态
+
+和普通业务分支 bug 相比，这类问题更接近资金记账层错误，一旦进入链上状态，后续排查和补救都更困难。
+
+### 验证结果
+
+- `npm test -- --grep "project"` 通过
+- `npm test -- --grep "dividend|acquired"` 通过
+- `npm test -- --grep "dividend|Lockup|lockup"` 通过
+- `npm test` 全量通过
+- 当前全量回归结果：`174 passing`

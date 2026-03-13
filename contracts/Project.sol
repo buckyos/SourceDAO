@@ -2,6 +2,7 @@
 pragma solidity ^0.8.18;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
@@ -13,6 +14,8 @@ contract ProjectManagement is
     Initializable,
     SourceDaoContractUpgradeable,
     ReentrancyGuardUpgradeable {
+    using SafeERC20 for IERC20;
+
     struct ContributionInfo {
         address contributor;
         uint64 value;
@@ -95,7 +98,7 @@ contract ProjectManagement is
         project.proposalId = getMainContractAddress().committee().propose(30 days, params);
 
         for (uint i = 0; i < extraTokens.length; i++) {
-            IERC20(extraTokens[i]).transferFrom(msg.sender, address(this), extraTokenAmounts[i]);
+            IERC20(extraTokens[i]).safeTransferFrom(msg.sender, address(this), extraTokenAmounts[i]);
         }
 
         emit ProjectCreate(projectId, project.proposalId);
@@ -119,7 +122,7 @@ contract ProjectManagement is
 
         project.state = ProjectState.Rejected;
         for (uint i = 0; i < project.extraTokens.length; i++) {
-            IERC20(project.extraTokens[i]).transfer(project.manager, project.extraTokenAmounts[i]);
+            IERC20(project.extraTokens[i]).safeTransfer(project.manager, project.extraTokenAmounts[i]);
         }
     }
 
@@ -167,7 +170,7 @@ contract ProjectManagement is
             if (coefficient < 100) {
                 for (uint i = 0; i < project.extraTokens.length; i++) {
                     uint extraTokenAmount = project.extraTokenAmounts[i] * (100 - coefficient) / 100;
-                    IERC20(project.extraTokens[i]).transfer(project.manager, extraTokenAmount);
+                    IERC20(project.extraTokens[i]).safeTransfer(project.manager, extraTokenAmount);
                 }
             }
             
@@ -270,10 +273,10 @@ contract ProjectManagement is
                 // extraCoefficient / 100计算extra能拿到的总比例
                 // contribution / totalContribution计算这个人能拿到多少
                 uint extraTokenAmount = project.extraTokenAmounts[i] * extraCoefficient / 100 * contribution / totalContribution ;
-                IERC20(project.extraTokens[i]).transfer(msg.sender, extraTokenAmount);
+                IERC20(project.extraTokens[i]).safeTransfer(msg.sender, extraTokenAmount);
             }
         }
-        IERC20(address(getMainContractAddress().devToken())).transfer(msg.sender, claimAmount);
+        IERC20(address(getMainContractAddress().devToken())).safeTransfer(msg.sender, claimAmount);
         emit WithdrawContributionToken2(msg.sender, claimAmount, projectIds);
         return claimAmount;
     }
