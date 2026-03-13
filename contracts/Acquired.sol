@@ -100,6 +100,9 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
             require(investment.investedAmount == 0 || investment.totalAmount == investment.investedAmount, "not all token sold out");
         }
 
+        // Mark the investment closed before external transfers; a failed payout still reverts atomically.
+        investment.end = true;
+
         IERC20(address(getMainContractAddress().normalToken())).safeTransfer(investment.investor, investment.daoTokenAmount);
         uint256 remainAmount = investment.totalAmount - investment.investedAmount;
         if (remainAmount > 0) {
@@ -109,9 +112,6 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
                 IERC20(investment.tokenAddress).safeTransfer(investment.investor, remainAmount);
             }
         }
-
-        //delete investments[investmentId];
-        investment.end = true;
 
         emit InvestmentEnd(investmentId, msg.sender);
     }

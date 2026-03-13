@@ -321,6 +321,46 @@ describe("dividend", function () {
         expect(await dividend.getDepositTokenBalance(ethers.ZeroAddress)).to.equal(0n);
     });
 
+    it("reverts native dividend payouts atomically when the recipient rejects the transfer", async function () {
+        const { owner, normalToken, dividend } = await networkHelpers.loadFixture(deployDividendFixture);
+        const receiverDeployment = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+        await receiverDeployment.waitForDeployment();
+        const receiver = await ethers.getContractAt("NativeReceiverMock", await receiverDeployment.getAddress());
+
+        await (await normalToken.transfer(await receiver.getAddress(), 400n)).wait();
+        await (await receiver.approveToken(await normalToken.getAddress(), await dividend.getAddress(), 400n)).wait();
+        await (await receiver.stakeNormal(await dividend.getAddress(), 400n)).wait();
+
+        await networkHelpers.time.increase(3601n);
+        await (await dividend.tryNewCycle()).wait();
+
+        await owner.sendTransaction({
+            to: await dividend.getAddress(),
+            value: 60n
+        });
+        await (await dividend.updateTokenBalance(ethers.ZeroAddress)).wait();
+
+        await networkHelpers.time.increase(3601n);
+        await (await dividend.tryNewCycle()).wait();
+
+        await (await receiver.setRejectReceive(true)).wait();
+
+        await expect(
+            receiver.withdrawDividends(await dividend.getAddress(), [1n], [ethers.ZeroAddress])
+        ).to.be.revertedWith("native transfer failed");
+
+        expect(await dividend.getDepositTokenBalance(ethers.ZeroAddress)).to.equal(60n);
+        expect(await receiver.receiveCount()).to.equal(0n);
+        expect(await receiver.totalReceived()).to.equal(0n);
+
+        await (await receiver.setRejectReceive(false)).wait();
+        await (await receiver.withdrawDividends(await dividend.getAddress(), [1n], [ethers.ZeroAddress])).wait();
+
+        expect(await receiver.receiveCount()).to.equal(1n);
+        expect(await receiver.totalReceived()).to.equal(60n);
+        expect(await dividend.getDepositTokenBalance(ethers.ZeroAddress)).to.equal(0n);
+    });
+
     it("rejects syncing directly transferred dao normal and dev tokens as rewards", async function () {
         const { normalToken, devToken, dividend } = await networkHelpers.loadFixture(deployDividendFixture);
 

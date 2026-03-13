@@ -7,10 +7,16 @@ import "../Interface.sol";
 contract NativeReceiverMock {
     uint256 public receiveCount;
     uint256 public totalReceived;
+    bool public rejectReceive;
 
     receive() external payable {
+        require(!rejectReceive, "receive rejected");
         receiveCount += 1;
         totalReceived += msg.value;
+    }
+
+    function setRejectReceive(bool shouldReject) external {
+        rejectReceive = shouldReject;
     }
 
     function approveToken(address token, address spender, uint256 amount) external {

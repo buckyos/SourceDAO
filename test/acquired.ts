@@ -550,6 +550,35 @@ describe("acquired", function () {
         expect((await acquired.getInvestmentInfo(1n)).end).to.equal(true);
     });
 
+    it("reverts native settlement atomically when the investor rejects the payout", async function () {
+        const { buyerOne, acquired } = await networkHelpers.loadFixture(deployAcquiredFixture);
+        const receiverDeployment = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+        await receiverDeployment.waitForDeployment();
+        const receiver = await ethers.getContractAt("NativeReceiverMock", await receiverDeployment.getAddress());
+
+        await (await receiver.startNativeInvestment(await acquired.getAddress(), {
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: ethers.ZeroAddress,
+            tokenAmount: 10n,
+            tokenRatio: { tokenAmount: 1, daoTokenAmount: 2 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        }, { value: 10n })).wait();
+
+        await (await receiver.setRejectReceive(true)).wait();
+
+        await expect(
+            receiver.endInvestment(await acquired.getAddress(), 1n)
+        ).to.be.revertedWith("native transfer failed");
+
+        expect((await acquired.getInvestmentInfo(1n)).end).to.equal(false);
+        expect(await ethers.provider.getBalance(await acquired.getAddress())).to.equal(10n);
+        expect(await receiver.receiveCount()).to.equal(0n);
+        expect(await receiver.totalReceived()).to.equal(0n);
+    });
+
     it("prevents ending the same investment twice", async function () {
         const { buyerOne, buyerTwo, normalToken, acquired, saleToken } = await networkHelpers.loadFixture(deployAcquiredFixture);
 

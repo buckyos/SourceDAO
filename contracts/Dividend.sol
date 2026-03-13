@@ -602,18 +602,17 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
         // Do the transfer for the rewards
         for (uint i = 0; i < realRewardLength; i++) {
             RewardInfo memory reward = rewards[i];
+            require(tokenBalances[reward.token] >= reward.amount, "Invalid balance state");
+
+            // Account for the payout before the external transfer; any send failure reverts the whole withdrawal.
+            tokenBalances[reward.token] -= reward.amount;
+
             // console.log("will withdraw transfer %s %s ===> %d", reward.token, msg.sender, reward.amount);
             if (reward.token == address(0)) {
                 _sendNative(msg.sender, reward.amount);
             } else {
                 IERC20(reward.token).safeTransfer(msg.sender, reward.amount);
             }
-
-            // Then update the token balance in the contract
-            // console.log("token balance reduced: %s %d ===> %d", reward.token, tokenBalances[reward.token], tokenBalances[reward.token] - reward.amount);
-            require(tokenBalances[reward.token] >= reward.amount, "Invalid balance state");
-           
-            tokenBalances[reward.token] -= reward.amount;
 
             emit Withdraw(msg.sender, reward.token, reward.amount);
         }
