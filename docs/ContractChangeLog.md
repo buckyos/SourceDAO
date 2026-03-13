@@ -1421,3 +1421,59 @@
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "acquired|dividend"'` 通过
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
 - 当前全量回归结果：`177 passing`
+
+---
+
+## 2026-03-13 Committee 待修风险表征记录
+
+### 合约
+
+- 合约：`SourceDaoCommittee`
+- 文件：[contracts/Committee.sol](contracts/Committee.sol)
+- 测试：[test/committee.ts](test/committee.ts)
+
+### 背景
+
+当前 changelog 已经覆盖了不少已经修复的资金流、状态机和原生币发送问题，但 `Committee` 仍然有几类更偏治理边界的风险没有正式落成测试：
+
+1. `SourceDaoCommittee` 的普通提案结算使用的是“当前委员会名单”，而不是“提案创建时快照”
+2. `SourceDaoCommittee` 的 full proposal 当前允许零余额 outsider 参与投票，并把这些地址计入必须 settle 的投票集合
+
+这些点现在还没有在正式实现里收口，因此本轮先补“表征测试”，把风险具象化、可复现化，再决定后续是直接修实现还是先调整治理语义。
+
+### 修改目的
+
+本次不是修复合约逻辑，而是完成两件事：
+
+1. 把当前已识别的治理风险写成可运行测试，避免后续只停留在口头 review
+2. 明确区分“已经被修复的回归”与“已经确认存在、但尚未处理的开放问题”
+
+### 具体补充
+
+#### 为 `SourceDaoCommittee` 增加两类治理风险表征测试
+
+在 [test/committee.ts](test/committee.ts) 中新增了两类用例：
+
+1. zero-balance outsider 当前可以参与 full proposal 投票，并且会被计入必须 settle 的投票集合
+2. 普通提案当前会受后续委员会改组影响，结算依赖的是最新委员会集合，而不是提案创建时快照
+
+这两类测试同样是“现状表征”，不是“修复后断言”。
+
+### 当前结论
+
+通过这轮补充，可以把开放问题明确分成三层：
+
+1. 已修复并已有回归保护的问题
+2. 已确认存在、但尚未修复的问题
+3. 已确认存在、且已经有表征测试可以稳定复现的问题
+
+`SourceDaoCommittee` 当前属于第二和第三层。后续如果要继续推进治理边界收口，建议优先考虑：
+
+1. `SourceDaoCommittee` 为普通提案引入委员会快照语义
+2. `SourceDaoCommittee` 为 full proposal 增加投票资格或最小权重约束
+
+### 验证结果
+
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "Committee"'` 通过
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
+- 当前全量回归结果：`183 passing`

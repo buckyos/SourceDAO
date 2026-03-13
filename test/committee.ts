@@ -585,4 +585,54 @@ describe("Committee", function () {
         expect(await committee.devRatio()).to.equal(150n);
         expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
     });
+
+    it("documents that full proposals currently record zero-balance outsider votes and require settling them", async function () {
+        const { committee, proposalCaller, members, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const proposalId = 1n;
+        const params = fullProposalParams("full-outsider-vote");
+
+        await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 40)).wait();
+        await (await committee.connect(outsider).support(proposalId, params)).wait();
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
+
+        await (await committee.endFullPropose(proposalId, [members[0].address])).wait();
+
+        const partialExtra = await committee.proposalExtraOf(proposalId);
+        expect(partialExtra.agree).to.equal(4_000n);
+        expect(partialExtra.settled).to.equal(1n);
+        expect((await committee.proposalOf(proposalId)).state).to.equal(1n);
+
+        await expect(committee.endFullPropose(proposalId, [outsider.address]))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        const finalExtra = await committee.proposalExtraOf(proposalId);
+        expect(finalExtra.agree).to.equal(4_000n);
+        expect(finalExtra.settled).to.equal(2n);
+        expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
+    });
+
+    it("documents that ordinary proposal settlement currently depends on the latest committee set", async function () {
+        const signers = await ethers.getSigners();
+        const { committee, members, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const devRatioProposalId = 1n;
+        const committeeReplaceProposalId = 2n;
+        const newRatio = 180n;
+        const candidate = signers[5];
+        const replacementMembers = [members[0].address, candidate.address, outsider.address];
+
+        await (await committee.connect(members[0]).prepareSetDevRatio(newRatio)).wait();
+        await (await committee.connect(members[0]).support(devRatioProposalId, setDevRatioParams(newRatio))).wait();
+        await (await committee.connect(members[1]).support(devRatioProposalId, setDevRatioParams(newRatio))).wait();
+
+        await (await committee.connect(members[0]).prepareSetCommittees(replacementMembers, false)).wait();
+        await (await committee.connect(members[0]).support(committeeReplaceProposalId, setCommitteesParams(replacementMembers))).wait();
+        await (await committee.connect(members[1]).support(committeeReplaceProposalId, setCommitteesParams(replacementMembers))).wait();
+        await (await committee.setCommittees(replacementMembers, committeeReplaceProposalId)).wait();
+
+        await expect(committee.setDevRatio(newRatio, devRatioProposalId)).to.be.revertedWith("proposal not accepted");
+        expect((await committee.proposalOf(devRatioProposalId)).state).to.equal(1n);
+    });
 });
