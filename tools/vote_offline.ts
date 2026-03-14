@@ -11,7 +11,7 @@ import {
     fetchProposalParams,
     getConfiguredVoterAddress,
     getDaoAddress,
-    getLoadedConfigPath,
+    getLoadedConfigPaths,
     getOfflineBroadcastOutputPathFromConfig,
     getOfflineInputPathFromConfig,
     getOfflineModeFromConfig,
@@ -189,13 +189,13 @@ async function prepareOfflineVote(): Promise<void> {
     const daoAddress = getDaoAddress();
     const proposalApiBase = getProposalApiBase();
     const rpcUrl = getRpcUrl(connection.networkConfig);
-    const loadedConfigPath = getLoadedConfigPath();
+    const loadedConfigPaths = getLoadedConfigPaths();
 
     console.log(`Using network ${connection.networkName}, endpoint: ${rpcUrl}`);
     console.log(`Using DAO address: ${daoAddress}`);
     console.log(`Using proposal API: ${proposalApiBase}`);
-    if (loadedConfigPath !== undefined) {
-        console.log(`Using config file: ${loadedConfigPath}`);
+    if (loadedConfigPaths.length > 0) {
+        console.log(`Using config files: ${loadedConfigPaths.join(", ")}`);
     }
 
     const dao = await hardhatEthers.getContractAt("SourceDao", daoAddress);

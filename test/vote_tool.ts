@@ -156,6 +156,46 @@ describe("vote tools", function () {
         expect(signedBundle.signedAt).to.be.a("string");
     });
 
+    it("merges shared profile config with local config overrides", async function () {
+        const dir = await mkdtemp(join(tmpdir(), "source-dao-vote-tool-"));
+        const profilePath = join(dir, "opmain.json");
+        const localPath = join(dir, "local.json");
+
+        await writeFile(
+            profilePath,
+            JSON.stringify(
+                {
+                    daoAddress: "0x0000000000000000000000000000000000000001",
+                    proposalApiBase: "https://dao.example.test/api"
+                },
+                null,
+                2
+            )
+        );
+        await writeFile(
+            localPath,
+            JSON.stringify(
+                {
+                    status: {
+                        output: "text"
+                    }
+                },
+                null,
+                2
+            )
+        );
+
+        const result = await runHardhatScript("tools/vote.ts", {
+            SOURCE_DAO_PROFILE_PATH: profilePath,
+            SOURCE_DAO_LOCAL_CONFIG: localPath
+        });
+
+        expect(result.code).to.not.equal(0);
+        expect(result.stdout).to.contain(`Using DAO address: 0x0000000000000000000000000000000000000001`);
+        expect(result.stdout).to.contain("Using proposal API: https://dao.example.test/api");
+        expect(result.stdout).to.contain(`Using config files: ${profilePath}, ${localPath}`);
+    });
+
     it("rejects offline signing when the private key does not match the configured voter", async function () {
         const dir = await mkdtemp(join(tmpdir(), "source-dao-vote-tool-"));
         const configPath = join(dir, "vote.config.json");

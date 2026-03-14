@@ -30,38 +30,43 @@ tools/vote_offline.ts
 - `sign`
 - `broadcast`
 
-## JSON 配置文件
+## 配置文件
 
-离线工具和在线投票工具共用同一套 JSON 配置读取逻辑。
+离线工具和在线投票工具共用同一套分层 JSON 配置逻辑。
 
-默认查找顺序：
+推荐结构：
 
-1. 仓库根目录 `vote.config.json`
-2. `tools/vote.config.json`
-
-也可以通过环境变量显式指定：
-
-```bash
-SOURCE_DAO_CONFIG=./tools/vote.config.json \
-npx hardhat run tools/vote_offline.ts --network opmain
-```
+1. `tools/config/profiles/<profile>.json`
+2. `tools/config/local.json`
 
 示例文件见：
 
-- [../tools/vote.config.example.json](../tools/vote.config.example.json)
+- [../tools/config/profiles/opmain.json](../tools/config/profiles/opmain.json)
+- [../tools/config/local.example.json](../tools/config/local.example.json)
 
-适合放进配置文件的字段：
+适合放进 `profile` 的字段：
 
 - `daoAddress`
 - `proposalApiBase`
+
+适合放进 `local` 的字段：
+
 - `voterAddress`
 - `offline.mode`
 - `offline.input`
 - `offline.output`
 - `offline.signedOutput`
 - `offline.broadcastOutput`
+- `status.output`
 
-如果这些 `offline.*` 路径字段使用相对路径，当前实现会按配置文件所在目录解析。
+可选环境变量：
+
+- `SOURCE_DAO_PROFILE`
+- `SOURCE_DAO_PROFILE_PATH`
+- `SOURCE_DAO_LOCAL_CONFIG`
+- `SOURCE_DAO_CONFIG`（旧单文件兼容）
+
+如果这些 `offline.*` 路径字段使用相对路径，当前实现会按对应配置文件所在目录解析。
 
 不建议放进配置文件的内容：
 

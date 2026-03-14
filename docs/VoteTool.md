@@ -81,46 +81,58 @@ SOURCE_DAO_API_BASE=https://dao.example.org/api \
 npx hardhat run tools/vote.ts --network opmain
 ```
 
-## JSON 配置文件
+## 配置文件
 
-当前工具还支持读取 JSON 配置文件。
+当前推荐使用两层 JSON 配置：
+
+1. `tools/config/profiles/<profile>.json`
+2. `tools/config/local.json`
+
+职责划分：
+
+- `profile`
+  - 放部署级、全工具通用的配置
+  - 例如 `daoAddress`、`proposalApiBase`
+
+- `local`
+  - 放操作者本地偏好
+  - 例如 `voterAddress`、`offline.*`、`status.output`
+
+示例文件：
+
+- [../tools/config/profiles/opmain.json](../tools/config/profiles/opmain.json)
+- [../tools/config/local.example.json](../tools/config/local.example.json)
 
 默认查找顺序：
 
-1. 仓库根目录 `vote.config.json`
-2. `tools/vote.config.json`
+1. `tools/config/profiles/opmain.json`
+2. `tools/config/local.json`
+3. 旧兼容配置：仓库根目录 `vote.config.json`
+4. 旧兼容配置：`tools/vote.config.json`
 
-也可以通过环境变量显式指定：
+可选环境变量：
 
-```bash
-SOURCE_DAO_CONFIG=./tools/vote.config.json \
-npx hardhat run tools/vote.ts --network opmain
-```
+- `SOURCE_DAO_PROFILE`
+  - 指定 profile 名称，例如 `opmain`
 
-推荐做法是：
+- `SOURCE_DAO_PROFILE_PATH`
+  - 显式指定 profile 配置文件路径
 
-1. 复制 [../tools/vote.config.example.json](../tools/vote.config.example.json) 为你自己的配置文件
-2. 填入常用的 `daoAddress`、`proposalApiBase`、`voterAddress`
-3. 运行时只在需要覆盖时再用环境变量
+- `SOURCE_DAO_LOCAL_CONFIG`
+  - 显式指定本地配置文件路径
 
-支持字段：
+- `SOURCE_DAO_CONFIG`
+  - 旧单文件配置兼容入口，优先级高于 profile/local
 
-- `daoAddress`
-- `proposalApiBase`
-- `voterAddress`
-- `offline.mode`
-- `offline.input`
-- `offline.output`
-- `offline.signedOutput`
-- `offline.broadcastOutput`
-
-如果配置文件里的 `offline.input/output` 使用相对路径，当前实现会按配置文件所在目录解析。
-
-优先级是：
+优先级：
 
 1. 环境变量
-2. JSON 配置文件
-3. 脚本内默认值
+2. `SOURCE_DAO_CONFIG` 指向的旧单文件配置
+3. `local` 配置
+4. `profile` 配置
+5. 代码默认值
+
+如果配置文件里的 `offline.*` 路径使用相对路径，当前实现会按该配置文件所在目录解析。
 
 当前第一版只支持 `JSON`，还没有接入 `TOML` 解析。
 

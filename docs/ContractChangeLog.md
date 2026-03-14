@@ -2394,6 +2394,51 @@
 这一版只支持 `JSON`，没有引入 `TOML` 解析依赖。  
 另外出于安全考虑，离线签名私钥仍建议只通过环境变量传入，不建议放进配置文件。
 
+## Tool 配置分层重组
+
+### 背景
+
+随着 `vote`、`vote_offline` 和状态工具逐步增加，原来的“单配置文件承载所有字段”开始变得不自然：
+
+1. `daoAddress`、`proposalApiBase` 这类是部署级常量
+2. `voterAddress`、`offline.*` 这类是操作者本地偏好
+3. 两类配置生命周期不同，混在一起不利于长期维护
+
+### 本次重组
+
+本次把工具配置整理成两层：
+
+1. `tools/config/profiles/<profile>.json`
+   - 放部署级、全工具共享的配置
+2. `tools/config/local.json`
+   - 放操作者本地配置
+
+同时：
+
+1. 新增示例文件 `tools/config/profiles/opmain.json`
+2. 新增示例文件 `tools/config/local.example.json`
+3. `tools/config/local.json` 加入 `.gitignore`
+4. 保留 `SOURCE_DAO_CONFIG` 与旧 `vote.config.json` / `tools/vote.config.json` 的兼容读取
+
+### 当前优先级
+
+配置优先级现在是：
+
+1. 环境变量
+2. `SOURCE_DAO_CONFIG` 指向的旧单文件配置
+3. `local` 配置
+4. `profile` 配置
+5. 代码默认值
+
+### 当前结论
+
+这次重组的重点是理顺配置归属，而不是打破现有使用方式：
+
+1. 新结构更适合后续新增工具
+2. 旧单文件配置仍然兼容
+3. profile/local 的职责边界更清晰
+4. 本地配置不容易被误提交
+
 ## Vote Tool 基础回归测试
 
 ### 背景
@@ -2421,3 +2466,53 @@
 2. 相对路径解析
 3. 离线签名地址匹配
 4. 广播前的签名交易目标校验
+
+## 只读状态工具第一版
+
+### 背景
+
+投票和离线签名工具已经逐步成型后，下一批最值得补的是只读状态工具：
+
+1. 它们不会发送交易，风险更低
+2. 能直接服务于提案核对和运维排查
+3. 也有助于后续再扩展 full proposal 结算辅助工具
+
+### 本次补充
+
+新增两类只读工具：
+
+1. `tools/dao_status.ts`
+   - 读取 `SourceDao` 基础状态
+   - 列出 7 个模块地址
+   - 检查模块是否已配置、是否有代码、是否被 DAO 识别
+   - 尝试读取模块 `version()`
+
+2. `tools/proposal_status.ts`
+   - 读取单个 proposal 的基础状态
+   - 区分 ordinary / full proposal
+   - 输出 support / reject 地址与数量
+   - 对 full proposal 输出 `threshold / agree / reject / settled / pending`
+
+同时新增：
+
+1. `tools/status_common.ts`
+2. `docs/StatusTools.md`
+3. `test/status_tool.ts`
+4. `test-hh3/status_tool.ts`
+
+### 当前边界
+
+这批工具是基于现有合约公开接口实现的，所以也保留了链上接口自身的边界：
+
+1. ordinary proposal 的 snapshot version 当前没有公开 getter
+2. full proposal 也没有公开 getter 可以直接列出哪些 voter 已 settle
+3. 因此当前工具可以给出 `pendingSettleCount`，但不能精确恢复全部未 settle 地址列表
+
+### 当前结论
+
+这是一批低风险但很实用的工具层补充：
+
+1. 先把最常见的系统状态和 proposal 状态可视化
+2. 保持默认只读，不发交易
+3. 通过测试固定基础行为
+4. 为后续更深入的 full proposal 诊断工具打基础

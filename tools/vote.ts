@@ -6,7 +6,7 @@ import {
     encodeProposalParams,
     fetchProposalParams,
     getDaoAddress,
-    getLoadedConfigPath,
+    getLoadedConfigPaths,
     getProposalApiBase,
     parseProposalId
 } from "./vote_common.js";
@@ -44,13 +44,13 @@ async function printFullProposalVotingPower(daoAddress: string, signerAddress: s
 async function runVoteTool(): Promise<void> {
     const daoAddress = getDaoAddress();
     const proposalApiBase = getProposalApiBase();
-    const loadedConfigPath = getLoadedConfigPath();
+    const loadedConfigPaths = getLoadedConfigPaths();
 
     console.log(`Using network ${connection.networkName}, endpoint: ${getRpcUrl()}`);
     console.log(`Using DAO address: ${daoAddress}`);
     console.log(`Using proposal API: ${proposalApiBase}`);
-    if (loadedConfigPath !== undefined) {
-        console.log(`Using config file: ${loadedConfigPath}`);
+    if (loadedConfigPaths.length > 0) {
+        console.log(`Using config files: ${loadedConfigPaths.join(", ")}`);
     }
 
     const signer = (await ethers.getSigners())[0];

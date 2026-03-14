@@ -20,8 +20,9 @@ This repository requires Node.js v22 or higher, with the latest LTS version reco
 4. 推荐执行`npx hardhat run tools/vote.ts --network opmain`
 5. 根目录的`vote.ts`仍保留兼容入口，但后续建议统一使用`tools/vote.ts`
 6. 如果需要把私钥移出联网机器，可使用`tools/vote_offline.ts`的`prepare / sign / broadcast`离线签名流程
-7. `vote.ts` / `vote_offline.ts` 支持从 `vote.config.json` 或 `tools/vote.config.json` 读取 JSON 配置，也可通过`SOURCE_DAO_CONFIG`显式指定配置文件
-8. 更完整的使用说明、支持范围、风险说明和故障排查见[docs/VoteTool.md](docs/VoteTool.md)和[docs/VoteOffline.md](docs/VoteOffline.md)
+7. tools 现在支持共享 profile 配置和本地 local 配置的分层读取；仍保留旧 `SOURCE_DAO_CONFIG` 单文件兼容模式
+8. 只读状态工具见`tools/dao_status.ts`和`tools/proposal_status.ts`
+9. 更完整的使用说明、支持范围、风险说明和故障排查见[docs/VoteTool.md](docs/VoteTool.md)、[docs/VoteOffline.md](docs/VoteOffline.md)和[docs/StatusTools.md](docs/StatusTools.md)
 
 ## How to Vote
 1. Clone this repository `https://github.com/buckyos/SourceDAO` to your local machine
@@ -40,5 +41,6 @@ This repository requires Node.js v22 or higher, with the latest LTS version reco
 4. Prefer running `npx hardhat run tools/vote.ts --network opmain`
 5. The root `vote.ts` remains as a compatibility entrypoint, but new usage should target `tools/vote.ts`
 6. If you want to keep the private key off the online machine, use the `prepare / sign / broadcast` flow in `tools/vote_offline.ts`
-7. `vote.ts` / `vote_offline.ts` can read shared JSON config from `vote.config.json`, `tools/vote.config.json`, or the `SOURCE_DAO_CONFIG` path
-8. See [docs/VoteTool.md](docs/VoteTool.md) and [docs/VoteOffline.md](docs/VoteOffline.md) for detailed usage, limitations, and troubleshooting
+7. tools now support layered shared profile config plus local operator config, while keeping legacy `SOURCE_DAO_CONFIG` single-file compatibility
+8. Read-only status helpers are available in `tools/dao_status.ts` and `tools/proposal_status.ts`
+9. See [docs/VoteTool.md](docs/VoteTool.md), [docs/VoteOffline.md](docs/VoteOffline.md), and [docs/StatusTools.md](docs/StatusTools.md) for detailed usage, limitations, and troubleshooting
