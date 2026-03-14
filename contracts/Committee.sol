@@ -164,11 +164,9 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         );
         require(proposal.expired < block.timestamp, "not yet settled");
 
-        ISourceDAODevToken devToken = getMainContractAddress().devToken();
-
-        ISourceDAONormalToken normalToken = getMainContractAddress().normalToken();
-
         if (extra.totalReleasedToken == 0) {
+            ISourceDAODevToken devToken = getMainContractAddress().devToken();
+            ISourceDAONormalToken normalToken = getMainContractAddress().normalToken();
             // 所有释放的token = normal总量+dev释放量
             extra.totalReleasedToken = (devToken.totalReleased() * devRatio / 100) + normalToken.totalSupply();
         }
@@ -179,10 +177,7 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         for (uint i = 0; i < voters.length; i++) {
             int vote = proposalVotes[proposalId][voters[i]];
             if (vote == 1 || vote == -1) {
-                // 锁定的normal token不参与投票
-                uint balance = normalToken.balanceOf(voters[i]);
-                uint devBalance = devToken.balanceOf(voters[i]);
-                uint votes = balance + (devBalance * devRatio / 100);
+                uint votes = _fullProposalVotingPower(voters[i]);
                 if (vote == 1) {
                     agree += votes;
                 } else if (vote == -1) {
@@ -240,6 +235,14 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         }
     }
 
+    /// @dev Computes the current token-weighted voting power used by full proposals.
+    function _fullProposalVotingPower(address voter) internal view returns (uint) {
+        ISourceDAODevToken devToken = getMainContractAddress().devToken();
+        ISourceDAONormalToken normalToken = getMainContractAddress().normalToken();
+
+        return normalToken.balanceOf(voter) + (devToken.balanceOf(voter) * devRatio / 100);
+    }
+
     /// @dev Ordinary proposals have no `ProposalExtra.from` marker; full proposals do.
     function _isOrdinaryProposal(uint proposalId) internal view returns (bool) {
         return proposalExtras[proposalId].from == address(0);
@@ -288,6 +291,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         if (_isOrdinaryProposal(proposalId)) {
             uint64 version = _ensureProposalCommitteeVersion(proposalId);
             require(committeeMemberByVersion[version][msg.sender], "only committee can vote");
+        } else {
+            require(_fullProposalVotingPower(msg.sender) > 0, "only token holders can vote");
         }
 
         proposal.support.push(msg.sender);
@@ -314,6 +319,8 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         if (_isOrdinaryProposal(proposalId)) {
             uint64 version = _ensureProposalCommitteeVersion(proposalId);
             require(committeeMemberByVersion[version][msg.sender], "only committee can vote");
+        } else {
+            require(_fullProposalVotingPower(msg.sender) > 0, "only token holders can vote");
         }
         
         proposal.reject.push(msg.sender);

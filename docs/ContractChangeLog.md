@@ -1941,6 +1941,186 @@
 
 ---
 
+## 2026-03-14 finalized 系统 full proposal 综合链路补充记录
+
+### 范围
+
+这一轮继续在 finalized 系统夹具上补 `Committee` 的 full proposal 综合用例，重点不再是 isolated governance，而是“委员会换届后真实业务是否还能继续”。
+
+涉及测试文件：
+
+1. [test/system_integration.ts](test/system_integration.ts)
+
+### 背景
+
+前面已经覆盖了：
+
+1. finalized `Dao` 下的 `Project -> Acquired` smoke
+2. finalized `Dao` 下的完整奖励链路
+3. `Committee` 自身的 full proposal 换届语义
+
+但还缺两条真正系统级的 full proposal 回归：
+
+1. finalized 系统里通过 full proposal 换届之后，新委员会是否真能继续完成后续项目治理
+2. 真实 final release 之后，token holder 发起的 full proposal 是否会在结算时自动切到 `finalRatio`
+
+### 本次补充
+
+#### 1. finalized 系统中的 full proposal 换届后继续项目治理
+
+新增一条系统级回归：
+
+1. 在已 finalize 的真实系统中，用 full proposal 替换委员会
+2. 替换完成后，马上发起一条真实项目创建/验收链路
+3. 由新委员会成员继续为该项目 proposal 投票
+4. 被移出的旧委员对新 proposal 投票时会被拒绝
+5. 项目最终仍能正常发布完成
+
+这条测试把之前分开的两类语义串在了一起：
+
+1. full proposal 换届不是“只改 members 数组”
+2. 新委员会确实能无缝接手 `ProjectManagement` 的普通 proposal 生命周期
+
+#### 2. final release 后由 token holder 发起 full proposal 并按 `finalRatio` 结算
+
+新增一条系统级回归：
+
+1. 先通过真实 `ProjectManagement` 发布 `1.0.0` 和最终版本 `2.0.0`
+2. 在 final release 之后，由非委员会 token holder 发起 full proposal 换届
+3. 用 token holder / manager 的真实余额参与投票和结算
+4. 在 `endFullPropose(...)` 时验证 `Committee` 自动把 `devRatio` 从 200 固定到 `finalRatio = 150`
+5. 结算后继续成功执行委员会替换
+
+这条测试的意义是：
+
+1. 证明 full proposal 在真实系统里仍然保持“token holder 可发起”的当前语义
+2. 证明 `finalRatio` 切换不只是 isolated mock 行为，而是和真实 `ProjectManagement` 发布事件联通
+
+### 当前结论
+
+补完这两条后，finalized 系统里的 `Committee` 治理覆盖从“普通 proposal 正常”推进到了“full proposal 正常”：
+
+1. full proposal 换届已经有真实系统里的后续业务回归
+2. final release 对 full proposal 计票权重和 `devRatio` 锁定的影响，也已经进入综合测试
+
+### 验证结果
+
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && ./node_modules/.bin/hardhat test --grep "system integration"'` 通过
+- 结果：`4 passing`
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
+- 当前全量回归结果：`201 passing, 2 pending`
+
+---
+
+## 2026-03-14 full proposal voter eligibility 收口记录
+
+### 范围
+
+这一轮开始真正修改正式合约逻辑，目标是把 `Committee` 合约里 `full proposal` 的 zero-balance outsider 投票入口收紧。
+
+涉及文件：
+
+1. [contracts/Committee.sol](contracts/Committee.sol)
+2. [test/committee.ts](test/committee.ts)
+3. [test/system_integration.ts](test/system_integration.ts)
+
+### 背景
+
+此前测试已经明确表征出一个治理风险：
+
+1. `full proposal` 的 `support/reject` 对任意地址开放
+2. zero-balance outsider 虽然票重为 0，但仍然会被记录进 `support/reject` 集合
+3. `endFullPropose(...)` 又要求把所有已记录 voter 都显式 settle 完，提案才能进入最终状态
+
+这意味着 outsider 虽然改不了票重结果，却可以抬高 settle 成本，形成纯治理层的 griefing 面。
+
+### 本次修改
+
+#### 1. 为 full proposal 投票入口增加“正票重”校验
+
+在 [contracts/Committee.sol](contracts/Committee.sol) 中新增了内部 helper，用于统一计算当前 full proposal 的票重：
+
+1. `normalToken.balanceOf(voter)`
+2. `devToken.balanceOf(voter) * devRatio / 100`
+
+然后在 `support(...)` / `reject(...)` 的 full proposal 分支中要求：
+
+1. 当前票重必须大于 0
+
+否则直接 revert：
+
+1. `only token holders can vote`
+
+这样 zero-balance outsider 将不再能进入 full proposal 的已投票集合。
+
+#### 2. 统一 full proposal 的票重读取路径
+
+本次顺手把 `endFullPropose(...)` 里的票重读取也收口到了同一个 helper。
+
+目的不是改变现有结算模型，而是避免：
+
+1. 投票资格判断一套逻辑
+2. 结算时票重计算又是另一套逻辑
+
+这样后续如果还要继续调整 full proposal 规则，至少票重来源只剩一个实现点。
+
+### 本次没有修改的范围
+
+为了控制变更面，这一轮没有动以下语义：
+
+1. `prepareSetCommittees(..., true)` 仍然不限制 proposer 必须持有 token
+2. `full proposal` 仍然按结算时余额计票，不是按投票时快照计票
+3. `full proposal` 的 threshold / turnout 模型不变
+
+也就是说，这次是先把“零票重 outsider 进入投票集合”这个最直接的问题收掉，而不是一次重写 full proposal 机制。
+
+### 测试更新
+
+这轮测试变化分两类：
+
+#### 1. 原先的风险表征测试改成 hardened 行为断言
+
+原本那两条“outsider support/reject 会进入 settle 集合”的表征测试，已经改成：
+
+1. zero-balance outsider 在 `support(...)` 时应直接 revert
+2. zero-balance outsider 在 `reject(...)` 时也应直接 revert
+
+#### 2. 启用之前保留的 pending 测试
+
+此前专门为未来 hardening 留了两条 `pending`：
+
+1. outsider 投票应被拒绝
+2. outsider 记录不应再拖住 proposal settle
+
+这两条现在已经正式启用，并全部通过。
+
+另外，`system integration` 里的 finalized 系统 full proposal 综合用例也一并保留通过，说明这次入口收口没有打坏：
+
+1. finalized 系统中的 full proposal 换届链路
+2. final release 后按 `finalRatio` 结算的 full proposal 链路
+
+### 当前结论
+
+这次修改之后：
+
+1. zero-balance outsider 不再能给 full proposal 记票
+2. full proposal 也不再需要额外 settle 这些零票重 outsider 记录
+3. 之前保留的 future hardening 测试已经转正
+
+但更深一层的 full proposal 设计问题仍然还在：
+
+1. proposer 资格仍未收口
+2. 票重仍是结算时余额，不是投票时快照
+
+### 验证结果
+
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && ./node_modules/.bin/hardhat test test-hh3/committee.ts test-hh3/system_integration.ts test-hh3/upgrade.ts'` 通过
+- 结果：`36 passing`
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
+- 当前全量回归结果：`203 passing`
+
+---
+
 ## 2026-03-14 升级联动 / full proposal outsider 风险测试补充记录
 
 ### 范围

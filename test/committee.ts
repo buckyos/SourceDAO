@@ -652,31 +652,26 @@ describe("Committee", function () {
         expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
     });
 
-    it("documents that full proposals currently record zero-balance outsider votes and require settling them", async function () {
+    it("requires positive voting power before a voter can support a full proposal", async function () {
         const { committee, proposalCaller, members, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
         const proposalId = 1n;
         const params = fullProposalParams("full-outsider-vote");
 
         await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 40)).wait();
-        await (await committee.connect(outsider).support(proposalId, params)).wait();
+        await expect(committee.connect(outsider).support(proposalId, params)).to.be.revertedWith(
+            "only token holders can vote"
+        );
         await (await committee.connect(members[0]).support(proposalId, params)).wait();
 
         await networkHelpers.time.increase(SEVEN_DAYS + 1);
 
-        await (await committee.endFullPropose(proposalId, [members[0].address])).wait();
-
-        const partialExtra = await committee.proposalExtraOf(proposalId);
-        expect(partialExtra.agree).to.equal(4_000n);
-        expect(partialExtra.settled).to.equal(1n);
-        expect((await committee.proposalOf(proposalId)).state).to.equal(1n);
-
-        await expect(committee.endFullPropose(proposalId, [outsider.address]))
+        await expect(committee.endFullPropose(proposalId, [members[0].address]))
             .to.emit(committee, "ProposalAccept")
             .withArgs(proposalId);
 
         const finalExtra = await committee.proposalExtraOf(proposalId);
         expect(finalExtra.agree).to.equal(4_000n);
-        expect(finalExtra.settled).to.equal(2n);
+        expect(finalExtra.settled).to.equal(1n);
         expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
     });
 
@@ -716,53 +711,54 @@ describe("Committee", function () {
             .withArgs(nextProposalId, false);
     });
 
-    it("documents that zero-balance outsider reject votes also block full proposal settlement until explicitly settled", async function () {
+    it("requires positive voting power before a voter can reject a full proposal", async function () {
         const { committee, proposalCaller, members, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
         const proposalId = 1n;
         const params = fullProposalParams("full-outsider-reject");
 
         await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 40)).wait();
-        await (await committee.connect(outsider).reject(proposalId, params)).wait();
+        await expect(committee.connect(outsider).reject(proposalId, params)).to.be.revertedWith(
+            "only token holders can vote"
+        );
         await (await committee.connect(members[0]).reject(proposalId, params)).wait();
 
         await networkHelpers.time.increase(SEVEN_DAYS + 1);
 
-        await (await committee.endFullPropose(proposalId, [members[0].address])).wait();
-
-        const partialExtra = await committee.proposalExtraOf(proposalId);
-        expect(partialExtra.reject).to.equal(4_000n);
-        expect(partialExtra.settled).to.equal(1n);
-        expect((await committee.proposalOf(proposalId)).state).to.equal(1n);
-
-        await expect(committee.endFullPropose(proposalId, [outsider.address]))
+        await expect(committee.endFullPropose(proposalId, [members[0].address]))
             .to.emit(committee, "ProposalReject")
             .withArgs(proposalId);
 
         const finalExtra = await committee.proposalExtraOf(proposalId);
         expect(finalExtra.reject).to.equal(4_000n);
-        expect(finalExtra.settled).to.equal(2n);
+        expect(finalExtra.settled).to.equal(1n);
         expect((await committee.proposalOf(proposalId)).state).to.equal(3n);
     });
 
-    it.skip("should reject zero-balance outsider votes on full proposals once voter eligibility is hardened", async function () {
+    it("rejects zero-balance outsider votes on full proposals once voter eligibility is hardened", async function () {
         const { committee, proposalCaller, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
         const proposalId = 1n;
         const params = fullProposalParams("full-outsider-should-fail");
 
         await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 40)).wait();
 
-        await expect(committee.connect(outsider).support(proposalId, params)).to.be.reverted;
-        await expect(committee.connect(outsider).reject(proposalId, params)).to.be.reverted;
+        await expect(committee.connect(outsider).support(proposalId, params)).to.be.revertedWith(
+            "only token holders can vote"
+        );
+        await expect(committee.connect(outsider).reject(proposalId, params)).to.be.revertedWith(
+            "only token holders can vote"
+        );
     });
 
-    it.skip("should not require settling zero-balance outsider records once full proposal voter eligibility is hardened", async function () {
+    it("does not require settling zero-balance outsider records once full proposal voter eligibility is hardened", async function () {
         const { committee, proposalCaller, members, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
         const proposalId = 1n;
         const params = fullProposalParams("full-outsider-ignore");
 
         await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 40)).wait();
 
-        await expect(committee.connect(outsider).support(proposalId, params)).to.be.reverted;
+        await expect(committee.connect(outsider).support(proposalId, params)).to.be.revertedWith(
+            "only token holders can vote"
+        );
         await (await committee.connect(members[0]).support(proposalId, params)).wait();
 
         await networkHelpers.time.increase(SEVEN_DAYS + 1);

@@ -33,6 +33,13 @@ function projectParams(
     ];
 }
 
+function setCommitteesParams(members: string[]) {
+    return [
+        ...members.map((member) => ethers.zeroPadValue(member, 32)),
+        ethers.encodeBytes32String("setCommittees")
+    ];
+}
+
 async function deployFinalizedSystemFixture() {
     const signers = await ethers.getSigners();
     const [manager, memberTwo, memberThree, contributor, buyer] = signers;
@@ -255,5 +262,121 @@ describe("system integration", function () {
         await (await fixture.lockup.connect(fixture.contributor).claimTokens(33n)).wait();
         expect(await fixture.normalToken.balanceOf(fixture.contributor.address)).to.equal(contributorNormalBefore + 33n);
         expect(await fixture.lockup.totalClaimed(fixture.contributor.address)).to.equal(33n);
+    });
+
+    it("replaces the committee through a full proposal on a finalized system and lets the new committee finish project governance", async function () {
+        const signers = await ethers.getSigners();
+        const fixture = await networkHelpers.loadFixture(deployFinalizedSystemFixture);
+        const candidate = signers[5];
+        const candidateTwo = signers[6];
+        const replacementMembers = [fixture.manager.address, candidate.address, candidateTwo.address];
+        const proposalId = 1n;
+        const proposalParams = setCommitteesParams(replacementMembers);
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        await expect(fixture.committee.connect(fixture.manager).prepareSetCommittees(replacementMembers, true))
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(proposalId, true);
+
+        await (await fixture.committee.connect(fixture.manager).support(proposalId, proposalParams)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1n);
+
+        await expect(fixture.committee.endFullPropose(proposalId, [fixture.manager.address]))
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        await expect(fixture.committee.setCommittees(replacementMembers, proposalId))
+            .to.emit(fixture.committee, "MemberChanged");
+
+        expect(await fixture.committee.members()).to.deep.equal(replacementMembers);
+
+        const startDate = BigInt(latestBlock.timestamp) + SEVEN_DAYS + 2n;
+        const endDate = startDate + THIRTY_DAYS;
+
+        await (await fixture.project.createProject(
+            1_000n,
+            PROJECT_NAME,
+            VERSION_ONE,
+            startDate,
+            endDate,
+            [],
+            []
+        )).wait();
+
+        const createProposalId = (await fixture.project.projectOf(1n)).proposalId;
+        const createParams = projectParams(1n, VERSION_ONE, startDate, endDate, "createProject");
+
+        await (await fixture.committee.connect(fixture.manager).support(createProposalId, createParams)).wait();
+        await expect(
+            fixture.committee.connect(fixture.memberTwo).support(createProposalId, createParams)
+        ).to.be.revertedWith("only committee can vote");
+        await (await fixture.committee.connect(candidate).support(createProposalId, createParams)).wait();
+
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        await (await fixture.project.acceptProject(1n, 4, [
+            { contributor: fixture.contributor.address, value: 100 }
+        ])).wait();
+
+        const acceptProposalId = (await fixture.project.projectOf(1n)).proposalId;
+        const acceptParams = projectParams(1n, VERSION_ONE, startDate, endDate, "acceptProject");
+
+        await (await fixture.committee.connect(fixture.manager).support(acceptProposalId, acceptParams)).wait();
+        await expect(
+            fixture.committee.connect(fixture.memberTwo).support(acceptProposalId, acceptParams)
+        ).to.be.revertedWith("only committee can vote");
+        await (await fixture.committee.connect(candidate).support(acceptProposalId, acceptParams)).wait();
+
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        expect((await fixture.project.projectOf(1n)).state).to.equal(3n);
+        expect((await fixture.committee.proposalOf(createProposalId)).state).to.equal(4n);
+        expect((await fixture.committee.proposalOf(acceptProposalId)).state).to.equal(4n);
+    });
+
+    it("lets a token holder initiate committee replacement after the final release and settles it with finalRatio weights", async function () {
+        const signers = await ethers.getSigners();
+        const fixture = await networkHelpers.loadFixture(deployFinalizedSystemFixture);
+        const candidate = signers[5];
+        const candidateTwo = signers[6];
+        const replacementMembers = [fixture.manager.address, candidate.address, candidateTwo.address];
+        const firstProject = await finishProject(fixture, VERSION_ONE, 1_000n, [
+            { contributor: fixture.contributor.address, value: 100 }
+        ]);
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1n);
+
+        const secondProject = await finishProject(fixture, VERSION_TWO, 500n, [
+            { contributor: fixture.contributor.address, value: 100 }
+        ]);
+        const proposalId = secondProject.acceptProposalId + 1n;
+        const proposalParams = setCommitteesParams(replacementMembers);
+
+        expect(firstProject.releaseTime).to.be.greaterThan(0n);
+        expect(secondProject.releaseTime).to.be.greaterThan(0n);
+        expect(await fixture.committee.devRatio()).to.equal(200n);
+
+        await expect(fixture.committee.connect(fixture.contributor).prepareSetCommittees(replacementMembers, true))
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(proposalId, true);
+
+        await (await fixture.committee.connect(fixture.manager).support(proposalId, proposalParams)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1n);
+
+        await expect(fixture.committee.endFullPropose(proposalId, [fixture.manager.address]))
+            .to.emit(fixture.committee, "DevRatioChanged")
+            .withArgs(200n, 150n)
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        expect(await fixture.committee.devRatio()).to.equal(150n);
+
+        await (await fixture.committee.setCommittees(replacementMembers, proposalId)).wait();
+        expect(await fixture.committee.members()).to.deep.equal(replacementMembers);
     });
 });
