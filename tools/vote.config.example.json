@@ -1,0 +1,12 @@
+{
+  "daoAddress": "0x2fc3186176B80EA829A7952b874F36f7cb8bd184",
+  "proposalApiBase": "https://dao.buckyos.org/api",
+  "voterAddress": "0xYourVoterAddress",
+  "offline": {
+    "mode": "prepare",
+    "input": "vote-offline-123-support-unsigned.json",
+    "output": "vote-offline-123-support-unsigned.json",
+    "signedOutput": "vote-offline-123-support-signed.json",
+    "broadcastOutput": "vote-offline-123-support-signed.json"
+  }
+}

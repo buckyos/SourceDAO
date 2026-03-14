@@ -2,74 +2,17 @@ import { exit } from "node:process";
 import { createInterface } from "node:readline/promises";
 
 import hre from "hardhat";
-
-const DEFAULT_DAO_ADDRESS = "0x2fc3186176B80EA829A7952b874F36f7cb8bd184";
-const DEFAULT_PROPOSAL_API_BASE = "https://dao.buckyos.org/api";
-
-type SupportedProposalType =
-    | "createProject"
-    | "acceptProject"
-    | "upgradeContract"
-    | "setCommittees";
-
-interface ProposalApiSuccess {
-    code: 0;
-    data: {
-        params: unknown[];
-    };
-    message?: string;
-}
-
-interface ProposalApiFailure {
-    code: number;
-    message?: string;
-    data?: {
-        params?: unknown[];
-    };
-}
-
-type ProposalApiResponse = ProposalApiSuccess | ProposalApiFailure;
+import {
+    encodeProposalParams,
+    fetchProposalParams,
+    getDaoAddress,
+    getLoadedConfigPath,
+    getProposalApiBase,
+    parseProposalId
+} from "./vote_common.js";
 
 const connection = await hre.network.connect();
 const { ethers } = connection;
-
-function convertVersion(version: string): number {
-    const segments = version.split(".");
-    if (segments.length < 3) {
-        throw new Error(`Invalid version format: ${version}. Expected format is 'major.minor.patch'.`);
-    }
-
-    const major = parseInt(segments[0], 10);
-    const minor = parseInt(segments[1], 10);
-    const patch = parseInt(segments[2], 10);
-
-    return major * 10000000000 + minor * 100000 + patch;
-}
-
-function zeroPadUint256(value: number | string | bigint): string {
-    const hex = ethers.toBeHex(ethers.toBigInt(value));
-    return ethers.zeroPadValue(hex, 32);
-}
-
-function requireString(value: unknown, label: string): string {
-    if (typeof value !== "string") {
-        throw new Error(`Invalid ${label}: expected string, got ${typeof value}.`);
-    }
-
-    return value;
-}
-
-function requireAddress(value: unknown, label: string): string {
-    return ethers.getAddress(requireString(value, label));
-}
-
-function getDaoAddress(): string {
-    return ethers.getAddress(process.env.SOURCE_DAO_ADDRESS ?? DEFAULT_DAO_ADDRESS);
-}
-
-function getProposalApiBase(): string {
-    return process.env.SOURCE_DAO_API_BASE ?? DEFAULT_PROPOSAL_API_BASE;
-}
 
 function getRpcUrl(): string {
     const maybeUrl = (connection.networkConfig as { url?: unknown }).url;
@@ -78,83 +21,6 @@ function getRpcUrl(): string {
     }
 
     return "N/A";
-}
-
-function getProposalType(params: unknown[]): SupportedProposalType {
-    const proposalType = requireString(params[params.length - 1], "proposal type");
-    switch (proposalType) {
-        case "createProject":
-        case "acceptProject":
-        case "upgradeContract":
-        case "setCommittees":
-            return proposalType;
-        default:
-            throw new Error(`Unsupported proposal type: ${proposalType}.`);
-    }
-}
-
-function encodeProposalParams(params: unknown[]): string[] {
-    const proposalType = getProposalType(params);
-    switch (proposalType) {
-        case "createProject":
-        case "acceptProject":
-            if (params.length !== 7) {
-                throw new Error(`Invalid ${proposalType} params length: expected 7, got ${params.length}.`);
-            }
-
-            return [
-                zeroPadUint256(requireString(params[0], "project id")),
-                ethers.encodeBytes32String(requireString(params[1], "project name")),
-                zeroPadUint256(convertVersion(requireString(params[2], "version"))),
-                zeroPadUint256(requireString(params[3], "start date")),
-                zeroPadUint256(requireString(params[4], "end date")),
-                ethers.encodeBytes32String(requireString(params[5], "action")),
-            ];
-        case "upgradeContract":
-            if (params.length !== 3) {
-                throw new Error(`Invalid upgradeContract params length: expected 3, got ${params.length}.`);
-            }
-
-            return [
-                ethers.zeroPadValue(requireAddress(params[0], "old contract address"), 32),
-                ethers.zeroPadValue(requireAddress(params[1], "new contract address"), 32),
-                ethers.encodeBytes32String(proposalType),
-            ];
-        case "setCommittees":
-            if (params.length < 2) {
-                throw new Error("Invalid setCommittees params: expected at least one committee address.");
-            }
-
-            return params
-                .slice(0, -1)
-                .map((param, index) => ethers.zeroPadValue(requireAddress(param, `committee address ${index}`), 32))
-                .concat(ethers.encodeBytes32String(proposalType));
-    }
-}
-
-function parseProposalId(value: string): number {
-    const proposalId = parseInt(value, 10);
-    if (Number.isNaN(proposalId) || proposalId <= 0) {
-        throw new Error("Invalid proposal id. Please input a valid number greater than 0.");
-    }
-
-    return proposalId;
-}
-
-async function fetchProposalParams(apiBase: string, proposalId: number): Promise<unknown[]> {
-    const response = await fetch(`${apiBase}/proposal/${proposalId}`);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch proposal ${proposalId}: HTTP ${response.status}.`);
-    }
-
-    const proposalResult = (await response.json()) as ProposalApiResponse;
-    if (proposalResult.code !== 0) {
-        throw new Error(
-            `Failed to get proposal ${proposalId} parameters: err code ${proposalResult.code}, ${proposalResult.message ?? "unknown error"}.`
-        );
-    }
-
-    return proposalResult.data.params;
 }
 
 async function printFullProposalVotingPower(daoAddress: string, signerAddress: string): Promise<void> {
@@ -178,10 +44,14 @@ async function printFullProposalVotingPower(daoAddress: string, signerAddress: s
 async function runVoteTool(): Promise<void> {
     const daoAddress = getDaoAddress();
     const proposalApiBase = getProposalApiBase();
+    const loadedConfigPath = getLoadedConfigPath();
 
     console.log(`Using network ${connection.networkName}, endpoint: ${getRpcUrl()}`);
     console.log(`Using DAO address: ${daoAddress}`);
     console.log(`Using proposal API: ${proposalApiBase}`);
+    if (loadedConfigPath !== undefined) {
+        console.log(`Using config file: ${loadedConfigPath}`);
+    }
 
     const signer = (await ethers.getSigners())[0];
     if (!signer) {

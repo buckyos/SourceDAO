@@ -10,6 +10,7 @@
 - 默认服务于当前 `opmain` 的 `SourceDAO`
 - 依赖后台接口拉取 proposal 参数
 - 目前只覆盖少数 proposal 类型
+- 已提供一版不改合约的离线签名辅助流程
 
 它不是一个通用治理 CLI，也不是一个离线参数构造器。
 
@@ -28,6 +29,16 @@ npx hardhat run vote.ts --network opmain
 ```
 
 根目录的 `vote.ts` 只是一个兼容转发入口，后续应优先使用 `tools/vote.ts`。
+
+离线签名入口：
+
+```bash
+npx hardhat run tools/vote_offline.ts --network opmain
+```
+
+离线签名流程说明见：
+
+- [VoteOffline.md](VoteOffline.md)
 
 ## 前置条件
 
@@ -70,6 +81,49 @@ SOURCE_DAO_API_BASE=https://dao.example.org/api \
 npx hardhat run tools/vote.ts --network opmain
 ```
 
+## JSON 配置文件
+
+当前工具还支持读取 JSON 配置文件。
+
+默认查找顺序：
+
+1. 仓库根目录 `vote.config.json`
+2. `tools/vote.config.json`
+
+也可以通过环境变量显式指定：
+
+```bash
+SOURCE_DAO_CONFIG=./tools/vote.config.json \
+npx hardhat run tools/vote.ts --network opmain
+```
+
+推荐做法是：
+
+1. 复制 [../tools/vote.config.example.json](../tools/vote.config.example.json) 为你自己的配置文件
+2. 填入常用的 `daoAddress`、`proposalApiBase`、`voterAddress`
+3. 运行时只在需要覆盖时再用环境变量
+
+支持字段：
+
+- `daoAddress`
+- `proposalApiBase`
+- `voterAddress`
+- `offline.mode`
+- `offline.input`
+- `offline.output`
+- `offline.signedOutput`
+- `offline.broadcastOutput`
+
+如果配置文件里的 `offline.input/output` 使用相对路径，当前实现会按配置文件所在目录解析。
+
+优先级是：
+
+1. 环境变量
+2. JSON 配置文件
+3. 脚本内默认值
+
+当前第一版只支持 `JSON`，还没有接入 `TOML` 解析。
+
 ## 使用流程
 
 1. 运行脚本
@@ -81,6 +135,20 @@ npx hardhat run tools/vote.ts --network opmain
 7. 检查后台返回的参数是否与预期一致
 8. 输入 `y` 确认，发送链上交易
 9. 等待交易确认
+
+## 离线签名
+
+当前仓库已经提供一个最小版离线签名流程：
+
+1. 在线机器 `prepare`
+2. 离线机器 `sign`
+3. 在线机器 `broadcast`
+
+这个版本不修改合约，只是把真实链上交易拆成准备、签名、广播三步。
+
+详细说明见：
+
+- [VoteOffline.md](VoteOffline.md)
 
 ## 当前支持的 proposal 类型
 
