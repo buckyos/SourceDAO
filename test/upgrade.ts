@@ -4,6 +4,8 @@ import { expect } from "chai";
 import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
 
 const { ethers, networkHelpers } = await hre.network.connect();
+const SEVEN_DAYS = 7 * 24 * 60 * 60;
+const MAIN_PROJECT_NAME = ethers.encodeBytes32String("main");
 
 function upgradeParams(proxyAddress: string, implementationAddress: string) {
     return [
@@ -43,6 +45,61 @@ async function deployUpgradeFixture() {
         outsider: signers[4],
         nextImplementationAddress: await nextImplementation.getAddress(),
         nextDaoImplementationAddress: await nextDaoImplementation.getAddress()
+    };
+}
+
+async function deployLegacyCommitteeUpgradeFixture() {
+    const signers = await ethers.getSigners();
+    const members = signers.slice(0, 3);
+
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommitteeLegacyMock", [
+        members.map((signer: { address: string }) => signer.address),
+        1,
+        200,
+        MAIN_PROJECT_NAME,
+        1,
+        150,
+        daoAddress
+    ]);
+
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+
+    const project: any = await (await ethers.getContractFactory("ProjectVersionMock")).deploy();
+    await project.waitForDeployment();
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+
+    const proposalCaller: any = await (await ethers.getContractFactory("CommitteeProposalCallerMock")).deploy();
+    await proposalCaller.waitForDeployment();
+    await (await dao.setAcquiredAddress(await proposalCaller.getAddress())).wait();
+
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        10_000,
+        members.map((member: { address: string }) => member.address),
+        [2_000, 1_000, 1_000],
+        daoAddress
+    ]);
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+
+    const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["BDT", "BDT", daoAddress]);
+    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
+
+    const nextImplementation = await (await ethers.getContractFactory("SourceDaoCommitteeV2Mock")).deploy();
+    await nextImplementation.waitForDeployment();
+
+    return {
+        committee,
+        dao,
+        devToken,
+        normalToken,
+        project,
+        proposalCaller,
+        members,
+        outsider: signers[4],
+        nextImplementationAddress: await nextImplementation.getAddress()
     };
 }
 
@@ -180,5 +237,90 @@ describe("upgrade", function () {
 
         const upgradedDao = await ethers.getContractAt("SourceDaoV2Mock", daoAddress);
         expect(await upgradedDao.version()).to.equal("2.1.0");
+    });
+
+    it("preserves legacy committee storage across upgrade to the snapshot implementation", async function () {
+        const {
+            committee,
+            proposalCaller,
+            members,
+            outsider,
+            nextImplementationAddress
+        } = await networkHelpers.loadFixture(deployLegacyCommitteeUpgradeFixture);
+        const committeeAddress = await committee.getAddress();
+        const ordinaryProposalId = 1n;
+        const fullProposalId = 2n;
+        const upgradeProposalId = 3n;
+        const newRatio = 180n;
+        const ordinaryParams = [
+            ethers.zeroPadValue(ethers.toBeHex(newRatio), 32),
+            ethers.encodeBytes32String("setDevRatio")
+        ];
+        const fullParams = [ethers.encodeBytes32String("legacy-full-storage")];
+        const params = upgradeParams(committeeAddress, nextImplementationAddress);
+
+        await (await committee.connect(members[0]).prepareSetDevRatio(newRatio)).wait();
+        await (await committee.connect(members[0]).support(ordinaryProposalId, ordinaryParams)).wait();
+
+        await (await proposalCaller.fullPropose(committeeAddress, SEVEN_DAYS, fullParams, 40)).wait();
+        await (await committee.connect(members[0]).support(fullProposalId, fullParams)).wait();
+        await (await committee.connect(members[1]).reject(fullProposalId, fullParams)).wait();
+
+        await (await committee.connect(members[0]).prepareContractUpgrade(committeeAddress, nextImplementationAddress)).wait();
+        await (await committee.connect(members[0]).support(upgradeProposalId, params)).wait();
+        await (await committee.connect(members[1]).support(upgradeProposalId, params)).wait();
+
+        expect(await committee.members()).to.deep.equal(members.map((member: { address: string }) => member.address));
+        expect(await committee.mainProjectName()).to.equal(MAIN_PROJECT_NAME);
+        expect(await committee.finalVersion()).to.equal(1n);
+        expect(await committee.devRatio()).to.equal(200n);
+        expect(await committee.finalRatio()).to.equal(150n);
+        expect((await committee.proposalOf(ordinaryProposalId)).support).to.deep.equal([members[0].address]);
+        expect((await committee.proposalOf(fullProposalId)).reject).to.deep.equal([members[1].address]);
+
+        await expect(committee.upgradeToAndCall(nextImplementationAddress, "0x"))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(upgradeProposalId)
+            .to.emit(committee, "ProposalExecuted")
+            .withArgs(upgradeProposalId);
+
+        const upgradedCommittee = await ethers.getContractAt("SourceDaoCommitteeV2Mock", committeeAddress);
+
+        expect(await upgradedCommittee.version()).to.equal("2.1.0");
+        expect(await upgradedCommittee.members()).to.deep.equal(members.map((member: { address: string }) => member.address));
+        expect(await upgradedCommittee.mainProjectName()).to.equal(MAIN_PROJECT_NAME);
+        expect(await upgradedCommittee.finalVersion()).to.equal(1n);
+        expect(await upgradedCommittee.devRatio()).to.equal(200n);
+        expect(await upgradedCommittee.finalRatio()).to.equal(150n);
+        expect(await upgradedCommittee.committeeVersion()).to.equal(0n);
+        expect((await upgradedCommittee.proposalOf(ordinaryProposalId)).support).to.deep.equal([members[0].address]);
+        expect((await upgradedCommittee.proposalOf(fullProposalId)).reject).to.deep.equal([members[1].address]);
+
+        await expect(
+            upgradedCommittee.connect(outsider).support(ordinaryProposalId, ordinaryParams)
+        ).to.be.revertedWith("only committee can vote");
+
+        await (await upgradedCommittee.connect(members[1]).support(ordinaryProposalId, ordinaryParams)).wait();
+        expect(await upgradedCommittee.committeeVersion()).to.equal(1n);
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
+
+        await expect(upgradedCommittee.endFullPropose(fullProposalId, [members[0].address, members[1].address]))
+            .to.emit(upgradedCommittee, "ProposalAccept")
+            .withArgs(fullProposalId);
+
+        const fullExtra = await upgradedCommittee.proposalExtraOf(fullProposalId);
+        expect(fullExtra.agree).to.equal(4_000n);
+        expect(fullExtra.reject).to.equal(2_000n);
+        expect(fullExtra.totalReleasedToken).to.equal(8_000n);
+        expect((await upgradedCommittee.proposalOf(fullProposalId)).state).to.equal(2n);
+
+        await expect(upgradedCommittee.setDevRatio(newRatio, ordinaryProposalId))
+            .to.emit(upgradedCommittee, "ProposalAccept")
+            .withArgs(ordinaryProposalId)
+            .to.emit(upgradedCommittee, "DevRatioChanged")
+            .withArgs(200n, newRatio)
+            .to.emit(upgradedCommittee, "ProposalExecuted")
+            .withArgs(ordinaryProposalId);
     });
 });

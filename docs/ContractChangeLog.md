@@ -1430,7 +1430,7 @@
 
 - 合约：`SourceDaoCommittee`
 - 文件：[contracts/Committee.sol](contracts/Committee.sol)
-- 测试：[test/committee.ts](test/committee.ts)
+- 测试：[test/committee.ts](test/committee.ts)、[test/upgrade.ts](test/upgrade.ts)
 
 ### 背景
 
@@ -1609,3 +1609,131 @@
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "dev|token|dao"'` 通过
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
 - 当前全量回归结果：`184 passing`
+
+---
+
+## 2026-03-13 SourceDaoCommittee 普通提案快照收口记录
+
+### 合约
+
+- 合约：`SourceDaoCommittee`
+- 文件：[contracts/Committee.sol](contracts/Committee.sol)
+- 测试：[test/committee.ts](test/committee.ts)
+
+### 背景
+
+前一轮风险表征已经确认，`SourceDaoCommittee` 的普通提案存在两个耦合问题：
+
+1. 普通提案的投票资格没有绑定到提案创建时的委员会集合
+2. `_settleProposal(...)` 在结算时直接读取当前 `committees`，导致后续委员会改组会追溯性改变旧提案结果
+
+这会让普通提案的多数门槛和有效投票集合都随着时间漂移，治理语义不稳定。
+
+### 修改目的
+
+本次收口只处理“普通提案”的委员会快照语义，不改变 full proposal 的 token 权重和结算模型。目标是：
+
+1. 让普通提案在创建时绑定一个固定的委员会版本
+2. 让普通提案的投票资格只认该版本的委员会成员
+3. 让普通提案的结算门槛只认该版本的委员会人数
+
+### 具体改动
+
+#### 1. 引入委员会版本快照
+
+`SourceDaoCommittee` 现在维护：
+
+1. `committeeVersion`
+2. `committeeSizeByVersion`
+3. `committeeMemberByVersion`
+4. `proposalCommitteeVersion`
+
+初始化时会为初始委员会记录第一个快照；后续每次 `addCommitteeMember`、`removeCommitteeMember`、`setCommittees` 成功修改成员集后，都会推进到新的委员会版本。
+
+#### 2. 普通提案在创建时绑定委员会版本
+
+普通 proposal 在 `_propose(..., false)` 创建时，会记录它所属的 `proposalCommitteeVersion`。
+
+这样即使之后委员会发生改组，旧 proposal 仍然绑定原始版本，不会再被当前 `committees` 追溯性改写。
+
+#### 3. 普通提案的 `support/reject` 改为按快照成员验权
+
+`support(...)` / `reject(...)` 现在会区分普通 proposal 和 full proposal：
+
+1. 普通 proposal：要求 `msg.sender` 属于该 proposal 绑定的委员会版本
+2. full proposal：维持现有逻辑，不在本次修改范围内
+
+这意味着 outsider 或后续新加入的委员，不能再对旧普通 proposal 投票。
+
+#### 4. 普通提案结算改为按快照版本计票
+
+`_settleProposal(...)` 对普通 proposal 的结算不再遍历当前 `committees`，而是：
+
+1. 读取 proposal 绑定的 `committeeVersion`
+2. 只统计该版本内有效成员的 `support/reject`
+3. 以 `committeeSizeByVersion[version]` 作为多数门槛
+
+因此，已经被移出当前委员会、但属于 proposal 创建时委员会版本的成员，其普通提案投票仍然有效；反之，后来加入的新委员不会污染旧 proposal。
+
+#### 5. 为升级场景补上延迟初始化兜底
+
+考虑到 `SourceDaoCommittee` 是可升级合约，本次没有依赖额外 reinitializer，而是在普通 proposal 路径里加入了 committee snapshot 的延迟初始化兜底。
+
+这样升级到新实现后，即使旧存储里还没有 `committeeVersion`，也能在第一次使用普通 proposal 路径时完成初始化，不会直接把已有代理打坏。
+
+### 兼容性影响
+
+#### 行为变化
+
+本次普通 proposal 的核心行为变化有两点：
+
+1. outsider 不再能对普通 proposal 投票
+2. 后续委员会改组不再改变旧普通 proposal 的结算结果
+
+这两个变化都是有意收口，属于治理语义修正。
+
+#### 存储布局
+
+本次为 `SourceDaoCommittee` 追加了以下状态变量：
+
+1. `committeeVersion`
+2. `proposalCommitteeVersion`
+3. `committeeSizeByVersion`
+4. `committeeMemberByVersion`
+
+它们都追加在现有状态变量之后，没有重排已有存储顺序。
+
+#### 范围边界
+
+这次修改只覆盖普通 proposal。
+
+此前 changelog 中记录的 full proposal 风险仍然存在，尤其是：
+
+1. zero-balance outsider 仍可参与 full proposal
+2. full proposal 仍按结算时余额计算 token 权重，而不是投票时快照
+
+这部分会作为下一轮单独治理收口处理。
+
+### 验证方式
+
+`test/committee.ts` 现在覆盖以下关键路径：
+
+1. outsider 对普通提案投票会被拒绝
+2. 普通提案在委员会改组后，仍按创建时的委员会快照结算
+3. 已被移出当前委员会、但属于旧快照的成员，仍可完成旧普通提案投票
+4. 后续新加入的委员，不能给旧普通提案补票
+5. full proposal 的既有结算行为保持不变
+
+`test/upgrade.ts` 额外覆盖：
+
+1. 使用旧布局 `legacy committee` 部署 proxy
+2. 在升级前写入普通 proposal、full proposal 和治理参数状态
+3. 升级到带 snapshot 逻辑的新实现后，继续读取并结算这些旧状态
+4. 确认新增 snapshot 状态变量追加在尾部后，不会破坏旧 proxy 的存储布局
+
+### 验证结果
+
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "Committee"'` 通过
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "upgrade"'` 通过
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
+- 当前全量回归结果：`188 passing, 1 pending`

@@ -223,9 +223,9 @@ describe("Committee", function () {
             .to.emit(committee, "ProposalStart")
             .withArgs(proposalId, false);
 
-        await expect(committee.connect(outsider).reject(proposalId, params))
-            .to.emit(committee, "ProposalVoted")
-            .withArgs(outsider.address, proposalId, false);
+        await expect(committee.connect(outsider).reject(proposalId, params)).to.be.revertedWith(
+            "only committee can vote"
+        );
 
         await (await committee.connect(members[0]).support(proposalId, params)).wait();
         await (await committee.connect(members[1]).support(proposalId, params)).wait();
@@ -236,7 +236,7 @@ describe("Committee", function () {
             members[0].address,
             members[1].address
         ]);
-        expect(inProgressProposal.reject).to.deep.equal([outsider.address]);
+        expect(inProgressProposal.reject).to.deep.equal([]);
 
         await expect(committee.addCommitteeMember(candidate.address, proposalId))
             .to.emit(committee, "ProposalAccept")
@@ -344,6 +344,55 @@ describe("Committee", function () {
         );
     });
 
+    it("does not let a newly added member vote on an older ordinary proposal", async function () {
+        const { committee, members, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const devRatioProposalId = 1n;
+        const addMemberProposalId = 2n;
+        const newRatio = 180n;
+
+        await (await committee.connect(members[0]).prepareSetDevRatio(newRatio)).wait();
+        await (await committee.connect(members[0]).support(devRatioProposalId, setDevRatioParams(newRatio))).wait();
+
+        await (await committee.connect(members[0]).prepareAddMember(outsider.address)).wait();
+        await (await committee.connect(members[0]).support(addMemberProposalId, addMemberParams(outsider.address))).wait();
+        await (await committee.connect(members[1]).support(addMemberProposalId, addMemberParams(outsider.address))).wait();
+        await (await committee.addCommitteeMember(outsider.address, addMemberProposalId)).wait();
+
+        await expect(
+            committee.connect(outsider).support(devRatioProposalId, setDevRatioParams(newRatio))
+        ).to.be.revertedWith("only committee can vote");
+
+        await (await committee.connect(members[1]).support(devRatioProposalId, setDevRatioParams(newRatio))).wait();
+
+        await expect(committee.setDevRatio(newRatio, devRatioProposalId))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(devRatioProposalId);
+    });
+
+    it("keeps a removed member eligible to vote on an older ordinary proposal snapshot", async function () {
+        const { committee, members } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const devRatioProposalId = 1n;
+        const removeMemberProposalId = 2n;
+        const newRatio = 180n;
+        const removedMember = members[2];
+
+        await (await committee.connect(members[0]).prepareSetDevRatio(newRatio)).wait();
+        await (await committee.connect(members[0]).support(devRatioProposalId, setDevRatioParams(newRatio))).wait();
+
+        await (await committee.connect(members[0]).prepareRemoveMember(removedMember.address)).wait();
+        await (await committee.connect(members[0]).support(removeMemberProposalId, removeMemberParams(removedMember.address))).wait();
+        await (await committee.connect(members[1]).support(removeMemberProposalId, removeMemberParams(removedMember.address))).wait();
+        await (await committee.removeCommitteeMember(removedMember.address, removeMemberProposalId)).wait();
+
+        expect(await committee.isMember(removedMember.address)).to.equal(false);
+
+        await (await committee.connect(removedMember).support(devRatioProposalId, setDevRatioParams(newRatio))).wait();
+
+        await expect(committee.setDevRatio(newRatio, devRatioProposalId))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(devRatioProposalId);
+    });
+
     it("rejects removing a non-member before and after proposal execution", async function () {
         const { committee, members, candidate, outsider } = await networkHelpers.loadFixture(deployCommitteeFixture);
 
@@ -442,6 +491,23 @@ describe("Committee", function () {
 
         expect(await committee.devRatio()).to.equal(150n);
         expect((await committee.proposalOf(proposalId)).state).to.equal(4n);
+    });
+
+    it("rejects invalid full proposal duration and threshold values", async function () {
+        const { committee, proposalCaller } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const params = fullProposalParams("full-invalid-config");
+
+        await expect(
+            proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS - 1, params, 40)
+        ).to.be.revertedWith("duration must greater than 7 days");
+
+        await expect(
+            proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 9)
+        ).to.be.revertedWith("threshold must in 10 to 100");
+
+        await expect(
+            proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 101)
+        ).to.be.revertedWith("threshold must in 10 to 100");
     });
 
     it("settles full proposals by token-weighted turnout and vote balance", async function () {
@@ -614,7 +680,18 @@ describe("Committee", function () {
         expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
     });
 
-    it("documents that ordinary proposal settlement currently depends on the latest committee set", async function () {
+    it.skip("should reject zero-balance outsider votes on full proposals once voter eligibility is hardened", async function () {
+        const { committee, proposalCaller, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const proposalId = 1n;
+        const params = fullProposalParams("full-outsider-should-fail");
+
+        await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 40)).wait();
+
+        await expect(committee.connect(outsider).support(proposalId, params)).to.be.reverted;
+        await expect(committee.connect(outsider).reject(proposalId, params)).to.be.reverted;
+    });
+
+    it("settles ordinary proposals against the committee snapshot captured at creation time", async function () {
         const signers = await ethers.getSigners();
         const { committee, members, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
         const devRatioProposalId = 1n;
@@ -625,14 +702,25 @@ describe("Committee", function () {
 
         await (await committee.connect(members[0]).prepareSetDevRatio(newRatio)).wait();
         await (await committee.connect(members[0]).support(devRatioProposalId, setDevRatioParams(newRatio))).wait();
-        await (await committee.connect(members[1]).support(devRatioProposalId, setDevRatioParams(newRatio))).wait();
 
         await (await committee.connect(members[0]).prepareSetCommittees(replacementMembers, false)).wait();
         await (await committee.connect(members[0]).support(committeeReplaceProposalId, setCommitteesParams(replacementMembers))).wait();
         await (await committee.connect(members[1]).support(committeeReplaceProposalId, setCommitteesParams(replacementMembers))).wait();
         await (await committee.setCommittees(replacementMembers, committeeReplaceProposalId)).wait();
 
-        await expect(committee.setDevRatio(newRatio, devRatioProposalId)).to.be.revertedWith("proposal not accepted");
-        expect((await committee.proposalOf(devRatioProposalId)).state).to.equal(1n);
+        await expect(
+            committee.connect(candidate).support(devRatioProposalId, setDevRatioParams(newRatio))
+        ).to.be.revertedWith("only committee can vote");
+
+        await (await committee.connect(members[1]).support(devRatioProposalId, setDevRatioParams(newRatio))).wait();
+
+        await expect(committee.setDevRatio(newRatio, devRatioProposalId))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(devRatioProposalId)
+            .to.emit(committee, "DevRatioChanged")
+            .withArgs(200n, newRatio);
+
+        expect(await committee.devRatio()).to.equal(newRatio);
+        expect((await committee.proposalOf(devRatioProposalId)).state).to.equal(4n);
     });
 });
