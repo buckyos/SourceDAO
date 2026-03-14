@@ -2121,6 +2121,67 @@
 
 ---
 
+## 2026-03-14 full proposal 机制补测记录
+
+### 范围
+
+这一轮没有继续修改 `Committee` 逻辑，而是在已知快照问题之外，继续补 full proposal 当前机制的回归测试，目的是确认在现有语义下没有遗漏明显状态机或权限边界 bug。
+
+涉及文件：
+
+1. [test/committee.ts](test/committee.ts)
+
+### 本次补充
+
+#### 1. 非委员但持币地址的 full proposal 投票权限
+
+新增测试验证：
+
+1. 非委员会成员只要持有有效票重，就可以参与 full proposal
+2. 当前 full proposal 的投票资格边界是“token holder”，不是“committee member”
+
+这条测试的意义是把 full proposal 和普通 proposal 的权限模型明确分开。
+
+#### 2. full proposal 的参数校验和重复投票保护
+
+新增测试验证：
+
+1. `support/reject` 使用错误 params 时必须返回 `invalid params`
+2. 同一地址对同一 full proposal 不能重复投票
+3. 不能先 `support` 再 `reject`，也不能重复 `support`
+
+这部分虽然底层逻辑和普通 proposal 共用，但单独在 full proposal 上固定一遍更稳妥。
+
+#### 3. full proposal 的状态机保护
+
+新增测试验证：
+
+1. proposal 未过期前不能调用 `endFullPropose(...)`
+2. proposal 已经接受或拒绝后，不能再次结算
+
+这两条确保 full proposal 在生命周期边界上的状态机保护没有缺口。
+
+### 当前结论
+
+补完这一轮后，full proposal 在“当前设计不变”的前提下，至少又补齐了三类核心表征：
+
+1. token-holder 权限边界
+2. 参数匹配和重复投票保护
+3. 结算状态机保护
+
+这意味着当前剩下最值得单独决策的问题，已经更集中到：
+
+1. 跨 batch 按当前余额计票的快照设计问题
+
+### 验证结果
+
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && ./node_modules/.bin/hardhat test test-hh3/committee.ts'` 通过
+- 结果：`25 passing`
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
+- 当前全量回归结果：`206 passing`
+
+---
+
 ## 2026-03-14 升级联动 / full proposal outsider 风险测试补充记录
 
 ### 范围

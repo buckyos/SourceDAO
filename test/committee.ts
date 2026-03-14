@@ -652,6 +652,70 @@ describe("Committee", function () {
         expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
     });
 
+    it("lets non-committee token holders participate in full proposals when they have voting power", async function () {
+        const { committee, proposalCaller, members, devToken, normalToken, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const proposalId = 1n;
+        const params = fullProposalParams("full-token-holder-voter");
+
+        await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 40)).wait();
+        await (await devToken.connect(members[0]).dev2normal(500n)).wait();
+        await (await normalToken.connect(members[0]).transfer(outsider.address, 500n)).wait();
+
+        await expect(committee.connect(outsider).support(proposalId, params))
+            .to.emit(committee, "ProposalVoted")
+            .withArgs(outsider.address, proposalId, true);
+
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
+
+        await expect(committee.endFullPropose(proposalId, [outsider.address, members[0].address]))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        const extra = await committee.proposalExtraOf(proposalId);
+        expect(extra.agree).to.equal(3_500n);
+        expect(extra.settled).to.equal(2n);
+        expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
+    });
+
+    it("rejects invalid params and duplicate votes on full proposals", async function () {
+        const { committee, proposalCaller, members } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const proposalId = 1n;
+        const params = fullProposalParams("full-invalid-vote");
+        const wrongParams = fullProposalParams("full-invalid-vote-wrong");
+
+        await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 40)).wait();
+
+        await expect(committee.connect(members[0]).support(proposalId, wrongParams)).to.be.revertedWith("invalid params");
+
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+
+        await expect(committee.connect(members[0]).reject(proposalId, params)).to.be.revertedWith("already voted");
+        await expect(committee.connect(members[0]).support(proposalId, params)).to.be.revertedWith("already voted");
+    });
+
+    it("rejects settling full proposals before expiry and after they have already finished", async function () {
+        const { committee, proposalCaller, members } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const proposalId = 1n;
+        const params = fullProposalParams("full-state-guards");
+
+        await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 40)).wait();
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+
+        await expect(committee.endFullPropose(proposalId, [members[0].address])).to.be.revertedWith("not yet settled");
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
+
+        await expect(committee.endFullPropose(proposalId, [members[0].address]))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        await expect(committee.endFullPropose(proposalId, [members[0].address])).to.be.revertedWith(
+            "invalid proposal state"
+        );
+    });
+
     it("requires positive voting power before a voter can support a full proposal", async function () {
         const { committee, proposalCaller, members, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
         const proposalId = 1n;
