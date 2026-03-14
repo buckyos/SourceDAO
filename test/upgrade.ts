@@ -15,6 +15,17 @@ function upgradeParams(proxyAddress: string, implementationAddress: string) {
     ];
 }
 
+async function deployDummyModuleAddresses(count: number) {
+    const factory = await ethers.getContractFactory("NativeReceiverMock");
+    const deployments = [];
+    for (let i = 0; i < count; i++) {
+        const contract = await factory.deploy();
+        await contract.waitForDeployment();
+        deployments.push(await contract.getAddress());
+    }
+    return deployments;
+}
+
 async function deployUpgradeFixture() {
     const signers = await ethers.getSigners();
     const members = signers.slice(0, 3);
@@ -100,6 +111,45 @@ async function deployLegacyCommitteeUpgradeFixture() {
         members,
         outsider: signers[4],
         nextImplementationAddress: await nextImplementation.getAddress()
+    };
+}
+
+async function deployLegacyDaoUpgradeFixture() {
+    const signers = await ethers.getSigners();
+    const members = signers.slice(0, 3);
+
+    const dao = await deployUUPSProxy(ethers, "SourceDaoLegacyMock");
+    const daoAddress = await dao.getAddress();
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        members.map((signer: { address: string }) => signer.address),
+        1,
+        200,
+        MAIN_PROJECT_NAME,
+        1,
+        150,
+        daoAddress
+    ]);
+
+    const moduleAddresses = await deployDummyModuleAddresses(6);
+
+    await (await dao.setDevTokenAddress(moduleAddresses[0])).wait();
+    await (await dao.setNormalTokenAddress(moduleAddresses[1])).wait();
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+    await (await dao.setProjectAddress(moduleAddresses[2])).wait();
+    await (await dao.setTokenLockupAddress(moduleAddresses[3])).wait();
+    await (await dao.setTokenDividendAddress(moduleAddresses[4])).wait();
+    await (await dao.setAcquiredAddress(moduleAddresses[5])).wait();
+
+    const nextDaoImplementation = await (await ethers.getContractFactory("SourceDaoV2Mock")).deploy();
+    await nextDaoImplementation.waitForDeployment();
+
+    return {
+        dao,
+        committee,
+        members,
+        moduleAddresses,
+        nextDaoImplementation,
+        nextDaoImplementationAddress: await nextDaoImplementation.getAddress()
     };
 }
 
@@ -237,6 +287,48 @@ describe("upgrade", function () {
 
         const upgradedDao = await ethers.getContractAt("SourceDaoV2Mock", daoAddress);
         expect(await upgradedDao.version()).to.equal("2.1.0");
+    });
+
+    it("migrates a fully configured legacy dao proxy into finalized bootstrap state on upgrade", async function () {
+        const {
+            dao,
+            committee,
+            members,
+            moduleAddresses,
+            nextDaoImplementation,
+            nextDaoImplementationAddress
+        } = await networkHelpers.loadFixture(deployLegacyDaoUpgradeFixture);
+        const daoAddress = await dao.getAddress();
+        const committeeAddress = await committee.getAddress();
+        const proposalId = 1n;
+        const params = upgradeParams(daoAddress, nextDaoImplementationAddress);
+        const migrationData = nextDaoImplementation.interface.encodeFunctionData("migrateLegacyBootstrap");
+
+        await expect(committee.connect(members[0]).prepareContractUpgrade(daoAddress, nextDaoImplementationAddress))
+            .to.emit(committee, "ProposalStart")
+            .withArgs(proposalId, false);
+
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+        await (await committee.connect(members[1]).support(proposalId, params)).wait();
+
+        await expect(dao.upgradeToAndCall(nextDaoImplementationAddress, migrationData))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        const upgradedDao = await ethers.getContractAt("SourceDaoV2Mock", daoAddress);
+        expect(await upgradedDao.version()).to.equal("2.1.0");
+        expect(await upgradedDao.bootstrapAdmin()).to.equal(ethers.ZeroAddress);
+        expect(await upgradedDao.bootstrapFinalized()).to.equal(true);
+        expect(await upgradedDao.devToken()).to.equal(moduleAddresses[0]);
+        expect(await upgradedDao.normalToken()).to.equal(moduleAddresses[1]);
+        expect(await upgradedDao.committee()).to.equal(committeeAddress);
+        expect(await upgradedDao.project()).to.equal(moduleAddresses[2]);
+        expect(await upgradedDao.lockup()).to.equal(moduleAddresses[3]);
+        expect(await upgradedDao.dividend()).to.equal(moduleAddresses[4]);
+        expect(await upgradedDao.acquired()).to.equal(moduleAddresses[5]);
+
+        await expect(upgradedDao.setDevTokenAddress(moduleAddresses[0])).to.be.revertedWith("bootstrap finalized");
+        await expect(upgradedDao.finalizeInitialization()).to.be.revertedWith("bootstrap finalized");
     });
 
     it("preserves legacy committee storage across upgrade to the snapshot implementation", async function () {

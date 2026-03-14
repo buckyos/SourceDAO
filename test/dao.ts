@@ -46,6 +46,12 @@ describe("dao", function () {
         expect(await fixture.dao.bootstrapFinalized()).to.equal(false);
     });
 
+    it("rejects the legacy bootstrap migration on fresh deployments", async function () {
+        const fixture = await networkHelpers.loadFixture(deployDaoFixture);
+
+        await expect(fixture.dao.migrateLegacyBootstrap()).to.be.revertedWith("not legacy");
+    });
+
     it("rejects zero and EOA addresses for every module slot", async function () {
         const fixture = await networkHelpers.loadFixture(deployDaoFixture);
         const zeroAddress = ethers.ZeroAddress;

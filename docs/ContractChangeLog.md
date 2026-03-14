@@ -1550,6 +1550,25 @@
 
 这比“首次写入后永久锁死”更适合真实部署流程，因为它允许在 bootstrap 完成前纠正地址配置失误。
 
+#### 5. 为老版本 proxy 升级补充 bootstrap migration
+
+考虑到 `SourceDao` 是基于旧版本继续升级的，单纯追加 `bootstrapAdmin` / `bootstrapFinalized` 两个变量还不够。
+
+原因是：
+
+1. 老 proxy 升级后，新追加变量默认值会是 `bootstrapAdmin = 0`、`bootstrapFinalized = false`
+2. 老 proxy 不会重新执行 `initialize()`
+3. 如果不补 migration，新的 `bootstrap admin + finalize` 语义只完成了存储追加，没有完成运行时状态迁移
+
+为了解决这个问题，本次新增了 `migrateLegacyBootstrap()`：
+
+1. 使用 `reinitializer(2)`，确保老版本 migration 只能执行一次
+2. 不接受任何参数，避免升级提案只校验 implementation 地址时引入额外治理歧义
+3. 要求老 proxy 的 7 个模块地址都已经配置完成
+4. migration 完成后直接把 `bootstrapFinalized = true`
+
+这样旧版 `SourceDao` proxy 在升级后会直接进入“bootstrap 已完成”的状态，而不是停留在一个没有 bootstrap admin、但又尚未 finalize 的半初始化状态。
+
 ### 兼容性影响
 
 #### ABI
@@ -1586,29 +1605,54 @@
 
 它们都追加在 `SourceDao` 现有状态变量之后，没有重排已有存储顺序。
 
+#### 运行时迁移
+
+对老版本 `SourceDao` proxy，本次兼容升级的正确方式不再是：
+
+1. `upgradeToAndCall(newImplementation, "0x")`
+
+而是：
+
+1. `upgradeToAndCall(newImplementation, abi.encodeCall(SourceDao.migrateLegacyBootstrap, ()))`
+
+也就是说：
+
+1. proxy 地址保持不变
+2. 旧模块地址保持不变
+3. migration 只负责把 legacy proxy 的 bootstrap 状态迁成“已完成”
+4. 不需要重新调用 `setDevTokenAddress(...)` / `setCommitteeAddress(...)` 等模块地址入口
+
 ### 验证方式
 
 `test/dao.ts` 现在覆盖以下路径：
 
 1. `bootstrapAdmin` 和 `bootstrapFinalized` 的初始状态
-2. zero address 和 EOA 地址拒绝写入
-3. 非 bootstrap admin 不能设置模块地址，也不能 finalize
-4. bootstrap admin 在 finalize 前可以修正配置
-5. 未配置完整时不能 finalize
-6. finalize 后所有模块地址入口永久关闭
-7. 完成 finalize 后，`isDAOContract(...)` 仍正确识别已配置模块
+2. fresh deploy 不能错误调用 legacy migration
+3. zero address 和 EOA 地址拒绝写入
+4. 非 bootstrap admin 不能设置模块地址，也不能 finalize
+5. bootstrap admin 在 finalize 前可以修正配置
+6. 未配置完整时不能 finalize
+7. finalize 后所有模块地址入口永久关闭
+8. 完成 finalize 后，`isDAOContract(...)` 仍正确识别已配置模块
 
 `test/dev.ts` 与 `test/token.ts` 额外验证：
 
 1. `project/lockup/dividend` 角色在真实合约地址约束下仍能满足 `DevToken` / `NormalToken` 的既有授权路径
 2. `code.length` 校验不会破坏现有 token 行为，只会淘汰原先不真实的 signer-address 夹具
 
+`test/upgrade.ts` 额外验证：
+
+1. 旧版 `SourceDao` proxy 在模块地址已完整配置的前提下，可以通过 `upgradeToAndCall(..., migrateLegacyBootstrap())` 升级到新实现
+2. 升级后 proxy 地址保持不变，旧模块地址保持不变
+3. 升级后 `bootstrapAdmin == 0`、`bootstrapFinalized == true`
+4. 升级后不需要重新 `setXXX`，并且所有 bootstrap 配置入口会正确拒绝后续修改
+
 ### 验证结果
 
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "dao"'` 通过
-- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "dev|token|dao"'` 通过
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "dev|token|dao|upgrade"'` 通过
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
-- 当前全量回归结果：`184 passing`
+- 当前全量回归结果：`190 passing, 1 pending`
 
 ---
 
