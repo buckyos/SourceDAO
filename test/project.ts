@@ -32,6 +32,13 @@ function projectParams(
     ];
 }
 
+function setCommitteesParams(members: string[]) {
+    return [
+        ...members.map((member) => ethers.zeroPadValue(member, 32)),
+        ethers.encodeBytes32String("setCommittees")
+    ];
+}
+
 async function deployProjectFixture() {
     const [manager, contributor, outsider] = await ethers.getSigners();
     const dao = await deployUUPSProxy(ethers, "SourceDao");
@@ -77,6 +84,60 @@ async function deployProjectFixture() {
         devToken,
         extraToken,
         extraTokenTwo
+    };
+}
+
+async function deployProjectCommitteeSnapshotFixture() {
+    const signers = await ethers.getSigners();
+    const [manager, contributor, secondMember, thirdMember, outsider, candidate] = signers;
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const committeeMembers = [manager, secondMember, thirdMember];
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        committeeMembers.map((signer: { address: string }) => signer.address),
+        1,
+        200,
+        PROJECT_NAME,
+        Number(PROJECT_VERSION),
+        150,
+        daoAddress
+    ]);
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+
+    const project = await deployUUPSProxy(ethers, "ProjectManagement", [1, daoAddress]);
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        1_000_000,
+        [manager.address],
+        [5_000],
+        daoAddress
+    ]);
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+
+    const extraTokenFactory = await ethers.getContractFactory("TestToken");
+    const extraToken = await extraTokenFactory.deploy("ExtraToken", "EXT", 18, 1_000_000n, manager.address);
+    await extraToken.waitForDeployment();
+    const extraTokenTwo = await extraTokenFactory.deploy("ExtraTokenTwo", "EXT2", 18, 1_000_000n, manager.address);
+    await extraTokenTwo.waitForDeployment();
+
+    return {
+        manager,
+        contributor,
+        secondMember,
+        thirdMember,
+        outsider,
+        candidate,
+        dao,
+        committee,
+        project,
+        devToken,
+        extraToken,
+        extraTokenTwo,
+        committeeMembers
     };
 }
 
@@ -296,6 +357,127 @@ describe("project", function () {
         expect(storedProject.startDate).to.equal(startDate);
         expect(storedProject.endDate).to.equal(endDate);
         expect(storedProject.state).to.equal(1n);
+    });
+
+    it("keeps a createProject proposal bound to its original committee snapshot after committee replacement", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectCommitteeSnapshotFixture);
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const startDate = BigInt(latestBlock.timestamp);
+        const endDate = startDate + THIRTY_DAYS;
+        const createProposalId = 1n;
+        const replaceProposalId = 2n;
+        const replacementMembers = [
+            fixture.manager.address,
+            fixture.candidate.address,
+            fixture.outsider.address
+        ];
+
+        await (await fixture.project.createProject(10_000, PROJECT_NAME, PROJECT_VERSION, startDate, endDate, [], [])).wait();
+        await (await fixture.committee.connect(fixture.manager).support(
+            createProposalId,
+            projectParams(1n, startDate, endDate, "createProject")
+        )).wait();
+
+        await (await fixture.committee.connect(fixture.manager).prepareSetCommittees(replacementMembers, false)).wait();
+        await (await fixture.committee.connect(fixture.manager).support(
+            replaceProposalId,
+            setCommitteesParams(replacementMembers)
+        )).wait();
+        await (await fixture.committee.connect(fixture.secondMember).support(
+            replaceProposalId,
+            setCommitteesParams(replacementMembers)
+        )).wait();
+        await (await fixture.committee.setCommittees(replacementMembers, replaceProposalId)).wait();
+
+        await expect(
+            fixture.committee.connect(fixture.candidate).support(
+                createProposalId,
+                projectParams(1n, startDate, endDate, "createProject")
+            )
+        ).to.be.revertedWith("only committee can vote");
+
+        await (await fixture.committee.connect(fixture.secondMember).support(
+            createProposalId,
+            projectParams(1n, startDate, endDate, "createProject")
+        )).wait();
+
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        const storedProject = await fixture.project.projectOf(1n);
+        expect(storedProject.state).to.equal(1n);
+        expect((await fixture.committee.proposalOf(createProposalId)).state).to.equal(4n);
+    });
+
+    it("keeps an acceptProject proposal bound to its original committee snapshot after committee replacement", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectCommitteeSnapshotFixture);
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const startDate = BigInt(latestBlock.timestamp);
+        const endDate = startDate + THIRTY_DAYS;
+        const createProposalId = 1n;
+        const acceptProposalId = 2n;
+        const replaceProposalId = 3n;
+        const replacementMembers = [
+            fixture.manager.address,
+            fixture.candidate.address,
+            fixture.outsider.address
+        ];
+
+        await (await fixture.project.createProject(10_000, PROJECT_NAME, PROJECT_VERSION, startDate, endDate, [], [])).wait();
+        await (await fixture.committee.connect(fixture.manager).support(
+            createProposalId,
+            projectParams(1n, startDate, endDate, "createProject")
+        )).wait();
+        await (await fixture.committee.connect(fixture.secondMember).support(
+            createProposalId,
+            projectParams(1n, startDate, endDate, "createProject")
+        )).wait();
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        await (await fixture.project.acceptProject(1n, 4, [
+            { contributor: fixture.manager.address, value: 40 },
+            { contributor: fixture.contributor.address, value: 60 }
+        ])).wait();
+        await (await fixture.committee.connect(fixture.manager).support(
+            acceptProposalId,
+            projectParams(1n, startDate, endDate, "acceptProject")
+        )).wait();
+
+        await (await fixture.committee.connect(fixture.manager).prepareSetCommittees(replacementMembers, false)).wait();
+        await (await fixture.committee.connect(fixture.manager).support(
+            replaceProposalId,
+            setCommitteesParams(replacementMembers)
+        )).wait();
+        await (await fixture.committee.connect(fixture.secondMember).support(
+            replaceProposalId,
+            setCommitteesParams(replacementMembers)
+        )).wait();
+        await (await fixture.committee.setCommittees(replacementMembers, replaceProposalId)).wait();
+
+        await expect(
+            fixture.committee.connect(fixture.candidate).support(
+                acceptProposalId,
+                projectParams(1n, startDate, endDate, "acceptProject")
+            )
+        ).to.be.revertedWith("only committee can vote");
+
+        await (await fixture.committee.connect(fixture.secondMember).support(
+            acceptProposalId,
+            projectParams(1n, startDate, endDate, "acceptProject")
+        )).wait();
+
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        const storedProject = await fixture.project.projectOf(1n);
+        expect(storedProject.state).to.equal(3n);
+        expect((await fixture.committee.proposalOf(acceptProposalId)).state).to.equal(4n);
     });
 
     it("restricts lifecycle actions to the project manager", async function () {

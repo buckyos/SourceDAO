@@ -680,6 +680,42 @@ describe("Committee", function () {
         expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
     });
 
+    it("replaces the committee through a full proposal and lets the new committee continue governance", async function () {
+        const signers = await ethers.getSigners();
+        const { committee, members, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const proposalId = 1n;
+        const nextProposalId = 2n;
+        const candidate = signers[5];
+        const replacementMembers = [members[0].address, outsider.address, candidate.address];
+        const params = setCommitteesParams(replacementMembers);
+
+        await expect(committee.connect(members[0]).prepareSetCommittees(replacementMembers, true))
+            .to.emit(committee, "ProposalStart")
+            .withArgs(proposalId, true);
+
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
+
+        await expect(committee.endFullPropose(proposalId, [members[0].address]))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        await expect(committee.setCommittees(replacementMembers, proposalId))
+            .to.emit(committee, "MemberChanged");
+
+        expect(await committee.members()).to.deep.equal(replacementMembers);
+        expect((await committee.proposalOf(proposalId)).state).to.equal(4n);
+
+        await expect(committee.connect(members[1]).prepareSetDevRatio(180)).to.be.revertedWith(
+            "only committee can set dev ratio"
+        );
+
+        await expect(committee.connect(candidate).prepareSetDevRatio(180))
+            .to.emit(committee, "ProposalStart")
+            .withArgs(nextProposalId, false);
+    });
+
     it.skip("should reject zero-balance outsider votes on full proposals once voter eligibility is hardened", async function () {
         const { committee, proposalCaller, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
         const proposalId = 1n;

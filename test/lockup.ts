@@ -108,7 +108,11 @@ async function deployLockupFixture(options?: {
     };
 }
 
-async function releaseMainProject(fixture: any) {
+async function releaseMainProject(
+    fixture: any,
+    createProposalId: bigint = 1n,
+    acceptProposalId: bigint = 2n
+) {
     const latestBlock = await ethers.provider.getBlock("latest");
     if (latestBlock === null) {
         throw new Error("latest block not found");
@@ -128,7 +132,7 @@ async function releaseMainProject(fixture: any) {
     )).wait();
 
     await (await fixture.committee.support(
-        1n,
+        createProposalId,
         projectProposalParams(1n, fixture.releaseVersion, startDate, endDate, "createProject")
     )).wait();
 
@@ -142,7 +146,7 @@ async function releaseMainProject(fixture: any) {
     ])).wait();
 
     await (await fixture.committee.support(
-        2n,
+        acceptProposalId,
         projectProposalParams(1n, fixture.releaseVersion, startDate, endDate, "acceptProject")
     )).wait();
 
@@ -324,6 +328,38 @@ describe("Lockup", function () {
 
         expect(await fixture.lockup.getCanClaimTokens()).to.equal(0n);
         await expect(fixture.lockup.claimTokens(1)).to.be.revertedWith("Tokens are not unlocked yet");
+    });
+
+    it("uses the same main-project release to finalize committee devRatio and unlock lockup claims", async function () {
+        const fixture = await networkHelpers.loadFixture(deployLockupFixture);
+        const pendingRatio = 300n;
+        const proposalId = 1n;
+
+        await (await fixture.normalToken.approve(await fixture.lockup.getAddress(), 600)).wait();
+        await (await fixture.lockup.transferAndLock([fixture.owner.address], [600])).wait();
+
+        expect(await fixture.committee.devRatio()).to.equal(400n);
+        expect(await fixture.lockup.getCanClaimTokens()).to.equal(0n);
+
+        await (await fixture.committee.prepareSetDevRatio(pendingRatio)).wait();
+        await (await fixture.committee.support(
+            proposalId,
+            [toBytes32(pendingRatio), ethers.encodeBytes32String("setDevRatio")]
+        )).wait();
+
+        const releaseTime = await releaseMainProject(fixture, 2n, 3n);
+        await networkHelpers.time.increaseTo(releaseTime + THIRTY_DAYS);
+
+        await expect(fixture.committee.setDevRatio(pendingRatio, proposalId))
+            .to.emit(fixture.committee, "DevRatioChanged")
+            .withArgs(400n, 150n);
+
+        expect(await fixture.committee.devRatio()).to.equal(150n);
+        expect(await fixture.lockup.getCanClaimTokens()).to.equal(100n);
+
+        const ownerBalanceBefore = await fixture.normalToken.balanceOf(fixture.owner.address);
+        await (await fixture.lockup.claimTokens(100)).wait();
+        expect(await fixture.normalToken.balanceOf(fixture.owner.address)).to.equal(ownerBalanceBefore + 100n);
     });
 
     it("releases only part of the locked tokens after 30 days", async function () {

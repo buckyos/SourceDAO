@@ -1781,3 +1781,160 @@
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "upgrade"'` 通过
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
 - 当前全量回归结果：`188 passing, 1 pending`
+
+---
+
+## 2026-03-14 跨合约治理联动测试补充记录
+
+### 范围
+
+本轮没有修改正式合约逻辑，重点是把前面 review 里识别出的“跨合约真实链路”补成回归测试。
+
+涉及测试文件：
+
+1. [test/project.ts](test/project.ts)
+2. [test/committee.ts](test/committee.ts)
+3. [test/lockup.ts](test/lockup.ts)
+
+### 背景
+
+此前单模块测试已经比较完整，但还有几类关键联动路径没有被真实固定下来：
+
+1. `ProjectManagement` 发起的普通 proposal，在委员会改组后是否仍按旧快照继续投票和结算
+2. `SourceDaoCommittee` 的 full proposal 路径，是否真的可以替换整个委员会并让新委员会继续治理
+3. `Project.versionReleasedTime(...)` 这个共享发布信号，是否会同时驱动 `Committee` 的 `finalRatio` 语义和 `Lockup` 的解锁语义
+
+这些问题如果只在单模块测试里看，很难证明真实业务链路已经闭环。
+
+### 本次补充
+
+#### 1. 为 `Project -> Committee` 补委员会快照联动测试
+
+在 [test/project.ts](test/project.ts) 中新增两条回归：
+
+1. `createProject` 提案创建后，即使委员会已经换届，旧快照成员仍可完成投票并成功 `promoteProject`
+2. `acceptProject` 提案创建后，即使委员会已经换届，旧快照成员仍可完成投票并成功结算项目
+
+同时也固定了反向约束：
+
+1. 新加入的委员不能给旧项目 proposal 补票
+
+这样就把之前只在 `Committee` 自测里验证过的快照语义，真正延伸到了 `ProjectManagement` 这条生产调用链。
+
+#### 2. 为 `full proposal -> setCommittees` 补真实治理回归
+
+在 [test/committee.ts](test/committee.ts) 中新增一条 full proposal 联动测试：
+
+1. 使用 token-weighted full proposal 通过 `setCommittees`
+2. 由 full proposal 结算后真正执行委员会替换
+3. 替换完成后，由新委员会成员继续发起新的普通 proposal
+4. 被移出的旧委员不能再继续执行新的普通治理动作
+
+这样可以证明 `prepareSetCommittees(..., true)` 不是一个孤立接口，而是一条真实可执行的治理路径。
+
+#### 3. 为 `Project release -> Committee + Lockup` 补共享发布信号测试
+
+在 [test/lockup.ts](test/lockup.ts) 中新增一条主项目发布联动测试：
+
+1. 在主项目正式 release 之前先创建一个待执行的 `setDevRatio` proposal
+2. 通过真实 `ProjectManagement` 完成主项目 release
+3. release 之后再执行该 `setDevRatio` proposal，确认 `Committee` 会直接把 `devRatio` 锁到 `finalRatio`
+4. 同一个 release 事件也会让 `Lockup` 开始产生可领取额度
+
+这条测试证明：
+
+1. `Project.versionReleasedTime(...)` 作为共享发布信号已经真实联通
+2. `Committee` 和 `Lockup` 对这个信号的响应没有相互脱节
+
+### 当前结论
+
+补完这几条后，测试覆盖从“单模块正确”进一步推进到了“跨模块链路正确”：
+
+1. 委员会快照语义已经不只是 `Committee` 自身正确，而是能支撑 `ProjectManagement` 的真实 proposal 生命周期
+2. full proposal 已经有委员会替换后的继续治理回归
+3. 主项目正式版发布后，对 `Committee` 和 `Lockup` 的联动影响已经有真实测试保护
+
+### 验证结果
+
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test -- --grep "project|Committee|Lockup"'` 通过
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
+- 当前全量回归结果：`194 passing, 1 pending`
+
+---
+
+## 2026-03-14 finalized Dao / 完整奖励链路集成测试补充记录
+
+### 范围
+
+本轮仍然没有修改正式合约逻辑，重点是把“已经完成 finalize 的真实系统”以及“项目奖励流入后续模块”的链路补成集成测试。
+
+涉及测试文件：
+
+1. [test/system_integration.ts](test/system_integration.ts)
+2. [test-hh3/system_integration.ts](test-hh3/system_integration.ts)
+
+### 背景
+
+前一轮已经补上了不少跨合约治理联动测试，但还有两类系统级空白：
+
+1. `SourceDao.finalizeInitialization()` 之后，真实多模块系统是否仍能正常工作
+2. 项目贡献奖励发出后的 token，是否真的能流入 `Dividend` 和 `Lockup` 形成完整后续链路
+
+这两类如果没有集成测试，很容易出现：
+
+1. `Dao` finalize 收口本身是对的，但真实系统夹具在 finalize 后才暴露出隐藏假设
+2. `Project`、`DevToken`、`NormalToken`、`Dividend`、`Lockup` 各自单测都通过，但实际串起来时仍然出现链路断点
+
+### 本次补充
+
+#### 1. finalized Dao 系统 smoke
+
+新增一条 finalized 系统 smoke：
+
+1. 部署 `SourceDao`、`Committee`、`ProjectManagement`、`DevToken`、`NormalToken`、`SourceTokenLockup`、`DividendContract`、`Acquired`
+2. 配置全部 7 个模块地址
+3. 调用 `finalizeInitialization()`
+4. 在 finalize 后继续完成：
+   - 一条真实 `Project -> Committee` 项目治理链路
+   - 一条真实 `Acquired` 投资与结算链路
+
+这条测试的意义是：
+
+1. 证明 `bootstrap finalized` 状态不会阻断正式业务流程
+2. 证明 `SourceDao` 在完成地址冻结后，模块间调用仍保持正常
+
+#### 2. 项目奖励进入 Dividend 与未来版本 Lockup 的完整链路
+
+新增一条完整奖励链路测试：
+
+1. 先完成主项目 `1.0.0` 的真实创建、审批、验收、发布
+2. 贡献者从 `ProjectManagement` 提取项目奖励 `DevToken`
+3. 奖励中的一部分直接质押到 `Dividend`
+4. 另一部分转换为 `NormalToken` 后再质押到 `Dividend`
+5. 再拿一部分奖励通过 `Lockup.convertAndLock(...)` 锁入一个“跟踪未来版本 release”的 `Lockup`
+6. 为 `Dividend` 注入 reward token 并完成领取
+7. 再发布主项目 `2.0.0`
+8. 验证该次未来版本 release 会让之前锁入的奖励开始按线性规则可领取
+
+这条测试实际上把以下模块串成了一条真实业务链：
+
+1. `ProjectManagement`
+2. `SourceDaoCommittee`
+3. `DevToken`
+4. `NormalToken`
+5. `DividendContract`
+6. `SourceTokenLockup`
+
+### 当前结论
+
+补完这轮之后，测试覆盖已经从“治理联动正确”进一步推进到了“系统级业务链路正确”：
+
+1. `Dao.finalizeInitialization()` 不只是状态收口正确，而且 finalize 后真实系统仍可继续运转
+2. 项目奖励已经不只是停留在 `ProjectManagement` 内部，而是有了真实的后续流转回归保护
+3. `Dividend` 和 `Lockup` 都已经被放进同一条项目奖励链路里验证
+
+### 验证结果
+
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && ./node_modules/.bin/hardhat test --grep "system integration"'` 通过
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
+- 当前全量回归结果：`196 passing, 1 pending`
