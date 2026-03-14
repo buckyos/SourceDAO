@@ -1,4 +1,4 @@
-import { Contract, ZeroAddress } from "ethers";
+import { Contract, ZeroAddress, decodeBytes32String, getAddress } from "ethers";
 
 const PROPOSAL_STATE_NAMES = [
     "NotFound",
@@ -65,6 +65,37 @@ export interface ProposalStatus {
         totalReleasedToken: string;
         pendingSettleCount: number;
     };
+}
+
+export interface CommitteeObservedAddressStatus {
+    address: string;
+    isCurrentMember: boolean;
+    currentOrdinaryProposalEligible: boolean;
+    currentFullProposalEligible: boolean;
+    normalTokenBalance: string;
+    devTokenBalance: string;
+    currentFullProposalVotingPower: string;
+}
+
+export interface CommitteeStatus {
+    daoAddress: string;
+    committeeAddress: string;
+    version: string;
+    committeeVersion: string;
+    memberCount: number;
+    members: string[];
+    devRatio: string;
+    finalRatio: string;
+    finalRatioCurrentlyApplied: boolean;
+    mainProjectNameRaw: string;
+    mainProjectName: string;
+    finalVersion: string;
+    finalVersionText: string;
+    finalVersionReleased: boolean;
+    finalVersionReleasedAt: string;
+    finalVersionReleasedAtIso: string | null;
+    observed: CommitteeObservedAddressStatus | null;
+    latestProposalIdExposed: false;
 }
 
 export async function readDaoStatus(hardhatEthers: any, daoAddress: string): Promise<DaoStatus> {
@@ -161,6 +192,66 @@ export async function readProposalStatus(
     };
 }
 
+export async function readCommitteeStatus(
+    hardhatEthers: any,
+    daoAddress: string,
+    observedAddress?: string
+): Promise<CommitteeStatus> {
+    const provider = hardhatEthers.provider;
+    const dao = await hardhatEthers.getContractAt("SourceDao", daoAddress);
+    const committeeAddress = await dao.committee();
+    const committee = await hardhatEthers.getContractAt("SourceDaoCommittee", committeeAddress);
+
+    const members = [...(await committee.members())];
+    const devRatio = await committee.devRatio();
+    const finalRatio = await committee.finalRatio();
+    const mainProjectNameRaw = await committee.mainProjectName();
+    const finalVersion = await committee.finalVersion();
+    const releasedAt = await readProjectReleaseTime(provider, await dao.project(), mainProjectNameRaw, finalVersion);
+
+    let observed: CommitteeObservedAddressStatus | null = null;
+    if (observedAddress !== undefined) {
+        const normalizedAddress = getAddress(observedAddress);
+        const devToken = await hardhatEthers.getContractAt("DevToken", await dao.devToken());
+        const normalToken = await hardhatEthers.getContractAt("NormalToken", await dao.normalToken());
+        const devTokenBalance = await devToken.balanceOf(normalizedAddress);
+        const normalTokenBalance = await normalToken.balanceOf(normalizedAddress);
+        const currentFullProposalVotingPower = normalTokenBalance + (devTokenBalance * devRatio) / 100n;
+        const isCurrentMember = await committee.isMember(normalizedAddress);
+
+        observed = {
+            address: normalizedAddress,
+            isCurrentMember,
+            currentOrdinaryProposalEligible: isCurrentMember,
+            currentFullProposalEligible: currentFullProposalVotingPower > 0n,
+            normalTokenBalance: normalTokenBalance.toString(),
+            devTokenBalance: devTokenBalance.toString(),
+            currentFullProposalVotingPower: currentFullProposalVotingPower.toString()
+        };
+    }
+
+    return {
+        daoAddress: await dao.getAddress(),
+        committeeAddress: await committee.getAddress(),
+        version: await committee.version(),
+        committeeVersion: (await committee.committeeVersion()).toString(),
+        memberCount: members.length,
+        members,
+        devRatio: devRatio.toString(),
+        finalRatio: finalRatio.toString(),
+        finalRatioCurrentlyApplied: devRatio === finalRatio,
+        mainProjectNameRaw,
+        mainProjectName: decodeBytes32Value(mainProjectNameRaw),
+        finalVersion: finalVersion.toString(),
+        finalVersionText: formatVersionNumber(finalVersion),
+        finalVersionReleased: releasedAt > 0n,
+        finalVersionReleasedAt: releasedAt.toString(),
+        finalVersionReleasedAtIso: releasedAt > 0n ? new Date(Number(releasedAt) * 1000).toISOString() : null,
+        observed,
+        latestProposalIdExposed: false
+    };
+}
+
 export function formatDaoStatus(status: DaoStatus): string {
     const moduleLines = status.modules.map((module) => {
         const versionText = module.version === null ? "n/a" : module.version;
@@ -211,6 +302,41 @@ export function formatProposalStatus(status: ProposalStatus): string {
     return lines.join("\n");
 }
 
+export function formatCommitteeStatus(status: CommitteeStatus): string {
+    const lines = [
+        `DAO: ${status.daoAddress}`,
+        `Committee: ${status.committeeAddress}`,
+        `Version: ${status.version}`,
+        `Committee version: ${status.committeeVersion}`,
+        `Member count: ${status.memberCount}`,
+        `Members: ${status.members.join(", ") || "none"}`,
+        `Dev ratio: ${status.devRatio}`,
+        `Final ratio: ${status.finalRatio}`,
+        `Final ratio currently applied: ${status.finalRatioCurrentlyApplied}`,
+        `Main project name: ${status.mainProjectName} (${status.mainProjectNameRaw})`,
+        `Final version: ${status.finalVersionText} (${status.finalVersion})`,
+        `Final version released: ${status.finalVersionReleased}`,
+        `Final version released at: ${
+            status.finalVersionReleasedAtIso === null
+                ? `${status.finalVersionReleasedAt} (not released)`
+                : `${status.finalVersionReleasedAt} (${status.finalVersionReleasedAtIso})`
+        }`,
+        "Latest proposal id: not exposed by the current on-chain interface"
+    ];
+
+    if (status.observed !== null) {
+        lines.push(`Observed address: ${status.observed.address}`);
+        lines.push(`Observed is current member: ${status.observed.isCurrentMember}`);
+        lines.push(`Observed ordinary proposal eligible: ${status.observed.currentOrdinaryProposalEligible}`);
+        lines.push(`Observed full proposal eligible: ${status.observed.currentFullProposalEligible}`);
+        lines.push(`Observed normal token balance: ${status.observed.normalTokenBalance}`);
+        lines.push(`Observed dev token balance: ${status.observed.devTokenBalance}`);
+        lines.push(`Observed full proposal voting power: ${status.observed.currentFullProposalVotingPower}`);
+    }
+
+    return lines.join("\n");
+}
+
 async function readContractVersion(provider: any, address: string): Promise<string | null> {
     try {
         const contract = new Contract(address, ["function version() view returns (string)"], provider);
@@ -218,4 +344,41 @@ async function readContractVersion(provider: any, address: string): Promise<stri
     } catch {
         return null;
     }
+}
+
+async function readProjectReleaseTime(
+    provider: any,
+    projectAddress: string,
+    projectName: string,
+    version: bigint
+): Promise<bigint> {
+    if (projectAddress === ZeroAddress) {
+        return 0n;
+    }
+
+    try {
+        const contract = new Contract(
+            projectAddress,
+            ["function versionReleasedTime(bytes32 projectName, uint64 version) view returns (uint256)"],
+            provider
+        );
+        return BigInt(await contract.versionReleasedTime(projectName, version));
+    } catch {
+        return 0n;
+    }
+}
+
+function decodeBytes32Value(value: string): string {
+    try {
+        return decodeBytes32String(value);
+    } catch {
+        return value;
+    }
+}
+
+function formatVersionNumber(version: bigint): string {
+    const major = version / 10000000000n;
+    const minor = (version % 10000000000n) / 100000n;
+    const patch = version % 100000n;
+    return `${major}.${minor}.${patch}`;
 }

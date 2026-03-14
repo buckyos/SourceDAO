@@ -2,7 +2,14 @@ import hre from "hardhat";
 import { expect } from "chai";
 
 import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
-import { formatDaoStatus, formatProposalStatus, readDaoStatus, readProposalStatus } from "../tools/status_common.js";
+import {
+    formatCommitteeStatus,
+    formatDaoStatus,
+    formatProposalStatus,
+    readCommitteeStatus,
+    readDaoStatus,
+    readProposalStatus
+} from "../tools/status_common.js";
 
 const { ethers, networkHelpers } = await hre.network.connect();
 
@@ -89,6 +96,9 @@ async function deployProposalStatusFixture() {
     return {
         dao,
         committee,
+        project,
+        devToken,
+        normalToken,
         members,
         outsider
     };
@@ -152,5 +162,48 @@ describe("status tools", function () {
         expect(status.full?.threshold).to.equal("40");
         expect(status.full?.pendingSettleCount).to.equal(1);
         expect(formatProposalStatus(status)).to.contain("Pending settle count: 1");
+    });
+
+    it("reads committee governance status and observed voter eligibility", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProposalStatusFixture);
+        const status = await readCommitteeStatus(ethers, await fixture.dao.getAddress(), fixture.members[0].address);
+
+        expect(status.committeeAddress).to.equal(await fixture.committee.getAddress());
+        expect(status.version).to.equal("2.0.0");
+        expect(status.committeeVersion).to.equal("1");
+        expect(status.memberCount).to.equal(3);
+        expect(status.members).to.deep.equal(fixture.members.map((member: { address: string }) => member.address));
+        expect(status.devRatio).to.equal("200");
+        expect(status.finalRatio).to.equal("150");
+        expect(status.finalRatioCurrentlyApplied).to.equal(false);
+        expect(status.mainProjectName).to.equal("main");
+        expect(status.finalVersionText).to.equal("0.0.1");
+        expect(status.finalVersionReleased).to.equal(false);
+        expect(status.observed?.address).to.equal(fixture.members[0].address);
+        expect(status.observed?.isCurrentMember).to.equal(true);
+        expect(status.observed?.currentOrdinaryProposalEligible).to.equal(true);
+        expect(status.observed?.currentFullProposalEligible).to.equal(true);
+        expect(status.observed?.devTokenBalance).to.equal("2000");
+        expect(status.observed?.normalTokenBalance).to.equal("0");
+        expect(status.observed?.currentFullProposalVotingPower).to.equal("4000");
+        expect(formatCommitteeStatus(status)).to.contain("Committee version: 1");
+        expect(formatCommitteeStatus(status)).to.contain("Observed full proposal voting power: 4000");
+    });
+
+    it("reports final version release and outsider ineligibility in committee status", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProposalStatusFixture);
+        await fixture.project.setVersionReleasedTime(ethers.encodeBytes32String("main"), 1, 1234);
+
+        const status = await readCommitteeStatus(ethers, await fixture.dao.getAddress(), fixture.outsider.address);
+
+        expect(status.finalVersionReleased).to.equal(true);
+        expect(status.finalVersionReleasedAt).to.equal("1234");
+        expect(status.finalVersionReleasedAtIso).to.equal(new Date(1234 * 1000).toISOString());
+        expect(status.observed?.isCurrentMember).to.equal(false);
+        expect(status.observed?.currentOrdinaryProposalEligible).to.equal(false);
+        expect(status.observed?.currentFullProposalEligible).to.equal(false);
+        expect(status.observed?.currentFullProposalVotingPower).to.equal("0");
+        expect(formatCommitteeStatus(status)).to.contain("Final version released: true");
+        expect(formatCommitteeStatus(status)).to.contain("Observed full proposal eligible: false");
     });
 });

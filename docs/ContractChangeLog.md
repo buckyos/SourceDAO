@@ -49,6 +49,92 @@
 
 ---
 
+## 2026-03-14 Tools 状态工具补充记录
+
+### 范围
+
+- 工具：`tools/committee_status.ts`
+- 公共状态读取：`tools/status_common.ts`
+- 配置读取：`tools/vote_common.ts`
+- 相关测试：`test/status_tool.ts`
+
+### 背景
+
+前一轮工具整理已经补上了：
+
+1. `vote.ts`
+2. `vote_offline.ts`
+3. `dao_status.ts`
+4. `proposal_status.ts`
+
+但委员会仍然缺一个直接可读的治理状态工具。排查治理问题时，常见需求包括：
+
+1. 当前委员会成员是谁
+2. 当前 `committeeVersion`、`devRatio`、`finalRatio` 是多少
+3. `mainProjectName / finalVersion` 的目标版本是否已经发布
+4. 某个观察地址当前是否还能投 ordinary proposal
+5. 某个观察地址当前是否具备 full proposal 投票权，以及票重是多少
+
+这些信息此前只能靠多个合约 getter 手工拼接，不适合日常运维。
+
+### 具体改动
+
+#### 1. 新增 `committee_status.ts`
+
+新增 [tools/committee_status.ts](tools/committee_status.ts)，提供只读委员会状态查询。
+
+当前输出包括：
+
+1. `committeeVersion`
+2. 当前委员会成员列表和人数
+3. `devRatio / finalRatio`
+4. `mainProjectName / finalVersion`
+5. final version 是否已发布及其发布时间
+6. 可选观察地址的当前委员会资格
+7. 可选观察地址的当前 `DevToken / NormalToken` 余额
+8. 可选观察地址在当前语义下的 full proposal 票重
+
+#### 2. 扩展公共状态读取层
+
+在 [tools/status_common.ts](tools/status_common.ts) 中新增：
+
+1. `readCommitteeStatus(...)`
+2. `formatCommitteeStatus(...)`
+
+这样脚本入口和测试都复用同一套状态读取逻辑，避免再次把链上读取、格式化和 CLI 交互混在一起。
+
+#### 3. 为状态工具补充“观察地址”配置
+
+在 [tools/vote_common.ts](tools/vote_common.ts) 中新增了 `status.address` / `SOURCE_DAO_STATUS_ADDRESS` 的读取支持。
+
+优先级是：
+
+1. `SOURCE_DAO_STATUS_ADDRESS`
+2. `status.address`
+3. `voterAddress`
+
+这样 `committee_status.ts` 可以独立指定观察地址；如果没有单独指定，也能复用本地操作者地址。
+
+### 当前边界
+
+这次仍然刻意保持只读，不增加链上接口，因此有两个边界需要明确：
+
+1. 工具读取的是“当前”委员会和“当前”票重，不会追溯历史快照
+2. 最新 proposal id 当前没有公开 getter，所以工具会明确提示这项状态尚未暴露
+
+### 验证方式
+
+新增测试覆盖了：
+
+1. 当前委员会治理参数读取
+2. 观察地址为委员时的资格和票重读取
+3. 观察地址为 outsider 时的资格读取
+4. final version 已发布时的状态读取
+
+这次改动没有修改合约逻辑，也不涉及 ABI 或代理升级兼容性风险。
+
+---
+
 ## 2026-03-12 ProjectManagement 变更记录
 
 ### 合约

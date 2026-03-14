@@ -1,6 +1,7 @@
 {
   "voterAddress": "0xYourVoterAddress",
   "status": {
+    "address": "0xAddressToInspect",
     "proposalId": 123,
     "output": "text"
   },

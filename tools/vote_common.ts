@@ -26,6 +26,7 @@ interface VoteToolConfig {
     voterAddress?: string;
     status?: {
         proposalId?: number | string;
+        address?: string;
         output?: ToolOutputFormat;
     };
     offline?: {
@@ -250,6 +251,15 @@ export function getConfiguredVoterAddress(): string | undefined {
     }
 
     return requireAddress(value, "voter address");
+}
+
+export function getConfiguredStatusAddress(): string | undefined {
+    const value = process.env.SOURCE_DAO_STATUS_ADDRESS ?? loadedConfig.status?.address ?? loadedConfig.voterAddress;
+    if (value === undefined) {
+        return undefined;
+    }
+
+    return requireAddress(value, "status address");
 }
 
 export function getOfflineModeFromConfig(): OfflineMode | undefined {

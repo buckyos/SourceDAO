@@ -2,7 +2,7 @@
 
 ## 目标
 
-`tools/dao_status.ts` 和 `tools/proposal_status.ts` 是当前仓库里的只读辅助工具。
+`tools/dao_status.ts`、`tools/committee_status.ts` 和 `tools/proposal_status.ts` 是当前仓库里的只读辅助工具。
 
 它们的定位是：
 
@@ -25,6 +25,18 @@
 - `SourceDao.isDAOContract(...)` 是否识别该地址
 - 模块是否实现 `version()`
 
+### `tools/committee_status.ts`
+
+读取当前委员会治理状态，包括：
+
+- `committeeVersion`
+- 当前委员会成员和数量
+- `devRatio / finalRatio`
+- `mainProjectName / finalVersion`
+- final version 是否已经发布
+- 可选观察地址的当前 ordinary / full proposal 投票资格
+- 可选观察地址的 `DevToken / NormalToken` 余额和当前 full proposal 票重
+
 ### `tools/proposal_status.ts`
 
 读取单个 proposal 的状态，包括：
@@ -45,6 +57,12 @@
 
 ```bash
 npx hardhat run tools/dao_status.ts --network opmain
+```
+
+### Committee 状态
+
+```bash
+npx hardhat run tools/committee_status.ts --network opmain
 ```
 
 ### Proposal 状态
@@ -94,6 +112,7 @@ npx hardhat run tools/proposal_status.ts --network opmain
 {
   "daoAddress": "0xYourDaoAddress",
   "status": {
+    "address": "0xAddressToInspect",
     "proposalId": 123,
     "output": "json"
   }
@@ -103,6 +122,7 @@ npx hardhat run tools/proposal_status.ts --network opmain
 支持字段：
 
 - `daoAddress`
+- `status.address`
 - `status.proposalId`
 - `status.output`
 
@@ -136,6 +156,9 @@ npx hardhat run tools/proposal_status.ts --network opmain
 - `SOURCE_DAO_OUTPUT_FORMAT`
   - `text` 或 `json`
 
+- `SOURCE_DAO_STATUS_ADDRESS`
+  - 为 `committee_status.ts` 指定要观察的地址；若未提供，会回退到 `voterAddress`
+
 ### Proposal 状态
 
 - `SOURCE_DAO_PROPOSAL_ID`
@@ -150,6 +173,7 @@ npx hardhat run tools/proposal_status.ts --network opmain
 1. 普通 proposal 的 snapshot version 当前没有公开 getter
 2. full proposal 哪些具体 voter 已经 `settled` 当前也没有公开 getter
 3. full proposal 工具能给出 `pendingSettleCount`，但不能精确列出每个未 settle 地址
+4. `committee_status.ts` 当前可以判断“当前”委员会资格和 full proposal 当前票重，但不会追溯历史快照
 
 如果后续需要更深的 full proposal 诊断，下一步更适合单独补一个 `full_proposal_status.ts`
 
@@ -158,6 +182,7 @@ npx hardhat run tools/proposal_status.ts --network opmain
 当前已经有工具层回归测试覆盖：
 
 - `dao_status` 的已配置 / 已 finalize 状态读取
+- `committee_status` 的治理参数、成员和观察地址资格读取
 - ordinary proposal 状态读取
 - full proposal 状态读取
 
