@@ -6,12 +6,38 @@ import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
 const { ethers, networkHelpers } = await hre.network.connect();
 const SEVEN_DAYS = 7 * 24 * 60 * 60;
 const MAIN_PROJECT_NAME = ethers.encodeBytes32String("main");
+const PROJECT_NAME = ethers.encodeBytes32String("SourceDao");
+const VERSION_ONE = 100001n;
+const VERSION_TWO = 200001n;
+const THIRTY_DAYS = 30n * 24n * 60n * 60n;
+const ONE_HOUR = 3600n;
 
 function upgradeParams(proxyAddress: string, implementationAddress: string) {
     return [
         ethers.zeroPadValue(proxyAddress, 32),
         ethers.zeroPadValue(implementationAddress, 32),
         ethers.encodeBytes32String("upgradeContract")
+    ];
+}
+
+function toBytes32(value: bigint) {
+    return ethers.zeroPadValue(ethers.toBeHex(value), 32);
+}
+
+function projectParams(
+    projectId: bigint,
+    version: bigint,
+    startDate: bigint,
+    endDate: bigint,
+    action: "createProject" | "acceptProject"
+) {
+    return [
+        toBytes32(projectId),
+        PROJECT_NAME,
+        toBytes32(version),
+        toBytes32(startDate),
+        toBytes32(endDate),
+        ethers.encodeBytes32String(action)
     ];
 }
 
@@ -150,6 +176,128 @@ async function deployLegacyDaoUpgradeFixture() {
         moduleAddresses,
         nextDaoImplementation,
         nextDaoImplementationAddress: await nextDaoImplementation.getAddress()
+    };
+}
+
+async function deployFinalizedUpgradeFixture() {
+    const signers = await ethers.getSigners();
+    const [manager, memberTwo, memberThree, contributor, buyer] = signers;
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        [manager.address, memberTwo.address, memberThree.address],
+        1,
+        200,
+        PROJECT_NAME,
+        Number(VERSION_TWO),
+        150,
+        daoAddress
+    ]);
+    const project = await deployUUPSProxy(ethers, "ProjectManagement", [1, daoAddress]);
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        1_000_000,
+        [manager.address],
+        [5_000],
+        daoAddress
+    ]);
+    const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["BDT", "BDT", daoAddress]);
+    const lockup = await deployUUPSProxy(ethers, "SourceTokenLockup", [PROJECT_NAME, VERSION_TWO, daoAddress]);
+    const dividend = await deployUUPSProxy(ethers, "DividendContract", [Number(ONE_HOUR), daoAddress]);
+    const acquired = await deployUUPSProxy(ethers, "Acquired", [1, daoAddress]);
+
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
+    await (await dao.setTokenLockupAddress(await lockup.getAddress())).wait();
+    await (await dao.setTokenDividendAddress(await dividend.getAddress())).wait();
+    await (await dao.setAcquiredAddress(await acquired.getAddress())).wait();
+    await (await dao.finalizeInitialization()).wait();
+
+    await (await devToken.dev2normal(1_000)).wait();
+    await (await normalToken.transfer(buyer.address, 200)).wait();
+
+    const saleToken = await (await ethers.getContractFactory("TestToken")).deploy(
+        "SaleToken",
+        "SALE",
+        18,
+        1_000_000n,
+        manager.address
+    );
+    await saleToken.waitForDeployment();
+
+    const nextCommitteeImplementation = await (await ethers.getContractFactory("SourceDaoCommitteeV2Mock")).deploy();
+    await nextCommitteeImplementation.waitForDeployment();
+
+    const nextDaoImplementation = await (await ethers.getContractFactory("SourceDaoV2Mock")).deploy();
+    await nextDaoImplementation.waitForDeployment();
+
+    return {
+        manager,
+        memberTwo,
+        memberThree,
+        contributor,
+        buyer,
+        dao,
+        committee,
+        project,
+        devToken,
+        normalToken,
+        lockup,
+        dividend,
+        acquired,
+        saleToken,
+        nextCommitteeImplementationAddress: await nextCommitteeImplementation.getAddress(),
+        nextDaoImplementationAddress: await nextDaoImplementation.getAddress()
+    };
+}
+
+async function finishProject(
+    fixture: any,
+    committee: any,
+    version: bigint = VERSION_ONE
+) {
+    const projectId = await fixture.project.projectIdCounter();
+    const latestBlock = await ethers.provider.getBlock("latest");
+    if (latestBlock === null) {
+        throw new Error("latest block not found");
+    }
+
+    const startDate = BigInt(latestBlock.timestamp);
+    const endDate = startDate + THIRTY_DAYS;
+
+    await (await fixture.project.createProject(
+        1_000n,
+        PROJECT_NAME,
+        version,
+        startDate,
+        endDate,
+        [],
+        []
+    )).wait();
+
+    const createProposalId = (await fixture.project.projectOf(projectId)).proposalId;
+    const createParams = projectParams(projectId, version, startDate, endDate, "createProject");
+    await (await committee.connect(fixture.manager).support(createProposalId, createParams)).wait();
+    await (await committee.connect(fixture.memberTwo).support(createProposalId, createParams)).wait();
+    await (await fixture.project.promoteProject(projectId)).wait();
+
+    await (await fixture.project.acceptProject(projectId, 4, [
+        { contributor: fixture.contributor.address, value: 100 }
+    ])).wait();
+
+    const acceptProposalId = (await fixture.project.projectOf(projectId)).proposalId;
+    const acceptParams = projectParams(projectId, version, startDate, endDate, "acceptProject");
+    await (await committee.connect(fixture.manager).support(acceptProposalId, acceptParams)).wait();
+    await (await committee.connect(fixture.memberTwo).support(acceptProposalId, acceptParams)).wait();
+    await (await fixture.project.promoteProject(projectId)).wait();
+
+    return {
+        projectId,
+        releaseTime: await fixture.project.versionReleasedTime(PROJECT_NAME, version)
     };
 }
 
@@ -414,5 +562,98 @@ describe("upgrade", function () {
             .withArgs(200n, newRatio)
             .to.emit(upgradedCommittee, "ProposalExecuted")
             .withArgs(ordinaryProposalId);
+    });
+
+    it("keeps finalized dao configuration and acquired flows operational across dao upgrade", async function () {
+        const fixture = await networkHelpers.loadFixture(deployFinalizedUpgradeFixture);
+        const daoAddress = await fixture.dao.getAddress();
+        const committeeAddress = await fixture.committee.getAddress();
+        const proposalId = 1n;
+        const params = upgradeParams(daoAddress, fixture.nextDaoImplementationAddress);
+
+        await expect(fixture.committee.connect(fixture.manager).prepareContractUpgrade(daoAddress, fixture.nextDaoImplementationAddress))
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(proposalId, false);
+
+        await (await fixture.committee.connect(fixture.manager).support(proposalId, params)).wait();
+        await (await fixture.committee.connect(fixture.memberTwo).support(proposalId, params)).wait();
+
+        await expect(fixture.dao.upgradeToAndCall(fixture.nextDaoImplementationAddress, "0x"))
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        const upgradedDao = await ethers.getContractAt("SourceDaoV2Mock", daoAddress);
+        expect(await upgradedDao.version()).to.equal("2.1.0");
+        expect(await upgradedDao.bootstrapFinalized()).to.equal(true);
+        expect(await upgradedDao.committee()).to.equal(committeeAddress);
+        expect(await upgradedDao.project()).to.equal(await fixture.project.getAddress());
+        expect(await upgradedDao.devToken()).to.equal(await fixture.devToken.getAddress());
+        expect(await upgradedDao.normalToken()).to.equal(await fixture.normalToken.getAddress());
+        expect(await upgradedDao.lockup()).to.equal(await fixture.lockup.getAddress());
+        expect(await upgradedDao.dividend()).to.equal(await fixture.dividend.getAddress());
+        expect(await upgradedDao.acquired()).to.equal(await fixture.acquired.getAddress());
+        await expect(upgradedDao.setDevTokenAddress(await fixture.devToken.getAddress())).to.be.revertedWith(
+            "bootstrap finalized"
+        );
+
+        const managerNormalBeforeSale = await fixture.normalToken.balanceOf(fixture.manager.address);
+
+        await (await fixture.saleToken.approve(await fixture.acquired.getAddress(), 100n)).wait();
+        await (await fixture.acquired.startInvestment({
+            whitelist: [fixture.buyer.address],
+            firstPercent: [10_000],
+            tokenAddress: await fixture.saleToken.getAddress(),
+            tokenAmount: 100n,
+            tokenRatio: { tokenAmount: 5n, daoTokenAmount: 1n },
+            step1Duration: Number(ONE_HOUR),
+            step2Duration: Number(ONE_HOUR),
+            canEndEarly: false
+        })).wait();
+
+        await (await fixture.normalToken.connect(fixture.buyer).approve(await fixture.acquired.getAddress(), 20n)).wait();
+        await (await fixture.acquired.connect(fixture.buyer).invest(1n, 20n)).wait();
+        await (await fixture.acquired.endInvestment(1n)).wait();
+
+        expect(await fixture.saleToken.balanceOf(fixture.buyer.address)).to.equal(100n);
+        expect((await fixture.acquired.getInvestmentInfo(1n)).end).to.equal(true);
+        expect(await fixture.normalToken.balanceOf(fixture.manager.address)).to.equal(managerNormalBeforeSale + 20n);
+    });
+
+    it("keeps finalized project governance operational across committee upgrade", async function () {
+        const fixture = await networkHelpers.loadFixture(deployFinalizedUpgradeFixture);
+        const committeeAddress = await fixture.committee.getAddress();
+        const proposalId = 1n;
+        const params = upgradeParams(committeeAddress, fixture.nextCommitteeImplementationAddress);
+
+        await expect(fixture.committee.connect(fixture.manager).prepareContractUpgrade(
+            committeeAddress,
+            fixture.nextCommitteeImplementationAddress
+        ))
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(proposalId, false);
+
+        await (await fixture.committee.connect(fixture.manager).support(proposalId, params)).wait();
+        await (await fixture.committee.connect(fixture.memberTwo).support(proposalId, params)).wait();
+
+        await expect(fixture.committee.upgradeToAndCall(fixture.nextCommitteeImplementationAddress, "0x"))
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(proposalId)
+            .to.emit(fixture.committee, "ProposalExecuted")
+            .withArgs(proposalId);
+
+        const upgradedCommittee = await ethers.getContractAt("SourceDaoCommitteeV2Mock", committeeAddress);
+        expect(await upgradedCommittee.version()).to.equal("2.1.0");
+        expect(await upgradedCommittee.members()).to.deep.equal([
+            fixture.manager.address,
+            fixture.memberTwo.address,
+            fixture.memberThree.address
+        ]);
+
+        const projectRun = await finishProject(fixture, upgradedCommittee);
+        expect(projectRun.releaseTime).to.be.greaterThan(0n);
+        expect((await fixture.project.projectOf(projectRun.projectId)).state).to.equal(3n);
+
+        await (await fixture.project.connect(fixture.contributor).withdrawContributions([projectRun.projectId])).wait();
+        expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(1_000n);
     });
 });

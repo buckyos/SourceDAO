@@ -1938,3 +1938,105 @@
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && ./node_modules/.bin/hardhat test --grep "system integration"'` 通过
 - `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
 - 当前全量回归结果：`196 passing, 1 pending`
+
+---
+
+## 2026-03-14 升级联动 / full proposal outsider 风险测试补充记录
+
+### 范围
+
+这一轮继续补的是两类测试空白：
+
+1. finalized 真实系统在 `Dao` 或 `Committee` 升级后的联动回归
+2. `full proposal` 下 zero-balance outsider 投票风险的补充表征与 future hardening 断言
+
+涉及测试文件：
+
+1. [test/upgrade.ts](test/upgrade.ts)
+2. [test/committee.ts](test/committee.ts)
+
+### 背景
+
+在前几轮补测后，系统已经覆盖了：
+
+1. `Dao` finalize 之后的系统 smoke
+2. `Committee` 普通 proposal 的 snapshot 治理语义
+3. `Dao` / `Committee` 的基础升级兼容
+
+但还缺两块更贴近真实发布风险的回归：
+
+1. 一个已经 finalize 并真实接好各模块的系统，在升级 `Dao` 或 `Committee` 后是否还能继续跑主路径
+2. `full proposal` 中 zero-balance outsider 当前到底会把哪些结算路径拖住，未来修复后预期行为又是什么
+
+### 本次补充
+
+#### 1. finalized 系统的 `Dao` 升级联动回归
+
+新增一条 finalized `Dao` 升级回归：
+
+1. 部署并配置完整 7 模块系统
+2. 调用 `finalizeInitialization()`
+3. 由 `Committee` 通过升级提案升级 `SourceDao`
+4. 升级后验证：
+   - `bootstrapFinalized` 仍保持 `true`
+   - 各模块地址保持不变
+   - bootstrap 配置入口仍然关闭
+5. 再继续跑一条真实 `Acquired` 投资和结算链路
+
+这条测试的重点不是只看 `version()`，而是验证：
+
+1. finalized `Dao` 的配置冻结状态不会在升级后丢失
+2. 依赖 `Dao` 模块寻址的业务合约在升级后仍可继续工作
+
+#### 2. finalized 系统的 `Committee` 升级联动回归
+
+新增一条 finalized `Committee` 升级回归：
+
+1. 部署并 finalize 完整系统
+2. 由现有委员会通过升级提案升级 `Committee`
+3. 升级后验证成员列表保持不变
+4. 再继续跑一条真实 `Project -> Committee` 项目创建、验收、发布链路
+5. 最后验证贡献者仍可正常提取 `DevToken` 奖励
+
+这条测试的意义是：
+
+1. 证明 `Committee` 升级不只是治理接口本身可用
+2. 还证明其作为 `ProjectManagement` 下游治理模块时，升级后真实业务链路仍可继续执行
+
+#### 3. zero-balance outsider `reject` 路径表征
+
+之前已经有一条测试表征：
+
+1. zero-balance outsider 的 `support` 记录会进入 `full proposal` 的 settle 集合
+2. 即使票重为 0，也必须显式 settle 才能结束提案
+
+本次又补了一条对称路径：
+
+1. zero-balance outsider 的 `reject` 记录同样会进入 settle 集合
+2. 即使票重仍是 0，也会把拒绝型 full proposal 卡在 `InProgress`
+3. 只有显式把 outsider 地址送进 `endFullPropose(...)` 批次，提案才会真正进入 `Rejected`
+
+这让当前风险边界更清楚：问题不只存在于 outsider `support`，`reject` 也一样成立。
+
+#### 4. future hardening 的 pending 测试补充
+
+本次额外新增一条 `it.skip(...)`，用于表达未来理想行为：
+
+1. zero-balance outsider 不应再被允许给 `full proposal` 记票
+2. 因此真实有票重的 voter 在 settle 完成后，就不应再额外依赖 outsider 记录来结束提案
+
+这样后续如果真正收紧 `full proposal` voter eligibility，只需要取消 `skip` 并让实现对齐即可。
+
+### 当前结论
+
+补完这一轮后，测试覆盖又向前推进了两步：
+
+1. `Dao` / `Committee` 升级已经不再只是“升级动作成功”，而是覆盖到了 finalized 真实系统升级后的业务连续性
+2. `full proposal` 的 outsider 风险现在不仅有 support 表征，也有 reject 表征和未来修复断言
+
+### 验证结果
+
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && ./node_modules/.bin/hardhat test test-hh3/upgrade.ts test-hh3/committee.ts'` 通过
+- 结果：`30 passing, 2 pending`
+- `bash -lc 'source "$HOME/.nvm/nvm.sh" && npm test'` 全量通过
+- 当前全量回归结果：`199 passing, 2 pending`
