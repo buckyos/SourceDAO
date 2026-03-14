@@ -17,13 +17,9 @@ This repository requires Node.js v22 or higher, with the latest LTS version reco
         }
     },
    ````
-4. 在根目录执行`npx hardhat run vote.ts --network opmain`
-5. 等待连接网络，并检查输出的签名地址是否正确
-6. 输入要投票的提案id
-7. 检查提案的通用属性是否正确
-8. 输入支持/反对该提案，支持输入s，反对输入r
-9. 检查从后台返回的提案参数，输入y确定提交
-10. 等待提交上链，程序正常退出即可
+4. 推荐执行`npx hardhat run tools/vote.ts --network opmain`
+5. 根目录的`vote.ts`仍保留兼容入口，但后续建议统一使用`tools/vote.ts`
+6. 更完整的使用说明、支持范围、风险说明和故障排查见[docs/VoteTool.md](docs/VoteTool.md)
 
 ## How to Vote
 1. Clone this repository `https://github.com/buckyos/SourceDAO` to your local machine
@@ -39,10 +35,6 @@ This repository requires Node.js v22 or higher, with the latest LTS version reco
         }
     },
    ````
-4. Run `npx hardhat run vote.ts --network opmain` in the root directory
-5. Wait for network connection and verify that the output signing address is correct
-6. Enter the proposal ID you want to vote on
-7. Check if the general properties of the proposal are correct
-8. Enter support/oppose for the proposal: enter 's' for support, 'r' for oppose
-9. Check the proposal parameters returned from the backend, enter 'y' to confirm submission
-10. Wait for on-chain submission, the program will exit normally when completed
+4. Prefer running `npx hardhat run tools/vote.ts --network opmain`
+5. The root `vote.ts` remains as a compatibility entrypoint, but new usage should target `tools/vote.ts`
+6. See [docs/VoteTool.md](docs/VoteTool.md) for detailed usage, supported proposal types, limitations, and troubleshooting
