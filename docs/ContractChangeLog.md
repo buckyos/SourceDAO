@@ -49,6 +49,104 @@
 
 ---
 
+## 2026-03-14 Tools 项目状态工具补充记录
+
+### 范围
+
+- 工具：`tools/project_status.ts`
+- 公共状态读取：`tools/status_common.ts`
+- 配置读取：`tools/vote_common.ts`
+- 相关测试：`test/status_tool.ts`
+
+### 背景
+
+在补齐 `dao_status`、`committee_status` 和 `proposal_status` 之后，项目生命周期仍然缺一个直接可读的运维入口。
+
+排查项目问题时，常见信息包括：
+
+1. 当前项目是否存在
+2. 项目处于 `Preparing / Developing / Accepting / Finished / Rejected` 的哪一个状态
+3. 关联 committee proposal 当前是什么状态
+4. contribution 列表和 `hasClaim` 标记如何
+5. 指定 contributor 当前有没有贡献值、是否已经领取
+6. 当前版本是否已经被视为 released
+
+这些信息此前需要手工组合：
+
+- `projectOf(...)`
+- `projectDetailOf(...)`
+- `contributionOf(...)`
+- `latestProjectVersion(...)`
+- `versionReleasedTime(...)`
+- `committee.proposalOf(...)`
+
+这不利于日常排查和发布前核对。
+
+### 具体改动
+
+#### 1. 新增 `project_status.ts`
+
+新增 [tools/project_status.ts](tools/project_status.ts)，提供项目状态的只读查询。
+
+当前输出包括：
+
+1. `manager / budget / projectName / version`
+2. 当前项目状态和结果枚举
+3. 关联 proposal id 与其当前状态
+4. extra token 配置
+5. contribution 列表、总贡献值和 `hasClaim`
+6. 当前版本是否已发布
+7. 同名项目的 latest version 信息
+8. 可选观察地址的 contribution 值和是否已领取
+
+#### 2. 扩展状态配置
+
+在 [tools/vote_common.ts](tools/vote_common.ts) 中新增：
+
+1. `status.projectId`
+2. `SOURCE_DAO_PROJECT_ID`
+
+这样 `project_status.ts` 可以和 `proposal_status.ts` 一样支持：
+
+- 配置文件预设
+- 环境变量覆盖
+- 未配置时交互输入
+
+#### 3. 继续复用公共状态读取层
+
+在 [tools/status_common.ts](tools/status_common.ts) 中新增：
+
+1. `readProjectStatus(...)`
+2. `formatProjectStatus(...)`
+
+这样项目状态工具保持和现有状态工具同样的结构：
+
+- 链上读取
+- 结构化状态对象
+- 文本格式化
+- CLI 入口脚本
+
+### 当前边界
+
+这次仍然刻意保持只读，不增加链上接口，因此有两个边界需要明确：
+
+1. 工具读取的是当前 `projectDetailOf(...)` 的贡献存量，不会回放历史修改轨迹
+2. 观察地址的 `hasClaim` 判断来自当前 contribution 记录，不会重建历史提取流水
+
+### 验证方式
+
+新增测试覆盖了：
+
+1. 项目从创建、开发、验收到完成的完整生命周期
+2. 关联 committee proposal 状态读取
+3. contribution 列表与总贡献值读取
+4. contributor 已领取后的观察地址状态读取
+5. 项目版本发布状态读取
+
+这次改动没有修改任何合约逻辑，也不涉及 ABI、代理升级或存储布局兼容性风险。
+
+---
+
 ## 2026-03-14 Tools 状态工具补充记录
 
 ### 范围

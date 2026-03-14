@@ -2,6 +2,7 @@
   "voterAddress": "0xYourVoterAddress",
   "status": {
     "address": "0xAddressToInspect",
+    "projectId": 1,
     "proposalId": 123,
     "output": "text"
   },

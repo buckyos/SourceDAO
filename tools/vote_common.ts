@@ -25,6 +25,7 @@ interface VoteToolConfig {
     proposalApiBase?: string;
     voterAddress?: string;
     status?: {
+        projectId?: number | string;
         proposalId?: number | string;
         address?: string;
         output?: ToolOutputFormat;
@@ -349,6 +350,22 @@ export function getConfiguredProposalId(): number | undefined {
     return parseProposalId(configured);
 }
 
+export function getConfiguredProjectId(): number | undefined {
+    const configured = process.env.SOURCE_DAO_PROJECT_ID ?? loadedConfig.status?.projectId;
+    if (configured === undefined) {
+        return undefined;
+    }
+
+    if (typeof configured === "number") {
+        if (!Number.isInteger(configured) || configured <= 0) {
+            throw new Error(`Invalid project id: ${configured}`);
+        }
+        return configured;
+    }
+
+    return parseProjectId(configured);
+}
+
 export function getProposalType(params: unknown[]): SupportedProposalType {
     const proposalType = requireString(params[params.length - 1], "proposal type");
     switch (proposalType) {
@@ -408,6 +425,15 @@ export function parseProposalId(value: string): number {
     }
 
     return proposalId;
+}
+
+export function parseProjectId(value: string): number {
+    const projectId = parseInt(value, 10);
+    if (Number.isNaN(projectId) || projectId <= 0) {
+        throw new Error("Invalid project id. Please input a valid number greater than 0.");
+    }
+
+    return projectId;
 }
 
 export async function fetchProposalParams(apiBase: string, proposalId: number): Promise<unknown[]> {

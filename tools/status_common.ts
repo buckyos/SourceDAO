@@ -98,6 +98,63 @@ export interface CommitteeStatus {
     latestProposalIdExposed: false;
 }
 
+export interface ProjectExtraTokenStatus {
+    token: string;
+    amount: string;
+}
+
+export interface ProjectContributionStatus {
+    contributor: string;
+    value: string;
+    hasClaim: boolean;
+}
+
+export interface ProjectObservedAddressStatus {
+    address: string;
+    contributionValue: string;
+    hasClaim: boolean;
+}
+
+export interface ProjectStatus {
+    daoAddress: string;
+    projectAddress: string;
+    committeeAddress: string;
+    projectId: number;
+    exists: boolean;
+    manager: string;
+    proposalId: string;
+    proposalStateId: number | null;
+    proposalStateName: string | null;
+    budget: string;
+    projectNameRaw: string;
+    projectName: string;
+    version: string;
+    versionText: string;
+    startDate: string;
+    startDateIso: string;
+    endDate: string;
+    endDateIso: string;
+    stateId: number;
+    stateName: string;
+    resultId: number;
+    resultName: string;
+    extraTokens: ProjectExtraTokenStatus[];
+    contributions: ProjectContributionStatus[];
+    contributionCount: number;
+    totalContribution: string;
+    latestKnownVersion: string;
+    latestKnownVersionText: string;
+    latestKnownVersionReleasedAt: string;
+    latestKnownVersionReleasedAtIso: string | null;
+    requestedVersionReleased: boolean;
+    requestedVersionReleasedAt: string;
+    requestedVersionReleasedAtIso: string | null;
+    observed: ProjectObservedAddressStatus | null;
+}
+
+const PROJECT_STATE_NAMES = ["Preparing", "Developing", "Accepting", "Finished", "Rejected"] as const;
+const PROJECT_RESULT_NAMES = ["InProgress", "Expired", "Failed", "Normal", "Good", "Excellent"] as const;
+
 export async function readDaoStatus(hardhatEthers: any, daoAddress: string): Promise<DaoStatus> {
     const provider = hardhatEthers.provider;
     const dao = await hardhatEthers.getContractAt("SourceDao", daoAddress);
@@ -252,6 +309,98 @@ export async function readCommitteeStatus(
     };
 }
 
+export async function readProjectStatus(
+    hardhatEthers: any,
+    daoAddress: string,
+    projectId: number,
+    observedAddress?: string
+): Promise<ProjectStatus> {
+    const dao = await hardhatEthers.getContractAt("SourceDao", daoAddress);
+    const projectAddress = await dao.project();
+    const committeeAddress = await dao.committee();
+    const project = await hardhatEthers.getContractAt("ProjectManagement", projectAddress);
+    const committee = await hardhatEthers.getContractAt("SourceDaoCommittee", committeeAddress);
+
+    const projectInfo = await project.projectOf(projectId);
+    const exists = projectInfo.manager !== ZeroAddress;
+    const detail = exists ? await project.projectDetailOf(projectId) : { contributions: [] };
+    const contributions = detail.contributions.map((contribution: any) => ({
+        contributor: contribution.contributor,
+        value: contribution.value.toString(),
+        hasClaim: contribution.hasClaim
+    })) satisfies ProjectContributionStatus[];
+    const totalContribution = contributions.reduce((sum, contribution) => sum + BigInt(contribution.value), 0n);
+    const projectNameRaw = projectInfo.projectName;
+    const latestVersion = exists ? await project.latestProjectVersion(projectNameRaw) : { version: 0n, versionTime: 0n };
+    const requestedVersionReleasedAt = exists
+        ? BigInt(await project.versionReleasedTime(projectNameRaw, projectInfo.version))
+        : 0n;
+
+    let proposalStateId: number | null = null;
+    let proposalStateName: string | null = null;
+    if (exists && projectInfo.proposalId > 0n && committeeAddress !== ZeroAddress) {
+        const proposal = await committee.proposalOf(projectInfo.proposalId);
+        proposalStateId = Number(proposal.state);
+        proposalStateName = PROPOSAL_STATE_NAMES[proposalStateId] ?? `Unknown(${proposalStateId})`;
+    }
+
+    let observed: ProjectObservedAddressStatus | null = null;
+    if (observedAddress !== undefined) {
+        const normalizedAddress = getAddress(observedAddress);
+        const contributionValue = exists ? BigInt(await project.contributionOf(projectId, normalizedAddress)).toString() : "0";
+        const contributionEntry = contributions.find((entry) => entry.contributor === normalizedAddress);
+        observed = {
+            address: normalizedAddress,
+            contributionValue,
+            hasClaim: contributionEntry?.hasClaim ?? false
+        };
+    }
+
+    return {
+        daoAddress: await dao.getAddress(),
+        projectAddress: await project.getAddress(),
+        committeeAddress: await committee.getAddress(),
+        projectId,
+        exists,
+        manager: projectInfo.manager,
+        proposalId: projectInfo.proposalId.toString(),
+        proposalStateId,
+        proposalStateName,
+        budget: projectInfo.budget.toString(),
+        projectNameRaw,
+        projectName: decodeBytes32Value(projectNameRaw),
+        version: projectInfo.version.toString(),
+        versionText: formatVersionNumber(projectInfo.version),
+        startDate: projectInfo.startDate.toString(),
+        startDateIso: new Date(Number(projectInfo.startDate) * 1000).toISOString(),
+        endDate: projectInfo.endDate.toString(),
+        endDateIso: new Date(Number(projectInfo.endDate) * 1000).toISOString(),
+        stateId: Number(projectInfo.state),
+        stateName: PROJECT_STATE_NAMES[Number(projectInfo.state)] ?? `Unknown(${Number(projectInfo.state)})`,
+        resultId: Number(projectInfo.result),
+        resultName: PROJECT_RESULT_NAMES[Number(projectInfo.result)] ?? `Unknown(${Number(projectInfo.result)})`,
+        extraTokens: projectInfo.extraTokens.map((token: string, index: number) => ({
+            token,
+            amount: projectInfo.extraTokenAmounts[index].toString()
+        })),
+        contributions,
+        contributionCount: contributions.length,
+        totalContribution: totalContribution.toString(),
+        latestKnownVersion: latestVersion.version.toString(),
+        latestKnownVersionText: formatVersionNumber(latestVersion.version),
+        latestKnownVersionReleasedAt: latestVersion.versionTime.toString(),
+        latestKnownVersionReleasedAtIso:
+            BigInt(latestVersion.versionTime) > 0n
+                ? new Date(Number(latestVersion.versionTime) * 1000).toISOString()
+                : null,
+        requestedVersionReleased: requestedVersionReleasedAt > 0n,
+        requestedVersionReleasedAt: requestedVersionReleasedAt.toString(),
+        requestedVersionReleasedAtIso:
+            requestedVersionReleasedAt > 0n ? new Date(Number(requestedVersionReleasedAt) * 1000).toISOString() : null,
+        observed
+    };
+}
+
 export function formatDaoStatus(status: DaoStatus): string {
     const moduleLines = status.modules.map((module) => {
         const versionText = module.version === null ? "n/a" : module.version;
@@ -332,6 +481,62 @@ export function formatCommitteeStatus(status: CommitteeStatus): string {
         lines.push(`Observed normal token balance: ${status.observed.normalTokenBalance}`);
         lines.push(`Observed dev token balance: ${status.observed.devTokenBalance}`);
         lines.push(`Observed full proposal voting power: ${status.observed.currentFullProposalVotingPower}`);
+    }
+
+    return lines.join("\n");
+}
+
+export function formatProjectStatus(status: ProjectStatus): string {
+    const lines = [
+        `DAO: ${status.daoAddress}`,
+        `Project contract: ${status.projectAddress}`,
+        `Committee: ${status.committeeAddress}`,
+        `Project id: ${status.projectId}`,
+        `Exists: ${status.exists}`,
+        `Manager: ${status.manager}`,
+        `Proposal id: ${status.proposalId}`,
+        `Proposal state: ${
+            status.proposalStateName === null ? "n/a" : `${status.proposalStateName} (${status.proposalStateId})`
+        }`,
+        `Budget: ${status.budget}`,
+        `Project name: ${status.projectName} (${status.projectNameRaw})`,
+        `Version: ${status.versionText} (${status.version})`,
+        `Start date: ${status.startDate} (${status.startDateIso})`,
+        `End date: ${status.endDate} (${status.endDateIso})`,
+        `State: ${status.stateName} (${status.stateId})`,
+        `Result: ${status.resultName} (${status.resultId})`,
+        `Extra tokens: ${
+            status.extraTokens.length === 0
+                ? "none"
+                : status.extraTokens.map((entry) => `${entry.token}:${entry.amount}`).join(", ")
+        }`,
+        `Contribution count: ${status.contributionCount}`,
+        `Total contribution: ${status.totalContribution}`,
+        `Contributions: ${
+            status.contributions.length === 0
+                ? "none"
+                : status.contributions
+                      .map((entry) => `${entry.contributor}:${entry.value}:claimed=${entry.hasClaim}`)
+                      .join(", ")
+        }`,
+        `Latest known version: ${status.latestKnownVersionText} (${status.latestKnownVersion})`,
+        `Latest known version released at: ${
+            status.latestKnownVersionReleasedAtIso === null
+                ? `${status.latestKnownVersionReleasedAt} (not released)`
+                : `${status.latestKnownVersionReleasedAt} (${status.latestKnownVersionReleasedAtIso})`
+        }`,
+        `Requested version released: ${status.requestedVersionReleased}`,
+        `Requested version released at: ${
+            status.requestedVersionReleasedAtIso === null
+                ? `${status.requestedVersionReleasedAt} (not released)`
+                : `${status.requestedVersionReleasedAt} (${status.requestedVersionReleasedAtIso})`
+        }`
+    ];
+
+    if (status.observed !== null) {
+        lines.push(`Observed address: ${status.observed.address}`);
+        lines.push(`Observed contribution value: ${status.observed.contributionValue}`);
+        lines.push(`Observed has claimed: ${status.observed.hasClaim}`);
     }
 
     return lines.join("\n");

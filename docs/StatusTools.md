@@ -2,7 +2,7 @@
 
 ## 目标
 
-`tools/dao_status.ts`、`tools/committee_status.ts` 和 `tools/proposal_status.ts` 是当前仓库里的只读辅助工具。
+`tools/dao_status.ts`、`tools/committee_status.ts`、`tools/project_status.ts` 和 `tools/proposal_status.ts` 是当前仓库里的只读辅助工具。
 
 它们的定位是：
 
@@ -49,6 +49,20 @@
 - `support / reject` 地址和数量
 - full proposal 的 `threshold / agree / reject / settled / pending`
 
+### `tools/project_status.ts`
+
+读取单个项目的业务状态，包括：
+
+- 项目是否存在
+- manager / budget / `projectName / version`
+- `Preparing / Developing / Accepting / Finished / Rejected` 当前状态
+- 当前结果枚举
+- 关联 committee proposal 的状态
+- extra token 配置
+- contribution 列表、总贡献值和 `hasClaim`
+- 当前版本是否已发布，以及同名项目的 latest version 信息
+- 可选观察地址的 contribution 值和是否已领取
+
 当前普通 proposal 的 snapshot version 没有公开 getter，所以工具会明确提示这项状态目前无法直接从链上接口读取。
 
 ## 使用方式
@@ -69,6 +83,12 @@ npx hardhat run tools/committee_status.ts --network opmain
 
 ```bash
 npx hardhat run tools/proposal_status.ts --network opmain
+```
+
+### Project 状态
+
+```bash
+npx hardhat run tools/project_status.ts --network opmain
 ```
 
 如果没有通过环境变量或配置文件提供 proposal id，`proposal_status.ts` 会进入交互输入。
@@ -113,6 +133,7 @@ npx hardhat run tools/proposal_status.ts --network opmain
   "daoAddress": "0xYourDaoAddress",
   "status": {
     "address": "0xAddressToInspect",
+    "projectId": 1,
     "proposalId": 123,
     "output": "json"
   }
@@ -123,6 +144,7 @@ npx hardhat run tools/proposal_status.ts --network opmain
 
 - `daoAddress`
 - `status.address`
+- `status.projectId`
 - `status.proposalId`
 - `status.output`
 
@@ -164,6 +186,11 @@ npx hardhat run tools/proposal_status.ts --network opmain
 - `SOURCE_DAO_PROPOSAL_ID`
   - 直接指定 proposal id，避免交互输入
 
+### Project 状态
+
+- `SOURCE_DAO_PROJECT_ID`
+  - 直接指定 project id，避免交互输入
+
 ## 当前边界
 
 这两个工具是只读工具，不会发送交易。
@@ -174,6 +201,7 @@ npx hardhat run tools/proposal_status.ts --network opmain
 2. full proposal 哪些具体 voter 已经 `settled` 当前也没有公开 getter
 3. full proposal 工具能给出 `pendingSettleCount`，但不能精确列出每个未 settle 地址
 4. `committee_status.ts` 当前可以判断“当前”委员会资格和 full proposal 当前票重，但不会追溯历史快照
+5. `project_status.ts` 展示的是当前 `projectDetailOf(...)` 存量数据，不会重建历史贡献变更轨迹
 
 如果后续需要更深的 full proposal 诊断，下一步更适合单独补一个 `full_proposal_status.ts`
 
@@ -183,6 +211,7 @@ npx hardhat run tools/proposal_status.ts --network opmain
 
 - `dao_status` 的已配置 / 已 finalize 状态读取
 - `committee_status` 的治理参数、成员和观察地址资格读取
+- `project_status` 的项目生命周期、贡献列表和观察地址领取状态读取
 - ordinary proposal 状态读取
 - full proposal 状态读取
 

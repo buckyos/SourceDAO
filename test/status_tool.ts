@@ -5,13 +5,16 @@ import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
 import {
     formatCommitteeStatus,
     formatDaoStatus,
+    formatProjectStatus,
     formatProposalStatus,
     readCommitteeStatus,
     readDaoStatus,
+    readProjectStatus,
     readProposalStatus
 } from "../tools/status_common.js";
 
 const { ethers, networkHelpers } = await hre.network.connect();
+const THIRTY_DAYS = 30 * 24 * 60 * 60;
 
 function setDevRatioParams(devRatio: bigint) {
     return [
@@ -102,6 +105,110 @@ async function deployProposalStatusFixture() {
         members,
         outsider
     };
+}
+
+async function deployProjectStatusFixture() {
+    const signers = await ethers.getSigners();
+    const manager = signers[1];
+    const contributor = signers[2];
+    const members = signers.slice(3, 6);
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        members.map((signer: { address: string }) => signer.address),
+        1,
+        200,
+        ethers.encodeBytes32String("main"),
+        1,
+        150,
+        daoAddress
+    ]);
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+
+    const project = await deployUUPSProxy(ethers, "ProjectManagement", [1, daoAddress]);
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        10_000,
+        members.map((member: { address: string }) => member.address),
+        [2_000, 1_000, 1_000],
+        daoAddress
+    ]);
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+
+    const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["BDT", "BDT", daoAddress]);
+    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
+
+    const now = await networkHelpers.time.latest();
+    await project.connect(manager).createProject(
+        200,
+        ethers.encodeBytes32String("main"),
+        1,
+        now,
+        now + THIRTY_DAYS,
+        [],
+        []
+    );
+
+    await committee.connect(members[0]).support(1, setCreateProjectParams(1n, "main", 1n, BigInt(now), BigInt(now + THIRTY_DAYS)));
+    await committee.connect(members[1]).support(1, setCreateProjectParams(1n, "main", 1n, BigInt(now), BigInt(now + THIRTY_DAYS)));
+    await project.connect(manager).promoteProject(1);
+
+    await project.connect(manager).acceptProject(1, 4, [
+        { contributor: manager.address, value: 40 },
+        { contributor: contributor.address, value: 60 }
+    ]);
+
+    await committee.connect(members[0]).support(2, setAcceptProjectParams(1n, "main", 1n, BigInt(now), BigInt(now + THIRTY_DAYS)));
+    await committee.connect(members[1]).support(2, setAcceptProjectParams(1n, "main", 1n, BigInt(now), BigInt(now + THIRTY_DAYS)));
+    await project.connect(manager).promoteProject(1);
+    await project.connect(contributor).withdrawContributions([1]);
+
+    return {
+        dao,
+        committee,
+        project,
+        manager,
+        contributor,
+        members
+    };
+}
+
+function setCreateProjectParams(
+    projectId: bigint,
+    projectName: string,
+    version: bigint,
+    startDate: bigint,
+    endDate: bigint
+) {
+    return [
+        ethers.zeroPadValue(ethers.toBeHex(projectId), 32),
+        ethers.encodeBytes32String(projectName),
+        ethers.zeroPadValue(ethers.toBeHex(version), 32),
+        ethers.zeroPadValue(ethers.toBeHex(startDate), 32),
+        ethers.zeroPadValue(ethers.toBeHex(endDate), 32),
+        ethers.encodeBytes32String("createProject")
+    ];
+}
+
+function setAcceptProjectParams(
+    projectId: bigint,
+    projectName: string,
+    version: bigint,
+    startDate: bigint,
+    endDate: bigint
+) {
+    return [
+        ethers.zeroPadValue(ethers.toBeHex(projectId), 32),
+        ethers.encodeBytes32String(projectName),
+        ethers.zeroPadValue(ethers.toBeHex(version), 32),
+        ethers.zeroPadValue(ethers.toBeHex(startDate), 32),
+        ethers.zeroPadValue(ethers.toBeHex(endDate), 32),
+        ethers.encodeBytes32String("acceptProject")
+    ];
 }
 
 describe("status tools", function () {
@@ -205,5 +312,29 @@ describe("status tools", function () {
         expect(status.observed?.currentFullProposalVotingPower).to.equal("0");
         expect(formatCommitteeStatus(status)).to.contain("Final version released: true");
         expect(formatCommitteeStatus(status)).to.contain("Observed full proposal eligible: false");
+    });
+
+    it("reads project lifecycle status, contribution details, and observed contributor claim state", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectStatusFixture);
+        const status = await readProjectStatus(ethers, await fixture.dao.getAddress(), 1, fixture.contributor.address);
+
+        expect(status.projectAddress).to.equal(await fixture.project.getAddress());
+        expect(status.projectId).to.equal(1);
+        expect(status.exists).to.equal(true);
+        expect(status.manager).to.equal(fixture.manager.address);
+        expect(status.projectName).to.equal("main");
+        expect(status.versionText).to.equal("0.0.1");
+        expect(status.stateName).to.equal("Finished");
+        expect(status.resultName).to.equal("Good");
+        expect(status.proposalStateName).to.equal("Executed");
+        expect(status.contributionCount).to.equal(2);
+        expect(status.totalContribution).to.equal("100");
+        expect(status.requestedVersionReleased).to.equal(true);
+        expect(status.latestKnownVersionText).to.equal("0.0.1");
+        expect(status.observed?.address).to.equal(fixture.contributor.address);
+        expect(status.observed?.contributionValue).to.equal("60");
+        expect(status.observed?.hasClaim).to.equal(true);
+        expect(formatProjectStatus(status)).to.contain("State: Finished (3)");
+        expect(formatProjectStatus(status)).to.contain("Observed has claimed: true");
     });
 });
