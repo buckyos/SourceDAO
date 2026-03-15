@@ -49,6 +49,118 @@
 
 ---
 
+## 2026-03-14 UpgradeToAndCall 治理绑定增强记录
+
+### 范围
+
+- 基类升级入口：`contracts/SourceDaoUpgradeable.sol`
+- 治理升级校验：`contracts/Committee.sol`
+- 兼容升级 mock：`contracts/mocks/SourceDaoCommitteeLegacyMock.sol`
+- 新增回归 mock：`contracts/mocks/SourceDaoCommitteeV2InitMock.sol`
+- 相关测试：`test/upgrade.ts`
+
+### 背景
+
+此前治理提案对升级只绑定了：
+
+1. `proxy` 地址
+2. `newImplementation` 地址
+
+但 UUPS 实际执行入口是 `upgradeToAndCall(newImplementation, data)`。这意味着只要某个实现地址被提案通过，首个执行升级的人仍然可以自行选择任意 `data`。
+
+如果新实现暴露了 `reinitializer(...)`、迁移函数或其他初始化入口，那么治理实际上批准的是：
+
+- 这份实现
+- 加上任意执行 calldata
+
+这会把迁移数据的选择权留给升级执行者，而不是留给治理提案本身。
+
+### 修改目的
+
+这次修改的目标是把升级治理的授权粒度从：
+
+- `implementation`
+
+收紧为：
+
+- `implementation + calldata hash`
+
+从而确保 `upgradeToAndCall(...)` 的执行数据也必须被提案明确批准。
+
+### 具体改动
+
+#### 1. 基类升级入口改为校验 calldata hash
+
+在 `SourceDaoContractUpgradeable` 中重写 `upgradeToAndCall(...)`，执行前调用：
+
+- `committee.verifyContractUpgrade(newImplementation, keccak256(data))`
+
+只有实现地址和 calldata hash 同时匹配，升级才会继续执行。
+
+#### 2. Committee 升级提案参数增加 `calldataHash`
+
+`Committee.prepareContractUpgrade(...)` 和 `verifyContractUpgrade(...)` 现在都支持显式传入：
+
+- `bytes32 calldataHash`
+
+同时保留原来的两参重载，作为：
+
+- `calldataHash = keccak256("")`
+
+的便捷入口，用于普通的“无迁移数据”升级。
+
+这样：
+
+1. 现有空 calldata 升级流程不需要全部重写
+2. 需要迁移调用的升级，可以明确把 `keccak256(data)` 绑定进提案参数
+
+#### 3. legacy committee mock 同步接口
+
+`SourceDaoCommitteeLegacyMock` 同步实现了新的重载接口，以保持升级兼容测试继续可运行。
+
+#### 4. 新增可见副作用升级 mock
+
+新增 `SourceDaoCommitteeV2InitMock`，包含：
+
+- `reinitializer(2)` 的 `initializeMarker(...)`
+
+这个 mock 专门用于回归测试，证明：
+
+1. 未获批准的非空 calldata 现在会被拒绝
+2. 获明确批准的 calldata 仍然可以正常执行
+
+### 兼容性影响
+
+#### ABI
+
+`Committee` 新增了两个重载接口：
+
+1. `prepareContractUpgrade(address,address,bytes32)`
+2. `verifyContractUpgrade(address,bytes32)`
+
+原来的两参版本仍然保留，用于默认空 calldata 升级。
+
+#### 存储布局
+
+这次修改没有新增 `Committee` 或 `SourceDaoContractUpgradeable` 的状态变量，因此不涉及新的存储布局迁移风险。
+
+#### 行为变化
+
+最核心的行为变化是：
+
+- 治理现在批准的是“实现地址 + calldata hash”
+- 同一实现地址下，未被批准的迁移 calldata 不再能被任意升级执行者带入
+
+### 验证方式
+
+这次新增和更新的回归主要覆盖：
+
+1. 同一实现地址下，未获批准的 `reinitializer` calldata 会以 `verify proposal fail` 拒绝
+2. 同一实现地址下，空 calldata 提案仍可正常执行
+3. 显式批准 `calldataHash` 后，非空迁移 calldata 可正常升级执行
+4. legacy `Dao` 的 `migrateLegacyBootstrap()` 升级路径现在要求提案绑定对应 migration data 的 hash
+5. legacy `Dao` 在批准迁移 calldata 后，空 calldata 升级会被拒绝，正确 migration data 才会通过
+
 ## 2026-03-14 Tools 项目状态工具补充记录
 
 ### 范围

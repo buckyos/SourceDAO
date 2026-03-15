@@ -12,10 +12,15 @@ const VERSION_TWO = 200001n;
 const THIRTY_DAYS = 30n * 24n * 60n * 60n;
 const ONE_HOUR = 3600n;
 
-function upgradeParams(proxyAddress: string, implementationAddress: string) {
+function upgradeParams(
+    proxyAddress: string,
+    implementationAddress: string,
+    upgradeData: string = "0x"
+) {
     return [
         ethers.zeroPadValue(proxyAddress, 32),
         ethers.zeroPadValue(implementationAddress, 32),
+        ethers.keccak256(upgradeData),
         ethers.encodeBytes32String("upgradeContract")
     ];
 }
@@ -395,6 +400,71 @@ describe("upgrade", function () {
             .withArgs(proposalId);
     });
 
+    it("rejects upgrade calldata that was not approved with the implementation", async function () {
+        const { committee, members } = await networkHelpers.loadFixture(deployUpgradeFixture);
+        const committeeAddress = await committee.getAddress();
+        const nextImplementation = await (await ethers.getContractFactory("SourceDaoCommitteeV2InitMock")).deploy();
+        await nextImplementation.waitForDeployment();
+        const nextImplementationAddress = await nextImplementation.getAddress();
+        const proposalId = 1n;
+        const params = upgradeParams(committeeAddress, nextImplementationAddress);
+        const initData = nextImplementation.interface.encodeFunctionData("initializeMarker", [123n]);
+
+        await (await committee.connect(members[0]).prepareContractUpgrade(committeeAddress, nextImplementationAddress)).wait();
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+        await (await committee.connect(members[1]).support(proposalId, params)).wait();
+
+        await expect(committee.upgradeToAndCall(nextImplementationAddress, initData)).to.be.revertedWith(
+            "verify proposal fail"
+        );
+
+        const stillQueued = await committee.getContractUpgradeProposal(committeeAddress);
+        expect(stillQueued.state).to.equal(1n);
+
+        await expect(committee.upgradeToAndCall(nextImplementationAddress, "0x"))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId)
+            .to.emit(committee, "ProposalExecuted")
+            .withArgs(proposalId);
+
+        const upgradedCommittee = await ethers.getContractAt("SourceDaoCommitteeV2InitMock", committeeAddress);
+        expect(await upgradedCommittee.upgradeMarker()).to.equal(0n);
+    });
+
+    it("allows upgrade calldata that was explicitly approved by governance", async function () {
+        const { committee, members } = await networkHelpers.loadFixture(deployUpgradeFixture);
+        const committeeAddress = await committee.getAddress();
+        const nextImplementation = await (await ethers.getContractFactory("SourceDaoCommitteeV2InitMock")).deploy();
+        await nextImplementation.waitForDeployment();
+        const nextImplementationAddress = await nextImplementation.getAddress();
+        const proposalId = 1n;
+        const initData = nextImplementation.interface.encodeFunctionData("initializeMarker", [321n]);
+        const params = upgradeParams(committeeAddress, nextImplementationAddress, initData);
+
+        await expect(
+            committee.connect(members[0])["prepareContractUpgrade(address,address,bytes32)"](
+                committeeAddress,
+                nextImplementationAddress,
+                ethers.keccak256(initData)
+            )
+        )
+            .to.emit(committee, "ProposalStart")
+            .withArgs(proposalId, false);
+
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+        await (await committee.connect(members[1]).support(proposalId, params)).wait();
+
+        await expect(committee.upgradeToAndCall(nextImplementationAddress, initData))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId)
+            .to.emit(committee, "ProposalExecuted")
+            .withArgs(proposalId);
+
+        const upgradedCommittee = await ethers.getContractAt("SourceDaoCommitteeV2InitMock", committeeAddress);
+        expect(await upgradedCommittee.version()).to.equal("2.1.1");
+        expect(await upgradedCommittee.upgradeMarker()).to.equal(321n);
+    });
+
     it("clears an expired upgrade proposal when a committee member cancels it", async function () {
         const { committee, members, nextImplementationAddress } = await networkHelpers.loadFixture(deployUpgradeFixture);
         const committeeAddress = await committee.getAddress();
@@ -449,15 +519,25 @@ describe("upgrade", function () {
         const daoAddress = await dao.getAddress();
         const committeeAddress = await committee.getAddress();
         const proposalId = 1n;
-        const params = upgradeParams(daoAddress, nextDaoImplementationAddress);
         const migrationData = nextDaoImplementation.interface.encodeFunctionData("migrateLegacyBootstrap");
+        const params = upgradeParams(daoAddress, nextDaoImplementationAddress, migrationData);
 
-        await expect(committee.connect(members[0]).prepareContractUpgrade(daoAddress, nextDaoImplementationAddress))
+        await expect(
+            committee.connect(members[0])["prepareContractUpgrade(address,address,bytes32)"](
+                daoAddress,
+                nextDaoImplementationAddress,
+                ethers.keccak256(migrationData)
+            )
+        )
             .to.emit(committee, "ProposalStart")
             .withArgs(proposalId, false);
 
         await (await committee.connect(members[0]).support(proposalId, params)).wait();
         await (await committee.connect(members[1]).support(proposalId, params)).wait();
+
+        await expect(dao.upgradeToAndCall(nextDaoImplementationAddress, "0x")).to.be.revertedWith(
+            "verify proposal fail"
+        );
 
         await expect(dao.upgradeToAndCall(nextDaoImplementationAddress, migrationData))
             .to.emit(committee, "ProposalAccept")

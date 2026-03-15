@@ -29,10 +29,26 @@ abstract contract SourceDaoContractUpgradeable is Initializable, UUPSUpgradeable
         mainContractAddress = newAddr;
     }
 
+    /// @notice Upgrades through governance only after both implementation and calldata hash are approved.
+    function upgradeToAndCall(
+        address newImplementation,
+        bytes memory data
+    ) public payable virtual override onlyProxy {
+        require(
+            getMainContractAddress().committee().verifyContractUpgrade(
+                newImplementation,
+                keccak256(data)
+            ),
+            "verify proposal fail"
+        );
+
+        super.upgradeToAndCall(newImplementation, data);
+    }
+
+    /// @dev Upgrade authorization is enforced in {upgradeToAndCall} so calldata can be part of governance approval.
     function _authorizeUpgrade(
-        address newImplementation
+        address
     ) internal virtual override {
-        require(getMainContractAddress().committee().verifyContractUpgrade(newImplementation), "verify proposal fail");
     }
 
     function version() external pure virtual returns (string memory) {

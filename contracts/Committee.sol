@@ -598,11 +598,36 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         _setProposalExecuted(proposalId, true);
     }
 
+    function _prepareContractUpgradeParam(
+        address proxyContractAddress,
+        address newImplementAddress,
+        bytes32 calldataHash
+    ) internal pure returns (bytes32[] memory params) {
+        params = new bytes32[](4);
+        params[0] = util.AddressToBytes32(proxyContractAddress);
+        params[1] = util.AddressToBytes32(newImplementAddress);
+        params[2] = calldataHash;
+        params[3] = bytes32("upgradeContract");
+    }
+
     /// @notice Starts an ordinary proposal to upgrade a DAO proxy contract.
     function prepareContractUpgrade(
         address proxyContractAddress,
         address newImplementAddress
     ) external override returns (uint) {
+        return prepareContractUpgrade(
+            proxyContractAddress,
+            newImplementAddress,
+            keccak256(bytes(""))
+        );
+    }
+
+    /// @notice Starts an ordinary proposal to upgrade a DAO proxy contract with an approved calldata hash.
+    function prepareContractUpgrade(
+        address proxyContractAddress,
+        address newImplementAddress,
+        bytes32 calldataHash
+    ) public override returns (uint) {
         require(
             isMember(msg.sender),
             "only committee can upgrade contract"
@@ -612,10 +637,12 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
             contractUpgradeProposals[proxyContractAddress] == 0,
             "already has upgrade proposal"
         );
-        bytes32[] memory params = new bytes32[](3);
-        params[0] = util.AddressToBytes32(proxyContractAddress);
-        params[1] = util.AddressToBytes32(newImplementAddress);
-        params[2] = bytes32("upgradeContract");
+
+        bytes32[] memory params = _prepareContractUpgradeParam(
+            proxyContractAddress,
+            newImplementAddress,
+            calldataHash
+        );
 
         uint id = _propose(proxyContractAddress, 7 days, params, false);
 
@@ -628,14 +655,23 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
     function verifyContractUpgrade(
         address newImplementAddress
     ) external override returns (bool) {
+        return verifyContractUpgrade(newImplementAddress, keccak256(bytes("")));
+    }
+
+    /// @notice Verifies whether the queued upgrade proposal for `msg.sender` and calldata hash has passed.
+    function verifyContractUpgrade(
+        address newImplementAddress,
+        bytes32 calldataHash
+    ) public override returns (bool) {
         uint id = contractUpgradeProposals[msg.sender];
 
         require(id != 0, "not found upgrade proposal");
 
-        bytes32[] memory params = new bytes32[](3);
-        params[0] = util.AddressToBytes32(msg.sender);
-        params[1] = util.AddressToBytes32(newImplementAddress);
-        params[2] = bytes32("upgradeContract");
+        bytes32[] memory params = _prepareContractUpgradeParam(
+            msg.sender,
+            newImplementAddress,
+            calldataHash
+        );
 
         ProposalResult result = _takeResult(id, params);
 

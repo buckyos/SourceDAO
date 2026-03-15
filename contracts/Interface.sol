@@ -202,11 +202,20 @@ interface ISourceDaoCommittee {
         address proxyContractAddress,
         address newImplementAddress
     ) external returns (uint);
+    function prepareContractUpgrade(
+        address proxyContractAddress,
+        address newImplementAddress,
+        bytes32 calldataHash
+    ) external returns (uint);
 
     function cancelContractUpgrade(address proxyContractAddress) external;
 
     function verifyContractUpgrade(
         address newImplementAddress
+    ) external returns (bool);
+    function verifyContractUpgrade(
+        address newImplementAddress,
+        bytes32 calldataHash
     ) external returns (bool);
 
     function getContractUpgradeProposal(
