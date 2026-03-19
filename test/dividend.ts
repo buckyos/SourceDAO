@@ -321,6 +321,42 @@ describe("dividend", function () {
         expect(await dividend.getDepositTokenBalance(ethers.ZeroAddress)).to.equal(0n);
     });
 
+    it("blocks reentrant native dividend withdrawals attempted from receive()", async function () {
+        const { owner, normalToken, dividend } = await networkHelpers.loadFixture(deployDividendFixture);
+        const receiverDeployment = await (await ethers.getContractFactory("ReentrantNativeReceiverMock")).deploy();
+        await receiverDeployment.waitForDeployment();
+        const receiver = await ethers.getContractAt("ReentrantNativeReceiverMock", await receiverDeployment.getAddress());
+
+        await (await normalToken.transfer(await receiver.getAddress(), 400n)).wait();
+        await (await receiver.approveToken(await normalToken.getAddress(), await dividend.getAddress(), 400n)).wait();
+        await (await receiver.stakeNormal(await dividend.getAddress(), 400n)).wait();
+
+        await networkHelpers.time.increase(3601n);
+        await (await dividend.tryNewCycle()).wait();
+
+        await owner.sendTransaction({
+            to: await dividend.getAddress(),
+            value: 60n
+        });
+        await (await dividend.updateTokenBalance(ethers.ZeroAddress)).wait();
+
+        await networkHelpers.time.increase(3601n);
+        await (await dividend.tryNewCycle()).wait();
+
+        await (await receiver.configureReentry(
+            await dividend.getAddress(),
+            dividend.interface.encodeFunctionData("withdrawDividends", [[1n], [ethers.ZeroAddress]])
+        )).wait();
+
+        await (await receiver.withdrawDividends(await dividend.getAddress(), [1n], [ethers.ZeroAddress])).wait();
+
+        expect(await receiver.receiveCount()).to.equal(1n);
+        expect(await receiver.totalReceived()).to.equal(60n);
+        expect(await receiver.reentryAttempts()).to.equal(1n);
+        expect(await receiver.successfulReentries()).to.equal(0n);
+        expect(await dividend.getDepositTokenBalance(ethers.ZeroAddress)).to.equal(0n);
+    });
+
     it("reverts native dividend payouts atomically when the recipient rejects the transfer", async function () {
         const { owner, normalToken, dividend } = await networkHelpers.loadFixture(deployDividendFixture);
         const receiverDeployment = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
@@ -377,6 +413,30 @@ describe("dividend", function () {
 
         expect(await dividend.getDepositTokenBalance(await normalToken.getAddress())).to.equal(0n);
         expect(await dividend.getDepositTokenBalance(await devToken.getAddress())).to.equal(0n);
+    });
+
+    it("blocks ERC20 callback reentry when reward deposits try to recurse into deposit()", async function () {
+        const { dividend, owner } = await networkHelpers.loadFixture(deployDividendFixture);
+        const callbackTokenDeployment = await (await ethers.getContractFactory("ReentrantCallbackToken")).deploy(
+            1_000_000n,
+            owner.address
+        );
+        await callbackTokenDeployment.waitForDeployment();
+        const callbackToken = await ethers.getContractAt("ReentrantCallbackToken", await callbackTokenDeployment.getAddress());
+
+        await (await callbackToken.configureCallback(
+            await dividend.getAddress(),
+            dividend.interface.encodeFunctionData("deposit", [1n, await callbackToken.getAddress()]),
+            false,
+            true
+        )).wait();
+
+        await (await callbackToken.approve(await dividend.getAddress(), 100n)).wait();
+        await (await dividend.deposit(100n, await callbackToken.getAddress())).wait();
+
+        expect(await callbackToken.callbackAttempts()).to.equal(1n);
+        expect(await callbackToken.callbackSuccesses()).to.equal(0n);
+        expect(await dividend.getDepositTokenBalance(await callbackToken.getAddress())).to.equal(100n);
     });
 
     it("updates current-cycle totals when unstaking normal tokens from a previous cycle", async function () {

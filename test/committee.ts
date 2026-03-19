@@ -652,6 +652,35 @@ describe("Committee", function () {
         expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
     });
 
+    it("reverts full-proposal settlement atomically when the project release lookup itself reverts", async function () {
+        const { committee, proposalCaller, members, project } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const proposalId = 1n;
+        const params = fullProposalParams("reverting-project-release");
+
+        await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 40)).wait();
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+
+        const extraBefore = await committee.proposalExtraOf(proposalId);
+        const devRatioBefore = await committee.devRatio();
+
+        await (await project.setVersionReadRevert(true)).wait();
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
+
+        await expect(committee.endFullPropose(proposalId, [members[0].address])).to.be.revertedWith(
+            "project version read reverted"
+        );
+
+        const extraAfter = await committee.proposalExtraOf(proposalId);
+        const proposalAfter = await committee.proposalOf(proposalId);
+
+        expect(await committee.devRatio()).to.equal(devRatioBefore);
+        expect(proposalAfter.state).to.equal(1n);
+        expect(extraAfter.agree).to.equal(extraBefore.agree);
+        expect(extraAfter.reject).to.equal(extraBefore.reject);
+        expect(extraAfter.settled).to.equal(extraBefore.settled);
+        expect(extraAfter.totalReleasedToken).to.equal(extraBefore.totalReleasedToken);
+    });
+
     it("lets non-committee token holders participate in full proposals when they have voting power", async function () {
         const { committee, proposalCaller, members, devToken, normalToken, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
         const proposalId = 1n;

@@ -49,6 +49,117 @@
 
 ---
 
+## 2026-03-19 重入攻击对抗测试补充记录
+
+### 范围
+
+- Mock：`contracts/mocks/ReentrantNativeReceiverMock.sol`、`contracts/mocks/ReentrantCallbackToken.sol`
+- 测试：`test/acquired.ts`、`test/dividend.ts`、`test/project.ts`
+
+### 背景
+
+在前面的安全 review 中，我们没有发现与近期 Solv Protocol 事件同型的高危重入结构：
+
+1. 当前仓库没有 `onERC721Received` / `onERC1155Received` 这类回调 hook
+2. 主要资金流出入口大多已经处于 `nonReentrant` 保护之下
+3. 原生币转账路径也已经按 CEI 做过顺序收紧
+
+但静态判断仍然不等于行为证明。为了把这层安全边界固定下来，需要补一批“恶意回调”对抗测试，明确证明：
+
+1. 原生币接收方在 `receive()` 中尝试重入时，主流程不会被打穿
+2. 恶意 ERC20 在 `transfer` / `transferFrom` 中回调目标合约时，主流程不会被打穿
+
+### 具体改动
+
+#### 1. 增加恶意原生币接收 mock
+
+新增 `ReentrantNativeReceiverMock`：
+
+1. 在 `receive()` 中可配置一次重入尝试
+2. 记录 `reentryAttempts` 和 `successfulReentries`
+3. 吞掉回调失败，避免因为测试 mock 自身回滚而掩盖外层行为
+
+这让我们可以真实模拟“接收方在收到原生币时立刻回调同一个目标合约”的攻击路径。
+
+#### 2. 增加恶意 ERC20 callback mock
+
+新增 `ReentrantCallbackToken`：
+
+1. 可选择在 `transfer` 或 `transferFrom` 后执行 callback
+2. callback 目标和 calldata 可配置
+3. 同样记录尝试次数和成功次数，并吞掉失败
+
+这让我们可以覆盖：
+
+1. 合约从用户拉取 token 时的 `transferFrom` 回调
+2. 合约向外发 token 时的 `transfer` 回调
+
+#### 3. 为 `Acquired` 增加重入对抗测试
+
+在 `test/acquired.ts` 中新增三条：
+
+1. 原生币买方在 `invest(...)` 收到 payout 时，从 `receive()` 中再次调用 `invest(...)`
+2. 原生币投资人在 `endInvestment(...)` 收到退款时，从 `receive()` 中再次调用 `endInvestment(...)`
+3. 恶意 sale token 在 `Acquired.invest(...)` 发 token 给买方时，通过 `transfer` callback 试图再次调用 `invest(...)`
+
+当前预期是：
+
+1. 外层交易成功
+2. 回调重入被拒绝
+3. 状态只记一次，不会重复扣/发资产
+
+#### 4. 为 `Dividend` 增加重入对抗测试
+
+在 `test/dividend.ts` 中新增两条：
+
+1. 原生币分红接收方在 `withdrawDividends(...)` 收到 ETH 时，从 `receive()` 中再次调用 `withdrawDividends(...)`
+2. 恶意 reward token 在 `Dividend.deposit(...)` 的 `transferFrom` 过程中，回调再次调用 `deposit(...)`
+
+当前预期是：
+
+1. 外层提现/存入成功
+2. 回调重入不成功
+3. `withdrawDividendState` 与 `tokenBalances` 不会被破坏
+
+#### 5. 为 `Project` 增加重入对抗测试
+
+在 `test/project.ts` 中新增两条：
+
+1. 恶意 extra token 在 `createProject(...)` 的 escrow `transferFrom` 过程中，回调再次调用 `createProject(...)`
+2. 恶意 extra token 在 `withdrawContributions(...)` 发放 extra token 时，回调再次调用 `withdrawContributions(...)`
+
+当前预期是：
+
+1. 外层项目流程成功
+2. 不会因为 callback 生成额外 project
+3. 不会因为 callback 重复领取贡献奖励
+
+### 验证方式
+
+这批测试先通过以下聚焦回归验证：
+
+1. `test-hh3/acquired.ts`
+2. `test-hh3/dividend.ts`
+3. `test-hh3/project.ts`
+
+然后再进入全量 `npm test`。
+
+### 当前结论
+
+这批补测的目标不是宣称“系统绝对不可能出现任何重入问题”，而是把当前实现已经依赖的关键安全边界固定下来：
+
+1. 主要资金路径上的 `nonReentrant` 在恶意原生币回调场景下有效
+2. 主要资金路径上的 `nonReentrant` 在恶意 ERC20 callback 场景下有效
+3. 当前仓库与 Solv 那类基于 receiver hook 的重入模型不存在同型缺口
+
+后续如果再引入：
+
+1. 新的 receiver hook
+2. 新的外部 token 标准
+3. 新的批量转账 / 包装逻辑
+
+应继续按同样方式补充对抗测试，而不是只依赖静态代码判断。
+
 ## 2026-03-19 复杂治理/奖励链路补测记录
 
 ### 范围
@@ -3125,3 +3236,114 @@
 2. 保持默认只读，不发交易
 3. 通过测试固定基础行为
 4. 为后续更深入的 full proposal 诊断工具打基础
+
+## 2026-03-19 恶意模块 / 错误 wiring 安全回归补充
+
+### 范围
+
+- mock：`contracts/mocks/MaliciousCommitteeMock.sol`
+- mock 更新：`contracts/mocks/CommitteeGovernanceMock.sol`
+- 测试：`test/upgrade.ts`、`test/project.ts`、`test/committee.ts`、`test/system_integration.ts`、`test/status_tool.ts`
+
+### 背景
+
+在前面的安全 review 中，我们已经确认：
+
+1. `SourceDao` 对模块地址的链上校验只有 `code.length > 0`
+2. 这可以阻止 EOA 被写入 slot，但不能保证目标合约真的实现了预期接口
+3. 一旦被写入的是“接口不对”或“带恶意 callback”的模块，风险不再只是普通误配置，而可能扩散到升级治理、项目生命周期推进和共享发布信号
+
+因此这轮补测的重点，不是修复这些场景，而是先把它们在当前实现下的真实后果固定下来。
+
+### 具体改动
+
+#### 1. 固定错误 committee wiring 对升级路径的影响
+
+在 `test/upgrade.ts` 中新增一条回归，覆盖：
+
+1. `dao.committee` 指向一个“有代码但不实现 upgrade verification 接口”的合约
+2. 调用 `upgradeToAndCall(...)` 时，升级必须直接失败
+3. proxy implementation 保持不变
+4. `Dao.version()` 保持原值，不出现部分执行
+
+这条测试用来固定：错误 wiring 不会把升级推进到半成功状态。
+
+#### 2. 固定恶意 committee callback 对 `Project` 的重入边界
+
+新增 `MaliciousCommitteeMock`，支持在：
+
+1. `propose(...)`
+2. `takeResult(...)`
+
+内部尝试回调目标合约。
+
+配套在 `test/project.ts` 中新增两条回归，覆盖：
+
+1. `Project.createProject(...)` 调用 `committee.propose(...)` 时，恶意 committee 试图再次回调 `createProject(...)`
+2. `Project.promoteProject(...)` 调用 `committee.takeResult(...)` 时，恶意 committee 试图再次回调 `promoteProject(...)`
+
+当前结果是：
+
+1. 回调尝试会发生
+2. 回调不会成功
+3. 外层项目创建 / 状态推进只发生一次
+4. 不会重复 mint 奖励或脏写 proposal 执行状态
+
+#### 3. 固定恶意 project release 信号的系统级影响
+
+扩展 `ProjectVersionMock`，让它支持：
+
+1. 伪造某个版本的 `versionReleasedTime(...)`
+2. 在读取发布信息时主动 revert
+
+围绕这个 mock，补了两类测试：
+
+1. `test/system_integration.ts`
+   - 当 `dao.project` 指向一个伪造 release 时间的 project mock 时
+   - `Committee.endFullPropose(...)` 会提前把 `devRatio` 锁到 `finalRatio`
+   - `TokenLockup` 也会因此提前产生可领取额度
+
+2. `test/committee.ts`
+   - 当 `versionReleasedTime(...)` 直接 revert 时
+   - `endFullPropose(...)` 整笔交易会原子回滚
+   - 不会留下部分更新的 `agree / reject / settled / devRatio`
+
+这两条测试的意义是把共享发布信号的系统级耦合固定下来：  
+`Committee` 和 `Lockup` 都信任 `dao.project` 返回的版本发布时间。
+
+#### 4. 补齐错误 wiring 的状态工具可观测性
+
+在 `test/status_tool.ts` 中新增两条回归，覆盖：
+
+1. `project` slot 被写入“有代码但接口不对”的合约时：
+   - `dao_status` 仍能报告 `configured / hasCode / isDaoContract`
+   - `version = null`
+   - `project_status` 会 fail fast，而不是静默伪装成正常状态
+
+2. `devToken` / `normalToken` slot 被写入“有代码但接口不对”的合约时：
+   - `dao_status` 仍能看见模块地址和 `version = null`
+   - `committee_status` 在读取观察地址票权时会直接失败
+
+这让错误 wiring 不只是在业务路径里失败，也能在工具层尽早被识别。
+
+### 验证方式
+
+新增回归会纳入：
+
+1. `test-hh3/upgrade.ts`
+2. `test-hh3/project.ts`
+3. `test-hh3/committee.ts`
+4. `test-hh3/system_integration.ts`
+5. `test-hh3/status_tool.ts`
+
+并通过全量 `npm test` 一起验证。
+
+### 当前结论
+
+这轮补测固定了三类边界：
+
+1. 错误 wiring 会导致真实治理和业务流程失败，但应保持原子失败，不出现部分执行
+2. 受信模块如果试图在回调里重入 `Project` 主流程，当前实现不会被直接打穿
+3. 共享发布信号一旦被错误或恶意 project 模块伪造，会同时影响 `Committee` 和 `Lockup`
+
+其中第三类不是本轮要直接修掉的逻辑，而是当前架构下应继续明确记录的系统级信任前提。

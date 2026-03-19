@@ -16,12 +16,29 @@ contract CommitteeProposalCallerMock {
 
 contract ProjectVersionMock {
     mapping(bytes32 => mapping(uint64 => uint)) private releasedAt;
+    uint private defaultReleasedTime;
+    bool private revertVersionRead;
 
     function setVersionReleasedTime(bytes32 projectName, uint64 version, uint releasedTime) external {
         releasedAt[projectName][version] = releasedTime;
     }
 
+    function setDefaultReleasedTime(uint releasedTime) external {
+        defaultReleasedTime = releasedTime;
+    }
+
+    function setVersionReadRevert(bool shouldRevert) external {
+        revertVersionRead = shouldRevert;
+    }
+
     function versionReleasedTime(bytes32 projectName, uint64 version) external view returns (uint) {
-        return releasedAt[projectName][version];
+        require(!revertVersionRead, "project version read reverted");
+
+        uint configured = releasedAt[projectName][version];
+        if (configured > 0) {
+            return configured;
+        }
+
+        return defaultReleasedTime;
     }
 }

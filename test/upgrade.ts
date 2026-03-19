@@ -11,6 +11,7 @@ const VERSION_ONE = 100001n;
 const VERSION_TWO = 200001n;
 const THIRTY_DAYS = 30n * 24n * 60n * 60n;
 const ONE_HOUR = 3600n;
+const IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 
 function upgradeParams(
     proxyAddress: string,
@@ -27,6 +28,11 @@ function upgradeParams(
 
 function toBytes32(value: bigint) {
     return ethers.zeroPadValue(ethers.toBeHex(value), 32);
+}
+
+async function getImplementationAddress(proxyAddress: string) {
+    const raw = await ethers.provider.getStorage(proxyAddress, IMPLEMENTATION_SLOT);
+    return ethers.getAddress(`0x${raw.slice(-40)}`);
 }
 
 function projectParams(
@@ -504,6 +510,25 @@ describe("upgrade", function () {
 
         const upgradedDao = await ethers.getContractAt("SourceDaoV2Mock", daoAddress);
         expect(await upgradedDao.version()).to.equal("2.1.0");
+    });
+
+    it("fails upgrades cleanly when the committee slot points to a contract that does not implement upgrade verification", async function () {
+        const dao = await deployUUPSProxy(ethers, "SourceDao");
+        const daoAddress = await dao.getAddress();
+        const wrongCommittee = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+        await wrongCommittee.waitForDeployment();
+        await (await dao.setCommitteeAddress(await wrongCommittee.getAddress())).wait();
+
+        const nextDaoImplementation = await (await ethers.getContractFactory("SourceDaoV2Mock")).deploy();
+        await nextDaoImplementation.waitForDeployment();
+        const nextDaoImplementationAddress = await nextDaoImplementation.getAddress();
+
+        const implementationBefore = await getImplementationAddress(daoAddress);
+
+        await expect(dao.upgradeToAndCall(nextDaoImplementationAddress, "0x")).to.be.revertedWithoutReason(ethers);
+
+        expect(await getImplementationAddress(daoAddress)).to.equal(implementationBefore);
+        expect(await dao.version()).to.equal("2.0.0");
     });
 
     it("migrates a fully configured legacy dao proxy into bootstrap-admin state on upgrade", async function () {

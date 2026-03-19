@@ -125,6 +125,54 @@ async function deployConfiguredSystemFixture() {
     };
 }
 
+async function deploySpoofedReleaseSystemFixture() {
+    const signers = await ethers.getSigners();
+    const [manager, memberTwo, memberThree, candidate] = signers;
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        [manager.address, memberTwo.address, memberThree.address],
+        1,
+        200,
+        PROJECT_NAME,
+        Number(VERSION_TWO),
+        150,
+        daoAddress
+    ]);
+    const project = await (await ethers.getContractFactory("ProjectVersionMock")).deploy();
+    await project.waitForDeployment();
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        1_000_000,
+        [manager.address, memberTwo.address, memberThree.address],
+        [2_000, 1_000, 1_000],
+        daoAddress
+    ]);
+    const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["BDT", "BDT", daoAddress]);
+    const lockup = await deployUUPSProxy(ethers, "SourceTokenLockup", [PROJECT_NAME, VERSION_TWO, daoAddress]);
+
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
+    await (await dao.setTokenLockupAddress(await lockup.getAddress())).wait();
+
+    return {
+        manager,
+        memberTwo,
+        memberThree,
+        candidate,
+        dao,
+        committee,
+        project,
+        devToken,
+        normalToken,
+        lockup
+    };
+}
+
 async function finishProject(
     fixture: any,
     version: bigint,
@@ -507,6 +555,37 @@ describe("system integration", function () {
 
         await (await fixture.committee.setCommittees(replacementMembers, proposalId)).wait();
         expect(await fixture.committee.members()).to.deep.equal(replacementMembers);
+    });
+
+    it("shows that a spoofed project release can prematurely force finalRatio and unlock lockup claims", async function () {
+        const fixture = await networkHelpers.loadFixture(deploySpoofedReleaseSystemFixture);
+        const replacementMembers = [fixture.manager.address, fixture.memberTwo.address, fixture.candidate.address];
+        const proposalId = 1n;
+        const proposalParams = setCommitteesParams(replacementMembers);
+        const latest = await networkHelpers.time.latest();
+        const THIRTY_DAYS_SECONDS = 30 * 24 * 60 * 60;
+
+        await (await fixture.devToken.connect(fixture.manager).dev2normal(600n)).wait();
+        await (await fixture.normalToken.connect(fixture.manager).approve(await fixture.lockup.getAddress(), 300n)).wait();
+        await (await fixture.lockup.connect(fixture.manager).transferAndLock([fixture.manager.address], [300n])).wait();
+
+        expect(await fixture.lockup.connect(fixture.manager).getCanClaimTokens()).to.equal(0n);
+        expect(await fixture.committee.devRatio()).to.equal(200n);
+
+        await (await fixture.committee.connect(fixture.manager).prepareSetCommittees(replacementMembers, true)).wait();
+        await (await fixture.committee.connect(fixture.manager).support(proposalId, proposalParams)).wait();
+        await (await fixture.committee.connect(fixture.memberTwo).support(proposalId, proposalParams)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1n);
+        await (await fixture.project.setVersionReleasedTime(PROJECT_NAME, Number(VERSION_TWO), latest - THIRTY_DAYS_SECONDS)).wait();
+
+        await (await fixture.committee.endFullPropose(proposalId, [fixture.manager.address, fixture.memberTwo.address])).wait();
+
+        expect(await fixture.committee.devRatio()).to.equal(150n);
+        expect(await fixture.lockup.connect(fixture.manager).getCanClaimTokens()).to.equal(61n);
+
+        await (await fixture.lockup.connect(fixture.manager).claimTokens(61n)).wait();
+        expect(await fixture.normalToken.balanceOf(fixture.manager.address)).to.equal(361n);
     });
 
     it("keeps ordinary and full proposals coherent when the final release happens while both are pending", async function () {

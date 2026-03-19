@@ -172,6 +172,38 @@ async function deployProjectCommitteeSnapshotFixture() {
     };
 }
 
+async function deployProjectMaliciousCommitteeFixture() {
+    const [manager, contributor] = await ethers.getSigners();
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const committee = await (await ethers.getContractFactory("MaliciousCommitteeMock")).deploy();
+    await committee.waitForDeployment();
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+
+    const project = await deployUUPSProxy(ethers, "ProjectManagement", [1, daoAddress]);
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        1_000_000,
+        [manager.address],
+        [5_000],
+        daoAddress
+    ]);
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+
+    return {
+        manager,
+        contributor,
+        dao,
+        committee,
+        project,
+        devToken
+    };
+}
+
 async function createAndPromoteProject(fixture: any, version: bigint = PROJECT_VERSION) {
     const latestBlock = await ethers.provider.getBlock("latest");
     if (latestBlock === null) {
@@ -408,6 +440,38 @@ describe("project", function () {
         }
 
         expect(reverted).to.equal(true);
+    });
+
+    it("blocks malicious committee callbacks from reentering createProject through propose()", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectMaliciousCommitteeFixture);
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const startDate = BigInt(latestBlock.timestamp);
+        const endDate = startDate + THIRTY_DAYS;
+
+        await (await fixture.committee.configureProposeReentry(
+            await fixture.project.getAddress(),
+            fixture.project.interface.encodeFunctionData("createProject", [
+                10_000n,
+                PROJECT_NAME,
+                PROJECT_VERSION + 1n,
+                startDate,
+                endDate,
+                [],
+                []
+            ])
+        )).wait();
+
+        await (await fixture.project.createProject(10_000n, PROJECT_NAME, PROJECT_VERSION, startDate, endDate, [], [])).wait();
+
+        expect(await fixture.committee.proposeReentryAttempts()).to.equal(1n);
+        expect(await fixture.committee.proposeReentrySuccesses()).to.equal(0n);
+        expect(await fixture.project.projectIdCounter()).to.equal(2n);
+        expect((await fixture.project.projectOf(1n)).manager).to.equal(fixture.manager.address);
+        expect((await fixture.project.projectOf(2n)).manager).to.equal(ethers.ZeroAddress);
     });
 
     it("keeps a createProject proposal bound to its original committee snapshot after committee replacement", async function () {
@@ -2378,5 +2442,139 @@ describe("project", function () {
         const contributorBalanceBefore = await fixture.devToken.balanceOf(fixture.contributor.address);
         await (await fixture.project.connect(fixture.contributor).withdrawContributions([1n])).wait();
         expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(contributorBalanceBefore + 2_000n);
+    });
+
+    it("blocks malicious committee callbacks from reentering promoteProject through takeResult()", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectMaliciousCommitteeFixture);
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const startDate = BigInt(latestBlock.timestamp);
+        const endDate = startDate + THIRTY_DAYS;
+
+        await (await fixture.project.createProject(10_000n, PROJECT_NAME, PROJECT_VERSION, startDate, endDate, [], [])).wait();
+        await (await fixture.project.promoteProject(1n)).wait();
+        await (await fixture.project.acceptProject(1n, 4, [
+            { contributor: fixture.manager.address, value: 100 }
+        ])).wait();
+
+        await (await fixture.committee.configureTakeResultReentry(
+            await fixture.project.getAddress(),
+            fixture.project.interface.encodeFunctionData("promoteProject", [1n])
+        )).wait();
+
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        expect(await fixture.committee.takeResultReentryAttempts()).to.equal(1n);
+        expect(await fixture.committee.takeResultReentrySuccesses()).to.equal(0n);
+        expect((await fixture.project.projectOf(1n)).state).to.equal(3n);
+        expect(await fixture.devToken.balanceOf(await fixture.project.getAddress())).to.equal(10_000n);
+        expect(await fixture.committee.executedCount()).to.equal(2n);
+        expect(await fixture.committee.lastExecutedProposalId()).to.equal(2n);
+    });
+
+    it("blocks ERC20 callback reentry when extra-token escrow transfers try to create another project", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const callbackTokenDeployment = await (await ethers.getContractFactory("ReentrantCallbackToken")).deploy(
+            1_000_000n,
+            fixture.manager.address
+        );
+        await callbackTokenDeployment.waitForDeployment();
+        const callbackToken = await ethers.getContractAt("ReentrantCallbackToken", await callbackTokenDeployment.getAddress());
+
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const startDate = BigInt(latestBlock.timestamp);
+        const endDate = startDate + THIRTY_DAYS;
+
+        await (await callbackToken.configureCallback(
+            await fixture.project.getAddress(),
+            fixture.project.interface.encodeFunctionData("createProject", [
+                10_000n,
+                PROJECT_NAME,
+                PROJECT_VERSION + 1n,
+                startDate,
+                endDate,
+                [],
+                []
+            ]),
+            false,
+            true
+        )).wait();
+        await (await callbackToken.approve(await fixture.project.getAddress(), 500n)).wait();
+
+        await (await fixture.project.createProject(
+            10_000n,
+            PROJECT_NAME,
+            PROJECT_VERSION,
+            startDate,
+            endDate,
+            [await callbackToken.getAddress()],
+            [500n]
+        )).wait();
+
+        expect(await callbackToken.callbackAttempts()).to.equal(1n);
+        expect(await callbackToken.callbackSuccesses()).to.equal(0n);
+        expect(await fixture.project.projectIdCounter()).to.equal(2n);
+        expect((await fixture.project.projectOf(1n)).manager).to.equal(fixture.manager.address);
+        expect(await callbackToken.balanceOf(await fixture.project.getAddress())).to.equal(500n);
+    });
+
+    it("blocks ERC20 callback reentry when extra-token payouts try to withdraw contributions again", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const callbackTokenDeployment = await (await ethers.getContractFactory("ReentrantCallbackToken")).deploy(
+            1_000_000n,
+            fixture.manager.address
+        );
+        await callbackTokenDeployment.waitForDeployment();
+        const callbackToken = await ethers.getContractAt("ReentrantCallbackToken", await callbackTokenDeployment.getAddress());
+
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const startDate = BigInt(latestBlock.timestamp);
+        const endDate = startDate + THIRTY_DAYS;
+
+        await (await callbackToken.approve(await fixture.project.getAddress(), 500n)).wait();
+        await (await fixture.project.createProject(
+            10_000n,
+            PROJECT_NAME,
+            PROJECT_VERSION,
+            startDate,
+            endDate,
+            [await callbackToken.getAddress()],
+            [500n]
+        )).wait();
+        await (await fixture.committee.support(1n, projectParams(1n, startDate, endDate, "createProject"))).wait();
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        await (await fixture.project.acceptProject(1n, 4, [
+            { contributor: fixture.manager.address, value: 100 }
+        ])).wait();
+        await (await fixture.committee.support(2n, projectParams(1n, startDate, endDate, "acceptProject"))).wait();
+
+        await networkHelpers.time.increase(7n * 24n * 60n * 60n + 1n);
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        await (await callbackToken.configureCallback(
+            await fixture.project.getAddress(),
+            fixture.project.interface.encodeFunctionData("withdrawContributions", [[1n]]),
+            true,
+            false
+        )).wait();
+
+        await (await fixture.project.withdrawContributions([1n])).wait();
+
+        expect(await callbackToken.callbackAttempts()).to.equal(1n);
+        expect(await callbackToken.callbackSuccesses()).to.equal(0n);
+        expect(await callbackToken.balanceOf(fixture.manager.address)).to.equal(1_000_000n);
+        expect(await callbackToken.balanceOf(await fixture.project.getAddress())).to.equal(0n);
     });
 });

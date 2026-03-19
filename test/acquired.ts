@@ -526,6 +526,42 @@ describe("acquired", function () {
         expect(info.daoTokenAmount).to.equal(8n);
     });
 
+    it("blocks reentrant native payouts when contract buyers try to reinvest from receive()", async function () {
+        const { normalToken, acquired } = await networkHelpers.loadFixture(deployAcquiredFixture);
+        const receiverDeployment = await (await ethers.getContractFactory("ReentrantNativeReceiverMock")).deploy();
+        await receiverDeployment.waitForDeployment();
+        const receiver = await ethers.getContractAt("ReentrantNativeReceiverMock", await receiverDeployment.getAddress());
+
+        await (await acquired.startInvestment({
+            whitelist: [await receiver.getAddress()],
+            firstPercent: [10_000],
+            tokenAddress: ethers.ZeroAddress,
+            tokenAmount: 10n,
+            tokenRatio: { tokenAmount: 1, daoTokenAmount: 2 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        }, { value: 10n })).wait();
+
+        await (await normalToken.transfer(await receiver.getAddress(), 20n)).wait();
+        await (await receiver.approveToken(await normalToken.getAddress(), await acquired.getAddress(), 20n)).wait();
+        await (await receiver.configureReentry(
+            await acquired.getAddress(),
+            acquired.interface.encodeFunctionData("invest", [1n, 8n])
+        )).wait();
+
+        await (await receiver.invest(await acquired.getAddress(), 1n, 8n)).wait();
+
+        expect(await receiver.receiveCount()).to.equal(1n);
+        expect(await receiver.totalReceived()).to.equal(4n);
+        expect(await receiver.reentryAttempts()).to.equal(1n);
+        expect(await receiver.successfulReentries()).to.equal(0n);
+
+        const info = await acquired.getInvestmentInfo(1n);
+        expect(info.investedAmount).to.equal(4n);
+        expect(info.daoTokenAmount).to.equal(8n);
+    });
+
     it("returns unsold native inventory to contract investors that need more than transfer gas", async function () {
         const { buyerOne, acquired } = await networkHelpers.loadFixture(deployAcquiredFixture);
         const receiverDeployment = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
@@ -547,6 +583,37 @@ describe("acquired", function () {
 
         expect(await receiver.receiveCount()).to.equal(1n);
         expect(await receiver.totalReceived()).to.equal(10n);
+        expect((await acquired.getInvestmentInfo(1n)).end).to.equal(true);
+    });
+
+    it("blocks reentrant native refunds when contract investors try to end the same investment from receive()", async function () {
+        const { buyerOne, acquired } = await networkHelpers.loadFixture(deployAcquiredFixture);
+        const receiverDeployment = await (await ethers.getContractFactory("ReentrantNativeReceiverMock")).deploy();
+        await receiverDeployment.waitForDeployment();
+        const receiver = await ethers.getContractAt("ReentrantNativeReceiverMock", await receiverDeployment.getAddress());
+
+        await (await receiver.startNativeInvestment(await acquired.getAddress(), {
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: ethers.ZeroAddress,
+            tokenAmount: 10n,
+            tokenRatio: { tokenAmount: 1, daoTokenAmount: 2 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        }, { value: 10n })).wait();
+
+        await (await receiver.configureReentry(
+            await acquired.getAddress(),
+            acquired.interface.encodeFunctionData("endInvestment", [1n])
+        )).wait();
+
+        await (await receiver.endInvestment(await acquired.getAddress(), 1n)).wait();
+
+        expect(await receiver.receiveCount()).to.equal(1n);
+        expect(await receiver.totalReceived()).to.equal(10n);
+        expect(await receiver.reentryAttempts()).to.equal(1n);
+        expect(await receiver.successfulReentries()).to.equal(0n);
         expect((await acquired.getInvestmentInfo(1n)).end).to.equal(true);
     });
 
@@ -577,6 +644,46 @@ describe("acquired", function () {
         expect(await ethers.provider.getBalance(await acquired.getAddress())).to.equal(10n);
         expect(await receiver.receiveCount()).to.equal(0n);
         expect(await receiver.totalReceived()).to.equal(0n);
+    });
+
+    it("blocks ERC20 callback reentry when sale-token payouts try to reinvest during transfer", async function () {
+        const { investor, buyerOne, normalToken, acquired } = await networkHelpers.loadFixture(deployAcquiredFixture);
+        const callbackTokenDeployment = await (await ethers.getContractFactory("ReentrantCallbackToken")).deploy(
+            1_000_000n,
+            investor.address
+        );
+        await callbackTokenDeployment.waitForDeployment();
+        const callbackToken = await ethers.getContractAt("ReentrantCallbackToken", await callbackTokenDeployment.getAddress());
+
+        await (await callbackToken.approve(await acquired.getAddress(), 500n)).wait();
+        await (await acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: await callbackToken.getAddress(),
+            tokenAmount: 500n,
+            tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        })).wait();
+
+        await (await callbackToken.configureCallback(
+            await acquired.getAddress(),
+            acquired.interface.encodeFunctionData("invest", [1n, 20n]),
+            true,
+            false
+        )).wait();
+
+        await (await normalToken.connect(buyerOne).approve(await acquired.getAddress(), 100n)).wait();
+        await (await acquired.connect(buyerOne).invest(1n, 20n)).wait();
+
+        expect(await callbackToken.callbackAttempts()).to.equal(1n);
+        expect(await callbackToken.callbackSuccesses()).to.equal(0n);
+        expect(await callbackToken.balanceOf(buyerOne.address)).to.equal(100n);
+
+        const info = await acquired.getInvestmentInfo(1n);
+        expect(info.investedAmount).to.equal(100n);
+        expect(info.daoTokenAmount).to.equal(20n);
     });
 
     it("prevents ending the same investment twice", async function () {

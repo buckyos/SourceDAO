@@ -80,6 +80,84 @@ async function deployMiswiredCommitteeStatusFixture() {
     };
 }
 
+async function deployMiswiredProjectStatusFixture() {
+    const signers = await ethers.getSigners();
+    const members = signers.slice(1, 4);
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        members.map((signer: { address: string }) => signer.address),
+        1,
+        200,
+        ethers.encodeBytes32String("main"),
+        1,
+        150,
+        daoAddress
+    ]);
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+
+    const wrongProject = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+    await wrongProject.waitForDeployment();
+    await (await dao.setProjectAddress(await wrongProject.getAddress())).wait();
+
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        10_000,
+        members.map((member: { address: string }) => member.address),
+        [2_000, 1_000, 1_000],
+        daoAddress
+    ]);
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+
+    const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["BDT", "BDT", daoAddress]);
+    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
+
+    return {
+        dao,
+        wrongProject,
+        members
+    };
+}
+
+async function deployMiswiredTokenStatusFixture() {
+    const signers = await ethers.getSigners();
+    const members = signers.slice(1, 4);
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        members.map((signer: { address: string }) => signer.address),
+        1,
+        200,
+        ethers.encodeBytes32String("main"),
+        1,
+        150,
+        daoAddress
+    ]);
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+
+    const project = await (await ethers.getContractFactory("ProjectVersionMock")).deploy();
+    await project.waitForDeployment();
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+
+    const wrongDevToken = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+    await wrongDevToken.waitForDeployment();
+    const wrongNormalToken = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+    await wrongNormalToken.waitForDeployment();
+
+    await (await dao.setDevTokenAddress(await wrongDevToken.getAddress())).wait();
+    await (await dao.setNormalTokenAddress(await wrongNormalToken.getAddress())).wait();
+
+    return {
+        dao,
+        wrongDevToken,
+        wrongNormalToken,
+        observed: members[0]
+    };
+}
+
 async function deployProposalStatusFixture() {
     const signers = await ethers.getSigners();
     const members = signers.slice(1, 4);
@@ -264,6 +342,53 @@ describe("status tools", function () {
         let failed = false;
         try {
             await readCommitteeStatus(ethers, daoAddress);
+        } catch {
+            failed = true;
+        }
+        expect(failed).to.equal(true);
+    });
+
+    it("surfaces a miswired project slot in dao status and fails fast in project status", async function () {
+        const fixture = await networkHelpers.loadFixture(deployMiswiredProjectStatusFixture);
+        const daoAddress = await fixture.dao.getAddress();
+        const status = await readDaoStatus(ethers, daoAddress);
+        const projectModule = status.modules.find((module) => module.key === "project");
+
+        expect(projectModule).to.not.equal(undefined);
+        expect(projectModule?.address).to.equal(await fixture.wrongProject.getAddress());
+        expect(projectModule?.configured).to.equal(true);
+        expect(projectModule?.hasCode).to.equal(true);
+        expect(projectModule?.isDaoContract).to.equal(true);
+        expect(projectModule?.version).to.equal(null);
+        expect(formatDaoStatus(status)).to.contain(`project: ${await fixture.wrongProject.getAddress()}`);
+        expect(formatDaoStatus(status)).to.contain("version=n/a");
+
+        let failed = false;
+        try {
+            await readProjectStatus(ethers, daoAddress, 1);
+        } catch {
+            failed = true;
+        }
+        expect(failed).to.equal(true);
+    });
+
+    it("surfaces miswired token slots in dao status and fails fast in committee status when balance reads are needed", async function () {
+        const fixture = await networkHelpers.loadFixture(deployMiswiredTokenStatusFixture);
+        const daoAddress = await fixture.dao.getAddress();
+        const status = await readDaoStatus(ethers, daoAddress);
+        const devTokenModule = status.modules.find((module) => module.key === "devToken");
+        const normalTokenModule = status.modules.find((module) => module.key === "normalToken");
+
+        expect(devTokenModule?.address).to.equal(await fixture.wrongDevToken.getAddress());
+        expect(normalTokenModule?.address).to.equal(await fixture.wrongNormalToken.getAddress());
+        expect(devTokenModule?.version).to.equal(null);
+        expect(normalTokenModule?.version).to.equal(null);
+        expect(formatDaoStatus(status)).to.contain(`devToken: ${await fixture.wrongDevToken.getAddress()}`);
+        expect(formatDaoStatus(status)).to.contain(`normalToken: ${await fixture.wrongNormalToken.getAddress()}`);
+
+        let failed = false;
+        try {
+            await readCommitteeStatus(ethers, daoAddress, fixture.observed.address);
         } catch {
             failed = true;
         }
