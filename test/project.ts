@@ -2444,6 +2444,151 @@ describe("project", function () {
         expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(contributorBalanceBefore + 2_000n);
     });
 
+    it("applies multiple post-approval contribution rewrites to dev and multi-token payouts across three contributors", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const managerDevBefore = await fixture.devToken.balanceOf(fixture.manager.address);
+        const contributorDevBefore = await fixture.devToken.balanceOf(fixture.contributor.address);
+        const outsiderDevBefore = await fixture.devToken.balanceOf(fixture.outsider.address);
+        const managerExtraBefore = await fixture.extraToken.balanceOf(fixture.manager.address);
+        const contributorExtraBefore = await fixture.extraToken.balanceOf(fixture.contributor.address);
+        const outsiderExtraBefore = await fixture.extraToken.balanceOf(fixture.outsider.address);
+        const managerExtraTwoBefore = await fixture.extraTokenTwo.balanceOf(fixture.manager.address);
+        const contributorExtraTwoBefore = await fixture.extraTokenTwo.balanceOf(fixture.contributor.address);
+        const outsiderExtraTwoBefore = await fixture.extraTokenTwo.balanceOf(fixture.outsider.address);
+
+        await moveProjectToAcceptingWithExtraTokens(fixture, 5, PROJECT_VERSION, [400n, 200n]);
+
+        await (await fixture.project.updateContribute(1n, {
+            contributor: fixture.manager.address,
+            value: 25
+        })).wait();
+        await (await fixture.project.updateContribute(1n, {
+            contributor: fixture.contributor.address,
+            value: 25
+        })).wait();
+        await (await fixture.project.updateContribute(1n, {
+            contributor: fixture.outsider.address,
+            value: 50
+        })).wait();
+        await (await fixture.project.updateContribute(1n, {
+            contributor: fixture.manager.address,
+            value: 15
+        })).wait();
+        await (await fixture.project.updateContribute(1n, {
+            contributor: fixture.contributor.address,
+            value: 35
+        })).wait();
+
+        expect(await fixture.project.contributionOf(1n, fixture.manager.address)).to.equal(15n);
+        expect(await fixture.project.contributionOf(1n, fixture.contributor.address)).to.equal(35n);
+        expect(await fixture.project.contributionOf(1n, fixture.outsider.address)).to.equal(50n);
+
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        await (await fixture.project.withdrawContributions([1n])).wait();
+        await (await fixture.project.connect(fixture.contributor).withdrawContributions([1n])).wait();
+        await (await fixture.project.connect(fixture.outsider).withdrawContributions([1n])).wait();
+
+        expect(await fixture.devToken.balanceOf(fixture.manager.address)).to.equal(managerDevBefore + 1_800n);
+        expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(contributorDevBefore + 4_200n);
+        expect(await fixture.devToken.balanceOf(fixture.outsider.address)).to.equal(outsiderDevBefore + 6_000n);
+
+        expect(await fixture.extraToken.balanceOf(fixture.manager.address)).to.equal(managerExtraBefore - 400n + 60n);
+        expect(await fixture.extraToken.balanceOf(fixture.contributor.address)).to.equal(contributorExtraBefore + 140n);
+        expect(await fixture.extraToken.balanceOf(fixture.outsider.address)).to.equal(outsiderExtraBefore + 200n);
+
+        expect(await fixture.extraTokenTwo.balanceOf(fixture.manager.address)).to.equal(managerExtraTwoBefore - 200n + 30n);
+        expect(await fixture.extraTokenTwo.balanceOf(fixture.contributor.address)).to.equal(contributorExtraTwoBefore + 70n);
+        expect(await fixture.extraTokenTwo.balanceOf(fixture.outsider.address)).to.equal(outsiderExtraTwoBefore + 100n);
+
+        const detail = await fixture.project.projectDetailOf(1n);
+        expect(detail.contributions).to.have.length(3);
+        expect(detail.contributions[0].hasClaim).to.equal(true);
+        expect(detail.contributions[1].hasClaim).to.equal(true);
+        expect(detail.contributions[2].hasClaim).to.equal(true);
+    });
+
+    it("aggregates batch withdrawals using the latest rewritten contribution sets from multiple accepted projects", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const contributorDevBefore = await fixture.devToken.balanceOf(fixture.contributor.address);
+        const contributorExtraBefore = await fixture.extraToken.balanceOf(fixture.contributor.address);
+        const contributorExtraTwoBefore = await fixture.extraTokenTwo.balanceOf(fixture.contributor.address);
+
+        const first = await createProjectWithExtraToken(fixture, PROJECT_VERSION, 300n);
+        await (await fixture.committee.support(1n, projectParams(1n, first.startDate, first.endDate, "createProject", PROJECT_VERSION))).wait();
+        await (await fixture.project.promoteProject(1n)).wait();
+        await (await fixture.project.acceptProject(1n, 4, [
+            { contributor: fixture.manager.address, value: 40 },
+            { contributor: fixture.contributor.address, value: 60 }
+        ])).wait();
+        await (await fixture.committee.support(2n, projectParams(1n, first.startDate, first.endDate, "acceptProject", PROJECT_VERSION))).wait();
+        await (await fixture.project.updateContribute(1n, {
+            contributor: fixture.manager.address,
+            value: 30
+        })).wait();
+        await (await fixture.project.updateContribute(1n, {
+            contributor: fixture.contributor.address,
+            value: 70
+        })).wait();
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        await networkHelpers.time.increase(7n * 24n * 60n * 60n + 1n);
+
+        const secondVersion = PROJECT_VERSION + 1n;
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const secondStart = BigInt(latestBlock.timestamp);
+        const secondEnd = secondStart + THIRTY_DAYS;
+        await (await fixture.extraTokenTwo.approve(await fixture.project.getAddress(), 200n)).wait();
+        await (await fixture.project.createProject(
+            10_000,
+            PROJECT_NAME,
+            secondVersion,
+            secondStart,
+            secondEnd,
+            [await fixture.extraTokenTwo.getAddress()],
+            [200n]
+        )).wait();
+        await (await fixture.committee.support(3n, projectParams(2n, secondStart, secondEnd, "createProject", secondVersion))).wait();
+        await (await fixture.project.promoteProject(2n)).wait();
+        await (await fixture.project.acceptProject(2n, 3, [
+            { contributor: fixture.manager.address, value: 80 },
+            { contributor: fixture.contributor.address, value: 20 }
+        ])).wait();
+        await (await fixture.committee.support(4n, projectParams(2n, secondStart, secondEnd, "acceptProject", secondVersion))).wait();
+        await (await fixture.project.updateContribute(2n, {
+            contributor: fixture.contributor.address,
+            value: 60
+        })).wait();
+        await (await fixture.project.updateContribute(2n, {
+            contributor: fixture.manager.address,
+            value: 20
+        })).wait();
+        await (await fixture.project.updateContribute(2n, {
+            contributor: fixture.outsider.address,
+            value: 20
+        })).wait();
+        await (await fixture.project.promoteProject(2n)).wait();
+
+        await (await fixture.project.connect(fixture.contributor).withdrawContributions([1n, 2n])).wait();
+
+        expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(contributorDevBefore + 11_800n);
+        expect(await fixture.extraToken.balanceOf(fixture.contributor.address)).to.equal(contributorExtraBefore + 210n);
+        expect(await fixture.extraTokenTwo.balanceOf(fixture.contributor.address)).to.equal(contributorExtraTwoBefore + 96n);
+
+        const firstDetail = await fixture.project.projectDetailOf(1n);
+        expect(firstDetail.contributions[0].hasClaim).to.equal(false);
+        expect(firstDetail.contributions[1].hasClaim).to.equal(true);
+
+        const secondDetail = await fixture.project.projectDetailOf(2n);
+        expect(secondDetail.contributions[0].hasClaim).to.equal(false);
+        expect(secondDetail.contributions[1].hasClaim).to.equal(true);
+        expect(secondDetail.contributions[2].hasClaim).to.equal(false);
+    });
+
     it("blocks malicious committee callbacks from reentering promoteProject through takeResult()", async function () {
         const fixture = await networkHelpers.loadFixture(deployProjectMaliciousCommitteeFixture);
         const latestBlock = await ethers.provider.getBlock("latest");

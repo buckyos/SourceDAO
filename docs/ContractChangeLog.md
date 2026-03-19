@@ -3504,3 +3504,75 @@
 
 1. 跨 batch 的票权转移双算，属于当前 full proposal 权重模型的已知设计缺口
 2. 在不触碰该设计前提下，当前批量 settle 逻辑对更大 voter 集合仍然保持了稳定的计数行为
+
+## 2026-03-19 Project 治理语义压力测试补充
+
+### 范围
+
+- 测试：`test/project.ts`
+
+### 背景
+
+当前 `Project.acceptProject(...)` 只把项目的基础参数提交给委员会，不把 `result` 和 contribution 明细绑定进 proposal 参数。  
+因此在 `Accepting` 阶段，项目经理仍可继续调用 `updateContribute(...)` 改写最终分配。
+
+此前已经有单条表征测试固定“提案批准后、最终 payout 按最新 contribution 结算”的语义；这一轮继续把该语义推进到更复杂、更贴近真实使用场景的链路：
+
+1. 多次重写 contribution
+2. 三个 contributor
+3. 多个 extra token
+4. 跨多个已完成项目的 batch withdrawal
+
+### 具体改动
+
+#### 1. 固定三方贡献者 + 双 extra token 下的多次 rewrite 语义
+
+新增一条测试，覆盖：
+
+1. 项目先按初始 contribution 进入 `Accepting`
+2. accept proposal 已获委员会批准后
+3. 项目经理多次重写 manager / contributor 的权重，并新增 outsider 作为第三位 contributor
+4. 项目最终以 `Excellent` 结果结算
+
+最终验证：
+
+1. dev reward 按最终 contribution `15 / 35 / 50` 分配
+2. 两种 extra token 也按最终 contribution 分配
+3. 三个 contributor 的 `hasClaim` 都会在各自提取后正确置位
+
+这条测试的作用，是把“latest contribution wins”从简单单-token 场景推进到多 token、三地址、多次 overwrite 的更复杂链路。
+
+#### 2. 固定跨多个项目 batch withdrawal 的 latest-contribution 语义
+
+新增一条测试，覆盖：
+
+1. 两个不同版本的项目先后进入 `Finished`
+2. 两个项目的 accept proposal 都已获批准
+3. 两个项目在 `Accepting` 阶段都继续被重写 contribution
+4. 第二个项目还额外新增了 outsider contributor
+5. contributor 最后对 `[1, 2]` 一次性执行 batch withdrawal
+
+最终验证：
+
+1. contributor 拿到的 dev reward 是两个项目按“最终 rewrite 后 contribution”聚合的结果
+2. 不同项目的 extra token 分配也会正确聚合
+3. batch withdrawal 之后，只会把 contributor 在两个项目中的 claim 状态标记为 `true`
+4. manager / outsider 在各项目中的 claim 状态仍保持 `false`
+
+这条测试的重点，是固定当前治理语义在“多项目 + 批量提取 + contribution 继续修改”组合场景下仍保持一致，不会跨项目串账。
+
+### 验证方式
+
+新增回归会纳入：
+
+1. `test-hh3/project.ts`
+
+并通过全量 `npm test` 一起验证。
+
+### 当前结论
+
+这轮补测没有改变 `Project` 的治理语义，而是把它在更复杂场景下的真实行为固定下来：
+
+1. `Accepting` 阶段的 contribution rewrite 仍然决定最终 payout
+2. 该语义不仅影响 dev reward，也同样影响 extra token 分配
+3. 在多项目 batch withdrawal 场景下，claim 状态和分配计算仍保持隔离
