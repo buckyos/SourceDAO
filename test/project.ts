@@ -87,6 +87,37 @@ async function deployProjectFixture() {
     };
 }
 
+async function deployProjectMiswiredCommitteeFixture() {
+    const [manager] = await ethers.getSigners();
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const wrongCommittee = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+    await wrongCommittee.waitForDeployment();
+    await (await dao.setCommitteeAddress(await wrongCommittee.getAddress())).wait();
+
+    const project = await deployUUPSProxy(ethers, "ProjectManagement", [1, daoAddress]);
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        1_000_000,
+        [manager.address],
+        [5_000],
+        daoAddress
+    ]);
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+
+    return {
+        manager,
+        dao,
+        project,
+        devToken,
+        wrongCommittee
+    };
+}
+
 async function deployProjectCommitteeSnapshotFixture() {
     const signers = await ethers.getSigners();
     const [manager, contributor, secondMember, thirdMember, outsider, candidate] = signers;
@@ -357,6 +388,26 @@ describe("project", function () {
         expect(storedProject.startDate).to.equal(startDate);
         expect(storedProject.endDate).to.equal(endDate);
         expect(storedProject.state).to.equal(1n);
+    });
+
+    it("reverts createProject when the committee slot has code but does not implement the committee interface", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectMiswiredCommitteeFixture);
+        const latestBlock = await ethers.provider.getBlock("latest");
+        if (latestBlock === null) {
+            throw new Error("latest block not found");
+        }
+
+        const startDate = BigInt(latestBlock.timestamp);
+        const endDate = startDate + THIRTY_DAYS;
+
+        let reverted = false;
+        try {
+            await fixture.project.createProject(10_000, PROJECT_NAME, PROJECT_VERSION, startDate, endDate, [], []);
+        } catch {
+            reverted = true;
+        }
+
+        expect(reverted).to.equal(true);
     });
 
     it("keeps a createProject proposal bound to its original committee snapshot after committee replacement", async function () {

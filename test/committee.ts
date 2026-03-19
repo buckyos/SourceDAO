@@ -679,6 +679,29 @@ describe("Committee", function () {
         expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
     });
 
+    it("currently allows a zero-balance outsider to start a full committee replacement proposal but not vote in it", async function () {
+        const signers = await ethers.getSigners();
+        const { committee, members, outsider } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
+        const candidate = signers[5];
+        const replacementMembers = [members[0].address, outsider.address, candidate.address];
+        const proposalId = 1n;
+        const params = setCommitteesParams(replacementMembers);
+
+        await expect(committee.connect(outsider).prepareSetCommittees(replacementMembers, true))
+            .to.emit(committee, "ProposalStart")
+            .withArgs(proposalId, true);
+
+        const proposal = await committee.proposalOf(proposalId);
+        const extra = await committee.proposalExtraOf(proposalId);
+        expect(proposal.state).to.equal(1n);
+        expect(extra.from).to.equal(outsider.address);
+        expect(extra.threshold).to.equal(40n);
+
+        await expect(committee.connect(outsider).support(proposalId, params)).to.be.revertedWith(
+            "only token holders can vote"
+        );
+    });
+
     it("rejects invalid params and duplicate votes on full proposals", async function () {
         const { committee, proposalCaller, members } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
         const proposalId = 1n;

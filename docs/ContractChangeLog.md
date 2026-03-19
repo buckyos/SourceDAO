@@ -104,6 +104,64 @@
 
 并通过全量 `npm test` 一起验证。
 
+## 2026-03-19 错误 wiring / full proposal 发起边界补测记录
+
+### 范围
+
+- 测试：`test/status_tool.ts`、`test/project.ts`、`test/committee.ts`
+
+### 背景
+
+当前 `SourceDao` 对模块地址的链上校验只有：
+
+1. 非零地址
+2. `code.length > 0`
+
+它并不能保证被写入的模块真的实现了预期接口。与此同时，full proposal 的投票资格已经收紧为“必须有正票权”，但发起 `prepareSetCommittees(..., true)` 的资格边界仍然是开放的，容易在后续讨论里被误解。
+
+### 具体改动
+
+#### 1. 增加错误 wiring 的工具可观测性测试
+
+在 `test/status_tool.ts` 中新增一条用例，覆盖：
+
+1. `committee` slot 被写入一个“有代码但不实现委员会接口”的合约
+2. `dao_status` 仍能读出：
+   - 该模块已配置
+   - 有代码
+   - 被 `SourceDao.isDAOContract(...)` 识别
+   - 但 `version = null`
+3. `committee_status` 在读取委员会接口时会直接失败，避免把错误 wiring 静默伪装成正常状态
+
+#### 2. 增加错误 wiring 的真实业务失败路径
+
+在 `test/project.ts` 中新增一条用例，覆盖：
+
+1. `committee` slot 被写入错误合约
+2. `Project.createProject(...)` 走到 `committee.propose(...)` 时直接失败
+
+这条测试用来明确：错误 wiring 的影响不只是状态工具可见，真实业务路径也会直接中断。
+
+#### 3. 固定 full proposal 发起资格的当前边界
+
+在 `test/committee.ts` 中新增一条用例，覆盖：
+
+1. 当前 zero-balance outsider 仍然可以发起 `prepareSetCommittees(..., true)`
+2. 提案中 `ProposalExtra.from` 会记录该发起者
+3. 同一个 outsider 仍然不能对该 full proposal 投票，因为投票资格已经要求正票权
+
+这条测试的目的，是把“发起资格”和“投票资格”当前仍然分离的语义明确固定下来。
+
+### 验证方式
+
+新增回归会纳入：
+
+1. `test-hh3/status_tool.ts`
+2. `test-hh3/project.ts`
+3. `test-hh3/committee.ts`
+
+并通过全量 `npm test` 一起验证。
+
 ## 2026-03-19 贴近真实使用场景的综合回归补充
 
 ### 范围

@@ -60,6 +60,26 @@ async function deployDaoStatusFixture() {
     };
 }
 
+async function deployMiswiredCommitteeStatusFixture() {
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const wrongCommittee = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+    await wrongCommittee.waitForDeployment();
+
+    const modules = await deployModuleMocks(6);
+    await (await dao.setDevTokenAddress(modules[0])).wait();
+    await (await dao.setNormalTokenAddress(modules[1])).wait();
+    await (await dao.setCommitteeAddress(await wrongCommittee.getAddress())).wait();
+    await (await dao.setProjectAddress(modules[2])).wait();
+    await (await dao.setTokenLockupAddress(modules[3])).wait();
+    await (await dao.setTokenDividendAddress(modules[4])).wait();
+    await (await dao.setAcquiredAddress(modules[5])).wait();
+
+    return {
+        dao,
+        wrongCommittee
+    };
+}
+
 async function deployProposalStatusFixture() {
     const signers = await ethers.getSigners();
     const members = signers.slice(1, 4);
@@ -224,6 +244,30 @@ describe("status tools", function () {
         expect(status.modules.every((module) => module.isDaoContract)).to.equal(true);
         expect(status.modules.every((module) => module.version === null)).to.equal(true);
         expect(formatDaoStatus(status)).to.contain("Modules:");
+    });
+
+    it("surfaces a miswired committee slot in dao status and fails fast in committee status", async function () {
+        const fixture = await networkHelpers.loadFixture(deployMiswiredCommitteeStatusFixture);
+        const daoAddress = await fixture.dao.getAddress();
+        const status = await readDaoStatus(ethers, daoAddress);
+        const committeeModule = status.modules.find((module) => module.key === "committee");
+
+        expect(committeeModule).to.not.equal(undefined);
+        expect(committeeModule?.address).to.equal(await fixture.wrongCommittee.getAddress());
+        expect(committeeModule?.configured).to.equal(true);
+        expect(committeeModule?.hasCode).to.equal(true);
+        expect(committeeModule?.isDaoContract).to.equal(true);
+        expect(committeeModule?.version).to.equal(null);
+        expect(formatDaoStatus(status)).to.contain(`committee: ${await fixture.wrongCommittee.getAddress()}`);
+        expect(formatDaoStatus(status)).to.contain("version=n/a");
+
+        let failed = false;
+        try {
+            await readCommitteeStatus(ethers, daoAddress);
+        } catch {
+            failed = true;
+        }
+        expect(failed).to.equal(true);
     });
 
     it("reads ordinary proposal status from committee governance", async function () {
