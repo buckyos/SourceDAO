@@ -506,7 +506,7 @@ describe("upgrade", function () {
         expect(await upgradedDao.version()).to.equal("2.1.0");
     });
 
-    it("migrates a fully configured legacy dao proxy into finalized bootstrap state on upgrade", async function () {
+    it("migrates a fully configured legacy dao proxy into bootstrap-admin state on upgrade", async function () {
         const {
             dao,
             committee,
@@ -694,6 +694,46 @@ describe("upgrade", function () {
         expect(await fixture.saleToken.balanceOf(fixture.buyer.address)).to.equal(100n);
         expect((await fixture.acquired.getInvestmentInfo(1n)).end).to.equal(true);
         expect(await fixture.normalToken.balanceOf(fixture.manager.address)).to.equal(managerNormalBeforeSale + 20n);
+    });
+
+    it("lets bootstrapAdmin initialize a newly added dao module slot after upgrade", async function () {
+        const fixture = await networkHelpers.loadFixture(deployConfiguredUpgradeFixture);
+        const daoAddress = await fixture.dao.getAddress();
+        const proposalId = 1n;
+        const nextDaoImplementation = await (await ethers.getContractFactory("SourceDaoV3ExtendedMock")).deploy();
+        await nextDaoImplementation.waitForDeployment();
+        const nextDaoImplementationAddress = await nextDaoImplementation.getAddress();
+        const relayAddress = (await deployDummyModuleAddresses(1))[0];
+        const params = upgradeParams(daoAddress, nextDaoImplementationAddress);
+
+        await expect(
+            fixture.committee.connect(fixture.manager).prepareContractUpgrade(daoAddress, nextDaoImplementationAddress)
+        )
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(proposalId, false);
+
+        await (await fixture.committee.connect(fixture.manager).support(proposalId, params)).wait();
+        await (await fixture.committee.connect(fixture.memberTwo).support(proposalId, params)).wait();
+
+        await expect(fixture.dao.upgradeToAndCall(nextDaoImplementationAddress, "0x"))
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        const upgradedDao = await ethers.getContractAt("SourceDaoV3ExtendedMock", daoAddress);
+        expect(await upgradedDao.version()).to.equal("2.2.0");
+        expect(await upgradedDao.governanceRelay()).to.equal(ethers.ZeroAddress);
+        expect(await upgradedDao.committee()).to.equal(await fixture.committee.getAddress());
+        expect(await upgradedDao.project()).to.equal(await fixture.project.getAddress());
+        expect(await upgradedDao.devToken()).to.equal(await fixture.devToken.getAddress());
+
+        await expect(
+            upgradedDao.connect(fixture.memberTwo).setGovernanceRelayAddress(relayAddress)
+        ).to.be.revertedWith("only bootstrap admin");
+
+        await (await upgradedDao.setGovernanceRelayAddress(relayAddress)).wait();
+        expect(await upgradedDao.governanceRelay()).to.equal(relayAddress);
+
+        await expect(upgradedDao.setGovernanceRelayAddress(relayAddress)).to.be.revertedWith("can set once");
     });
 
     it("keeps configured project governance operational across committee upgrade", async function () {

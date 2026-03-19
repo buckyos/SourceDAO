@@ -40,6 +40,13 @@ function setCommitteesParams(members: string[]) {
     ];
 }
 
+function setDevRatioParams(newRatio: bigint) {
+    return [
+        toBytes32(newRatio),
+        ethers.encodeBytes32String("setDevRatio")
+    ];
+}
+
 function upgradeParams(
     proxyAddress: string,
     implementationAddress: string,
@@ -443,6 +450,64 @@ describe("system integration", function () {
 
         await (await fixture.committee.setCommittees(replacementMembers, proposalId)).wait();
         expect(await fixture.committee.members()).to.deep.equal(replacementMembers);
+    });
+
+    it("keeps ordinary and full proposals coherent when the final release happens while both are pending", async function () {
+        const signers = await ethers.getSigners();
+        const fixture = await networkHelpers.loadFixture(deployConfiguredSystemFixture);
+        const candidate = signers[5];
+        const candidateTwo = signers[6];
+        const replacementMembers = [fixture.manager.address, candidate.address, candidateTwo.address];
+        const ordinaryProposalId = 1n;
+        const fullProposalId = 2n;
+        const pendingRatio = 180n;
+
+        await (await fixture.committee.connect(fixture.manager).prepareSetDevRatio(pendingRatio)).wait();
+        await (await fixture.committee.connect(fixture.manager).support(
+            ordinaryProposalId,
+            setDevRatioParams(pendingRatio)
+        )).wait();
+
+        await expect(fixture.committee.connect(fixture.manager).prepareSetCommittees(replacementMembers, true))
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(fullProposalId, true);
+
+        await (await fixture.committee.connect(fixture.manager).support(
+            fullProposalId,
+            setCommitteesParams(replacementMembers)
+        )).wait();
+        await (await fixture.committee.connect(fixture.memberTwo).support(
+            ordinaryProposalId,
+            setDevRatioParams(pendingRatio)
+        )).wait();
+
+        const finalProject = await finishProject(fixture, VERSION_TWO, 500n, [
+            { contributor: fixture.contributor.address, value: 100 }
+        ]);
+
+        expect(finalProject.releaseTime).to.be.greaterThan(0n);
+        expect(await fixture.committee.devRatio()).to.equal(200n);
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1n);
+
+        await expect(fixture.committee.endFullPropose(fullProposalId, [fixture.manager.address]))
+            .to.emit(fixture.committee, "DevRatioChanged")
+            .withArgs(200n, 150n)
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(fullProposalId);
+
+        await (await fixture.committee.setCommittees(replacementMembers, fullProposalId)).wait();
+        expect(await fixture.committee.members()).to.deep.equal(replacementMembers);
+
+        await expect(fixture.committee.setDevRatio(pendingRatio, ordinaryProposalId))
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(ordinaryProposalId)
+            .to.emit(fixture.committee, "ProposalExecuted")
+            .withArgs(ordinaryProposalId);
+
+        expect(await fixture.committee.devRatio()).to.equal(150n);
+        expect((await fixture.committee.proposalOf(ordinaryProposalId)).state).to.equal(4n);
+        expect((await fixture.committee.proposalOf(fullProposalId)).state).to.equal(4n);
     });
 
     it("lets a replacement committee approve a dao upgrade after full-proposal rotation", async function () {

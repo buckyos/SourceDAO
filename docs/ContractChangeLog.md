@@ -49,6 +49,64 @@
 
 ---
 
+## 2026-03-19 贴近真实使用场景的综合回归补充
+
+### 范围
+
+- 测试：`test/upgrade.ts`、`test/system_integration.ts`、`test/vote_tool.ts`
+- mock：`contracts/mocks/SourceDaoV3ExtendedMock.sol`
+
+### 背景
+
+在已有覆盖基础上，系统里还缺三类更贴近真实使用场景的回归：
+
+1. `Dao` 升级后新增模块 slot 的一次性初始化
+2. final release 与 ordinary/full proposal 并发时的治理一致性
+3. `vote_offline -> proposal_status` 的工具级端到端链路
+
+### 修改目的
+
+把以上三类高价值场景补成自动化回归，减少只在单模块内部验证局部语义的盲区。
+
+### 具体改动
+
+#### 1. 新增 `SourceDaoV3ExtendedMock`
+
+新增一个只用于升级回归的 `Dao` mock，实现：
+
+1. 尾部追加新的模块 slot
+2. 复用 `onlyBootstrapAdmin + onlySetOnce(...)`
+3. 用于验证升级后可以初始化“新 slot”，而旧 slot 仍保持原有 wiring
+
+#### 2. 增加“final release + ordinary/full proposal 并发”系统测试
+
+新增一条系统用例，覆盖：
+
+1. ordinary proposal 和 full proposal 在 final release 前同时创建
+2. final release 发生后，full proposal 结算时自动把 `devRatio` 锁到 `finalRatio`
+3. full proposal 完成委员会替换后，旧快照成员仍可完成早先 ordinary proposal 的投票
+4. ordinary proposal 执行后仍保持最终 `devRatio = finalRatio`
+
+#### 3. 增加离线投票工具的本地节点端到端回归
+
+新增一条工具级用例，覆盖：
+
+1. 启动本地 `hardhat node`
+2. 在本地节点部署最小 `Dao + Committee` 治理环境
+3. 通过临时 API 提供 proposal params
+4. 跑通 `vote_offline prepare -> sign -> broadcast`
+5. 再通过 `proposal_status` 读取上链后的最新提案状态
+
+### 验证方式
+
+新增回归会纳入：
+
+1. `test-hh3/upgrade.ts`
+2. `test-hh3/system_integration.ts`
+3. `test-hh3/vote_tool.ts`
+
+并通过全量 `npm test` 一起验证。
+
 ## 2026-03-18 综合治理联动测试补充记录
 
 ### 范围
