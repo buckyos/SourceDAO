@@ -53,7 +53,6 @@ async function deployDaoStatusFixture() {
     await (await dao.setTokenLockupAddress(modules[4])).wait();
     await (await dao.setTokenDividendAddress(modules[5])).wait();
     await (await dao.setAcquiredAddress(modules[6])).wait();
-    await (await dao.finalizeInitialization()).wait();
 
     return {
         dao,
@@ -212,20 +211,18 @@ function setAcceptProjectParams(
 }
 
 describe("status tools", function () {
-    it("reads finalized dao status across all configured modules", async function () {
+    it("reads dao status across all configured modules", async function () {
         const fixture = await networkHelpers.loadFixture(deployDaoStatusFixture);
         const status = await readDaoStatus(ethers, await fixture.dao.getAddress());
 
         expect(status.daoAddress).to.equal(await fixture.dao.getAddress());
         expect(status.version).to.equal("2.0.0");
-        expect(status.bootstrapFinalized).to.equal(true);
         expect(status.selfRecognizedAsDaoContract).to.equal(true);
         expect(status.modules).to.have.length(7);
         expect(status.modules.every((module) => module.configured)).to.equal(true);
         expect(status.modules.every((module) => module.hasCode)).to.equal(true);
         expect(status.modules.every((module) => module.isDaoContract)).to.equal(true);
         expect(status.modules.every((module) => module.version === null)).to.equal(true);
-        expect(formatDaoStatus(status)).to.contain("Bootstrap finalized: true");
         expect(formatDaoStatus(status)).to.contain("Modules:");
     });
 

@@ -49,6 +49,101 @@
 
 ---
 
+## 2026-03-16 Dao Bootstrap 语义简化记录
+
+### 范围
+
+- 合约：`contracts/Dao.sol`
+- 状态工具：`tools/status_common.ts`
+- 相关测试：`test/dao.ts`、`test/upgrade.ts`、`test/system_integration.ts`、`test/status_tool.ts`
+
+### 背景
+
+这次调整重新以已发布的 `32c99c2` 版本为兼容基线，而不是继续兼容尚未发布的 `bootstrapFinalized / finalizeInitialization()` 方案。
+
+也就是说，这次只需要考虑：
+
+1. 已发布版本里没有 `bootstrapAdmin`
+2. 已发布版本里没有 `bootstrapFinalized`
+3. 已发布版本里的核心模块 setter 是 `onlySetOnce(...)`
+
+因此，未发布阶段引入的 `bootstrapFinalized` 兼容包袱可以直接移除，不需要继续保留相关 ABI 和存储语义。
+
+### 修改目的
+
+这次修改的目标是回到一套更简单、也更贴近已发布基线的 bootstrap 模型：
+
+1. 让 `bootstrapAdmin` 成为唯一的 bootstrap 写入权限
+2. 让现有核心模块 slot 回到 `set once` 语义
+3. 不再保留 `bootstrapFinalized / finalizeInitialization()` 这套未发布语义
+4. 给已发布旧 proxy 提供一次性的 `bootstrapAdmin` 迁移入口
+
+### 具体改动
+
+#### 1. 核心模块 setter 恢复为 `onlyBootstrapAdmin + onlySetOnce`
+
+`setDevTokenAddress`、`setCommitteeAddress`、`setProjectAddress` 等现有 7 个核心模块 setter 不再检查：
+
+- `bootstrapFinalized`
+
+而是改为：
+
+- `onlyBootstrapAdmin`
+- `onlySetOnce(slot)`
+
+这样现有模块地址一旦写入成功，就不能再被覆盖；未来如果新增一个全新的模块 slot，由于该 slot 初始值仍然是 `0`，仍可继续通过 bootstrap admin 写入一次。
+
+#### 2. 新增 `transferBootstrapAdmin(...)`
+
+新增 bootstrap admin 转移能力，用于：
+
+- 轮换 bootstrap key
+- 在未来需要时，把后续新模块 slot 的一次性初始化权限转交给新的 bootstrap admin
+
+#### 3. 为已发布旧 proxy 新增 `migrateBootstrapAdmin(address)`
+
+由于已发布版本还没有 `bootstrapAdmin`，旧 proxy 升级到新实现后，新增 admin slot 默认会是 `0`。  
+为了解决这个问题，本次新增：
+
+- `migrateBootstrapAdmin(address newBootstrapAdmin)`
+
+它使用 `reinitializer(2)`，用于在升级时一次性写入 bootstrap admin。
+
+### 兼容性影响
+
+#### 存储布局
+
+这次相对于已发布基线，只新增了：
+
+1. `bootstrapAdmin`
+
+没有继续保留未发布阶段引入的 `bootstrapFinalized`，因此兼容性只需要围绕已发布版本处理。
+
+#### ABI
+
+新增：
+
+1. `transferBootstrapAdmin(address)`
+2. `migrateBootstrapAdmin(address)`
+
+#### 行为变化
+
+最核心的行为变化是：
+
+1. 不再存在 `bootstrapFinalized / finalizeInitialization()` 语义
+2. 现有 7 个核心 slot 靠 `set once` 保证不可覆盖
+3. 旧 proxy 升级后，通过治理批准的 migration data 写入 `bootstrapAdmin`
+
+### 验证方式
+
+这次回归主要补和调整了以下路径：
+
+1. 现有模块地址一旦写入成功，不能再次覆盖
+2. `bootstrapAdmin` 可以转移，且转移后只有新 admin 能初始化仍为 `0` 的 slot
+3. fresh deployment 不能错误调用 `migrateBootstrapAdmin(...)`
+4. 已发布旧 `Dao` proxy 升级时，必须通过 `migrateBootstrapAdmin(address)` 写入新的 bootstrap admin
+5. 系统级集成和状态工具已经对齐到无 `bootstrapFinalized` 的新语义
+
 ## 2026-03-14 UpgradeToAndCall 治理绑定增强记录
 
 ### 范围
@@ -158,7 +253,7 @@
 1. 同一实现地址下，未获批准的 `reinitializer` calldata 会以 `verify proposal fail` 拒绝
 2. 同一实现地址下，空 calldata 提案仍可正常执行
 3. 显式批准 `calldataHash` 后，非空迁移 calldata 可正常升级执行
-4. legacy `Dao` 的 `migrateLegacyBootstrap()` 升级路径现在要求提案绑定对应 migration data 的 hash
+4. legacy `Dao` 的 `migrateBootstrapAdmin(address)` 升级路径现在要求提案绑定对应 migration data 的 hash
 5. legacy `Dao` 在批准迁移 calldata 后，空 calldata 升级会被拒绝，正确 migration data 才会通过
 
 ## 2026-03-14 Tools 项目状态工具补充记录

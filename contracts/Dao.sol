@@ -15,21 +15,14 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
     address _acquired;
 
     address public bootstrapAdmin;
-    bool public bootstrapFinalized;
 
     function initialize() public initializer {
         __SourceDaoContractUpgradable_init(address(this));
         bootstrapAdmin = msg.sender;
-        bootstrapFinalized = false;
     }
 
     modifier onlyBootstrapAdmin() {
         require(msg.sender == bootstrapAdmin, "only bootstrap admin");
-        _;
-    }
-
-    modifier onlyBeforeBootstrapFinalized() {
-        require(!bootstrapFinalized, "bootstrap finalized");
         _;
     }
 
@@ -52,65 +45,63 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
         return "2.0.0";
     }
 
-    function finalizeInitialization() external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
-        require(_allModulesConfigured(), "modules not configured");
-        bootstrapFinalized = true;
+    function transferBootstrapAdmin(address newBootstrapAdmin) external onlyBootstrapAdmin {
+        require(newBootstrapAdmin != address(0), "invalid bootstrap admin");
+        bootstrapAdmin = newBootstrapAdmin;
     }
 
-    /// @notice Finalizes bootstrap state for legacy proxies upgraded from the pre-bootstrap implementation.
-    /// @dev This migration is intentionally parameterless so governance only approves the new implementation address.
-    function migrateLegacyBootstrap() external reinitializer(2) {
-        require(bootstrapAdmin == address(0), "not legacy");
-        require(!bootstrapFinalized, "already finalized");
-        require(_allModulesConfigured(), "legacy modules incomplete");
-        bootstrapFinalized = true;
+    /// @notice Initializes bootstrap admin for proxies upgraded from the published pre-bootstrap implementation.
+    function migrateBootstrapAdmin(address newBootstrapAdmin) external reinitializer(2) {
+        require(bootstrapAdmin == address(0), "bootstrap admin initialized");
+        require(newBootstrapAdmin != address(0), "invalid bootstrap admin");
+        bootstrapAdmin = newBootstrapAdmin;
     }
 
     function setDevTokenAddress(
         address newAddress
-    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
+    ) external onlyBootstrapAdmin onlySetOnce(_devToken) {
         _requireValidAddress(newAddress);
         _devToken = newAddress;
     }
 
     function setNormalTokenAddress(
         address newAddress
-    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
+    ) external onlyBootstrapAdmin onlySetOnce(_normalToken) {
         _requireValidAddress(newAddress);
         _normalToken = newAddress;
     }
 
     function setCommitteeAddress(
         address newAddress
-    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
+    ) external onlyBootstrapAdmin onlySetOnce(_committee) {
         _requireValidAddress(newAddress);
         _committee = newAddress;
     }
 
     function setProjectAddress(
         address newAddress
-    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
+    ) external onlyBootstrapAdmin onlySetOnce(_project) {
         _requireValidAddress(newAddress);
         _project = newAddress;
     }
 
     function setTokenLockupAddress(
         address newAddress
-    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
+    ) external onlyBootstrapAdmin onlySetOnce(_tokenLockup) {
         _requireValidAddress(newAddress);
         _tokenLockup = newAddress;
     }
 
     function setTokenDividendAddress(
         address newAddress
-    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
+    ) external onlyBootstrapAdmin onlySetOnce(_tokenDividend) {
         _requireValidAddress(newAddress);
         _tokenDividend = newAddress;
     }
 
     function setAcquiredAddress(
         address newAddress
-    ) external onlyBeforeBootstrapFinalized onlyBootstrapAdmin {
+    ) external onlyBootstrapAdmin onlySetOnce(_acquired) {
         _requireValidAddress(newAddress);
         _acquired = newAddress;
     }

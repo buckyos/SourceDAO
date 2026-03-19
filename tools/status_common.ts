@@ -31,7 +31,6 @@ export interface DaoStatus {
     daoAddress: string;
     version: string;
     bootstrapAdmin: string;
-    bootstrapFinalized: boolean;
     selfRecognizedAsDaoContract: boolean;
     modules: ModuleStatus[];
 }
@@ -190,7 +189,6 @@ export async function readDaoStatus(hardhatEthers: any, daoAddress: string): Pro
         daoAddress: await dao.getAddress(),
         version: await dao.version(),
         bootstrapAdmin: await dao.bootstrapAdmin(),
-        bootstrapFinalized: await dao.bootstrapFinalized(),
         selfRecognizedAsDaoContract: await dao.isDAOContract(await dao.getAddress()),
         modules
     };
@@ -411,7 +409,6 @@ export function formatDaoStatus(status: DaoStatus): string {
         `DAO: ${status.daoAddress}`,
         `Version: ${status.version}`,
         `Bootstrap admin: ${status.bootstrapAdmin}`,
-        `Bootstrap finalized: ${status.bootstrapFinalized}`,
         `DAO recognizes itself: ${status.selfRecognizedAsDaoContract}`,
         "Modules:",
         ...moduleLines

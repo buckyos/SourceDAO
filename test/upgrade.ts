@@ -184,7 +184,7 @@ async function deployLegacyDaoUpgradeFixture() {
     };
 }
 
-async function deployFinalizedUpgradeFixture() {
+async function deployConfiguredUpgradeFixture() {
     const signers = await ethers.getSigners();
     const [manager, memberTwo, memberThree, contributor, buyer] = signers;
     const dao = await deployUUPSProxy(ethers, "SourceDao");
@@ -220,7 +220,6 @@ async function deployFinalizedUpgradeFixture() {
     await (await dao.setTokenLockupAddress(await lockup.getAddress())).wait();
     await (await dao.setTokenDividendAddress(await dividend.getAddress())).wait();
     await (await dao.setAcquiredAddress(await acquired.getAddress())).wait();
-    await (await dao.finalizeInitialization()).wait();
 
     await (await devToken.dev2normal(1_000)).wait();
     await (await normalToken.transfer(buyer.address, 200)).wait();
@@ -519,7 +518,10 @@ describe("upgrade", function () {
         const daoAddress = await dao.getAddress();
         const committeeAddress = await committee.getAddress();
         const proposalId = 1n;
-        const migrationData = nextDaoImplementation.interface.encodeFunctionData("migrateLegacyBootstrap");
+        const migrationData = nextDaoImplementation.interface.encodeFunctionData(
+            "migrateBootstrapAdmin(address)",
+            [members[0].address]
+        );
         const params = upgradeParams(daoAddress, nextDaoImplementationAddress, migrationData);
 
         await expect(
@@ -545,8 +547,7 @@ describe("upgrade", function () {
 
         const upgradedDao = await ethers.getContractAt("SourceDaoV2Mock", daoAddress);
         expect(await upgradedDao.version()).to.equal("2.1.0");
-        expect(await upgradedDao.bootstrapAdmin()).to.equal(ethers.ZeroAddress);
-        expect(await upgradedDao.bootstrapFinalized()).to.equal(true);
+        expect(await upgradedDao.bootstrapAdmin()).to.equal(members[0].address);
         expect(await upgradedDao.devToken()).to.equal(moduleAddresses[0]);
         expect(await upgradedDao.normalToken()).to.equal(moduleAddresses[1]);
         expect(await upgradedDao.committee()).to.equal(committeeAddress);
@@ -555,8 +556,7 @@ describe("upgrade", function () {
         expect(await upgradedDao.dividend()).to.equal(moduleAddresses[4]);
         expect(await upgradedDao.acquired()).to.equal(moduleAddresses[5]);
 
-        await expect(upgradedDao.setDevTokenAddress(moduleAddresses[0])).to.be.revertedWith("bootstrap finalized");
-        await expect(upgradedDao.finalizeInitialization()).to.be.revertedWith("bootstrap finalized");
+        await expect(upgradedDao.setDevTokenAddress(moduleAddresses[0])).to.be.revertedWith("can set once");
     });
 
     it("preserves legacy committee storage across upgrade to the snapshot implementation", async function () {
@@ -644,8 +644,8 @@ describe("upgrade", function () {
             .withArgs(ordinaryProposalId);
     });
 
-    it("keeps finalized dao configuration and acquired flows operational across dao upgrade", async function () {
-        const fixture = await networkHelpers.loadFixture(deployFinalizedUpgradeFixture);
+    it("keeps configured dao wiring and acquired flows operational across dao upgrade", async function () {
+        const fixture = await networkHelpers.loadFixture(deployConfiguredUpgradeFixture);
         const daoAddress = await fixture.dao.getAddress();
         const committeeAddress = await fixture.committee.getAddress();
         const proposalId = 1n;
@@ -664,7 +664,6 @@ describe("upgrade", function () {
 
         const upgradedDao = await ethers.getContractAt("SourceDaoV2Mock", daoAddress);
         expect(await upgradedDao.version()).to.equal("2.1.0");
-        expect(await upgradedDao.bootstrapFinalized()).to.equal(true);
         expect(await upgradedDao.committee()).to.equal(committeeAddress);
         expect(await upgradedDao.project()).to.equal(await fixture.project.getAddress());
         expect(await upgradedDao.devToken()).to.equal(await fixture.devToken.getAddress());
@@ -672,9 +671,7 @@ describe("upgrade", function () {
         expect(await upgradedDao.lockup()).to.equal(await fixture.lockup.getAddress());
         expect(await upgradedDao.dividend()).to.equal(await fixture.dividend.getAddress());
         expect(await upgradedDao.acquired()).to.equal(await fixture.acquired.getAddress());
-        await expect(upgradedDao.setDevTokenAddress(await fixture.devToken.getAddress())).to.be.revertedWith(
-            "bootstrap finalized"
-        );
+        await expect(upgradedDao.setDevTokenAddress(await fixture.devToken.getAddress())).to.be.revertedWith("can set once");
 
         const managerNormalBeforeSale = await fixture.normalToken.balanceOf(fixture.manager.address);
 
@@ -699,8 +696,8 @@ describe("upgrade", function () {
         expect(await fixture.normalToken.balanceOf(fixture.manager.address)).to.equal(managerNormalBeforeSale + 20n);
     });
 
-    it("keeps finalized project governance operational across committee upgrade", async function () {
-        const fixture = await networkHelpers.loadFixture(deployFinalizedUpgradeFixture);
+    it("keeps configured project governance operational across committee upgrade", async function () {
+        const fixture = await networkHelpers.loadFixture(deployConfiguredUpgradeFixture);
         const committeeAddress = await fixture.committee.getAddress();
         const proposalId = 1n;
         const params = upgradeParams(committeeAddress, fixture.nextCommitteeImplementationAddress);

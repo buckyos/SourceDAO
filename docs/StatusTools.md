@@ -18,7 +18,6 @@
 
 - `version`
 - `bootstrapAdmin`
-- `bootstrapFinalized`
 - 7 个核心模块地址
 - 每个模块是否已配置
 - 每个模块是否有代码

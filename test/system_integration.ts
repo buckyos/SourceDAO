@@ -40,7 +40,7 @@ function setCommitteesParams(members: string[]) {
     ];
 }
 
-async function deployFinalizedSystemFixture() {
+async function deployConfiguredSystemFixture() {
     const signers = await ethers.getSigners();
     const [manager, memberTwo, memberThree, contributor, buyer] = signers;
     const dao = await deployUUPSProxy(ethers, "SourceDao");
@@ -76,7 +76,6 @@ async function deployFinalizedSystemFixture() {
     await (await dao.setTokenLockupAddress(await lockup.getAddress())).wait();
     await (await dao.setTokenDividendAddress(await dividend.getAddress())).wait();
     await (await dao.setAcquiredAddress(await acquired.getAddress())).wait();
-    await (await dao.finalizeInitialization()).wait();
 
     await (await devToken.dev2normal(1_000)).wait();
     await (await normalToken.transfer(buyer.address, 200)).wait();
@@ -166,13 +165,12 @@ async function finishProject(
 }
 
 describe("system integration", function () {
-    it("keeps project governance and acquired sales operational after dao finalization", async function () {
-        const fixture = await networkHelpers.loadFixture(deployFinalizedSystemFixture);
+    it("keeps project governance and acquired sales operational after dao bootstrap wiring", async function () {
+        const fixture = await networkHelpers.loadFixture(deployConfiguredSystemFixture);
 
-        expect(await fixture.dao.bootstrapFinalized()).to.equal(true);
         await expect(
             fixture.dao.setDevTokenAddress(await fixture.devToken.getAddress())
-        ).to.be.revertedWith("bootstrap finalized");
+        ).to.be.revertedWith("can set once");
 
         const projectRun = await finishProject(fixture, VERSION_ONE, 1_000n, [
             { contributor: fixture.contributor.address, value: 100 }
@@ -204,8 +202,8 @@ describe("system integration", function () {
         expect(await fixture.normalToken.balanceOf(fixture.manager.address)).to.equal(managerNormalBeforeSale + 20n);
     });
 
-    it("routes project rewards into dividend staking and a future-version lockup after dao finalization", async function () {
-        const fixture = await networkHelpers.loadFixture(deployFinalizedSystemFixture);
+    it("routes project rewards into dividend staking and a future-version lockup after dao bootstrap wiring", async function () {
+        const fixture = await networkHelpers.loadFixture(deployConfiguredSystemFixture);
 
         const firstProject = await finishProject(fixture, VERSION_ONE, 1_000n, [
             { contributor: fixture.contributor.address, value: 100 }
@@ -264,9 +262,9 @@ describe("system integration", function () {
         expect(await fixture.lockup.totalClaimed(fixture.contributor.address)).to.equal(33n);
     });
 
-    it("replaces the committee through a full proposal on a finalized system and lets the new committee finish project governance", async function () {
+    it("replaces the committee through a full proposal on a configured system and lets the new committee finish project governance", async function () {
         const signers = await ethers.getSigners();
-        const fixture = await networkHelpers.loadFixture(deployFinalizedSystemFixture);
+        const fixture = await networkHelpers.loadFixture(deployConfiguredSystemFixture);
         const candidate = signers[5];
         const candidateTwo = signers[6];
         const replacementMembers = [fixture.manager.address, candidate.address, candidateTwo.address];
@@ -340,7 +338,7 @@ describe("system integration", function () {
 
     it("lets a token holder initiate committee replacement after the final release and settles it with finalRatio weights", async function () {
         const signers = await ethers.getSigners();
-        const fixture = await networkHelpers.loadFixture(deployFinalizedSystemFixture);
+        const fixture = await networkHelpers.loadFixture(deployConfiguredSystemFixture);
         const candidate = signers[5];
         const candidateTwo = signers[6];
         const replacementMembers = [fixture.manager.address, candidate.address, candidateTwo.address];

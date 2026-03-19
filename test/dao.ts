@@ -39,17 +39,18 @@ async function deployDaoFixture() {
 }
 
 describe("dao", function () {
-    it("tracks the bootstrap admin and starts unfinalized", async function () {
+    it("tracks the bootstrap admin", async function () {
         const fixture = await networkHelpers.loadFixture(deployDaoFixture);
 
         expect(await fixture.dao.bootstrapAdmin()).to.equal(fixture.bootstrapAdmin.address);
-        expect(await fixture.dao.bootstrapFinalized()).to.equal(false);
     });
 
-    it("rejects the legacy bootstrap migration on fresh deployments", async function () {
+    it("rejects bootstrap admin migration on fresh deployments", async function () {
         const fixture = await networkHelpers.loadFixture(deployDaoFixture);
 
-        await expect(fixture.dao.migrateLegacyBootstrap()).to.be.revertedWith("not legacy");
+        await expect(
+            fixture.dao.migrateBootstrapAdmin(fixture.bootstrapAdmin.address)
+        ).to.be.revertedWith("bootstrap admin initialized");
     });
 
     it("rejects zero and EOA addresses for every module slot", async function () {
@@ -72,7 +73,7 @@ describe("dao", function () {
         await expect(fixture.dao.setAcquiredAddress(fixture.outsiderAddress)).to.be.revertedWith("invalid address");
     });
 
-    it("restricts bootstrap configuration and finalization to the bootstrap admin", async function () {
+    it("restricts bootstrap configuration and admin transfer to the bootstrap admin", async function () {
         const fixture = await networkHelpers.loadFixture(deployDaoFixture);
 
         await expect(
@@ -80,7 +81,7 @@ describe("dao", function () {
         ).to.be.revertedWith("only bootstrap admin");
 
         await expect(
-            fixture.dao.connect(fixture.outsider).finalizeInitialization()
+            fixture.dao.connect(fixture.outsider).transferBootstrapAdmin(fixture.outsiderAddress)
         ).to.be.revertedWith("only bootstrap admin");
     });
 
@@ -104,43 +105,33 @@ describe("dao", function () {
         expect(await fixture.dao.acquired()).to.equal(fixture.acquiredAddress);
     });
 
-    it("allows bootstrap corrections before finalization", async function () {
+    it("locks each configured module slot after the first successful set", async function () {
         const fixture = await networkHelpers.loadFixture(deployDaoFixture);
 
         await expect(fixture.dao.setDevTokenAddress(ethers.ZeroAddress)).to.be.revertedWith("invalid address");
         await (await fixture.dao.setDevTokenAddress(fixture.devTokenAddress)).wait();
-        await (await fixture.dao.setDevTokenAddress(fixture.alternateModuleAddress)).wait();
-
-        expect(await fixture.dao.devToken()).to.equal(fixture.alternateModuleAddress);
-    });
-
-    it("requires every module slot to be configured before finalization", async function () {
-        const fixture = await networkHelpers.loadFixture(deployDaoFixture);
-
-        await (await fixture.dao.setDevTokenAddress(fixture.devTokenAddress)).wait();
-        await expect(fixture.dao.finalizeInitialization()).to.be.revertedWith("modules not configured");
-    });
-
-    it("freezes bootstrap configuration after finalization", async function () {
-        const fixture = await networkHelpers.loadFixture(deployDaoFixture);
-
-        await (await fixture.dao.setDevTokenAddress(fixture.devTokenAddress)).wait();
-        await (await fixture.dao.setNormalTokenAddress(fixture.normalTokenAddress)).wait();
-        await (await fixture.dao.setCommitteeAddress(fixture.committeeAddress)).wait();
-        await (await fixture.dao.setProjectAddress(fixture.projectAddress)).wait();
-        await (await fixture.dao.setTokenLockupAddress(fixture.lockupAddress)).wait();
-        await (await fixture.dao.setTokenDividendAddress(fixture.dividendAddress)).wait();
-        await (await fixture.dao.setAcquiredAddress(fixture.acquiredAddress)).wait();
-        await (await fixture.dao.finalizeInitialization()).wait();
-
-        expect(await fixture.dao.bootstrapFinalized()).to.equal(true);
 
         await expect(
             fixture.dao.setDevTokenAddress(fixture.alternateModuleAddress)
-        ).to.be.revertedWith("bootstrap finalized");
+        ).to.be.revertedWith("can set once");
+
+        expect(await fixture.dao.devToken()).to.equal(fixture.devTokenAddress);
+    });
+
+    it("allows transferring the bootstrap admin for future zero-value module slots", async function () {
+        const fixture = await networkHelpers.loadFixture(deployDaoFixture);
+
+        await expect(fixture.dao.transferBootstrapAdmin(ethers.ZeroAddress)).to.be.revertedWith("invalid bootstrap admin");
+        await (await fixture.dao.transferBootstrapAdmin(fixture.outsiderAddress)).wait();
+
+        expect(await fixture.dao.bootstrapAdmin()).to.equal(fixture.outsiderAddress);
+
         await expect(
-            fixture.dao.finalizeInitialization()
-        ).to.be.revertedWith("bootstrap finalized");
+            fixture.dao.setDevTokenAddress(fixture.devTokenAddress)
+        ).to.be.revertedWith("only bootstrap admin");
+
+        await (await fixture.dao.connect(fixture.outsider).setDevTokenAddress(fixture.devTokenAddress)).wait();
+        expect(await fixture.dao.devToken()).to.equal(fixture.devTokenAddress);
     });
 
     it("recognizes only configured module addresses and itself as DAO contracts", async function () {
@@ -153,7 +144,6 @@ describe("dao", function () {
         await (await fixture.dao.setTokenLockupAddress(fixture.lockupAddress)).wait();
         await (await fixture.dao.setTokenDividendAddress(fixture.dividendAddress)).wait();
         await (await fixture.dao.setAcquiredAddress(fixture.acquiredAddress)).wait();
-        await (await fixture.dao.finalizeInitialization()).wait();
 
         expect(await fixture.dao.isDAOContract(await fixture.dao.getAddress())).to.equal(true);
         expect(await fixture.dao.isDAOContract(fixture.devTokenAddress)).to.equal(true);
