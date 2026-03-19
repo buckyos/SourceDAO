@@ -49,6 +49,53 @@
 
 ---
 
+## 2026-03-18 综合治理联动测试补充记录
+
+### 范围
+
+- 测试：`test/system_integration.ts`
+
+### 背景
+
+此前已经分别覆盖了：
+
+1. `Project` 提案在委员会快照语义下的换届兼容
+2. `Committee` 的 full proposal 分批结算
+3. `Dao` / `Committee` 的升级回归
+
+但跨模块的真实系统链路里，还缺两条更贴近线上运维的组合场景：
+
+1. full proposal 换届之后，新委员会是否还能继续推进真实升级治理
+2. 在真实已配置系统里，full proposal 多 voter 的分批 `endFullPropose(...)` 是否稳定
+
+### 修改目的
+
+补齐上面两条系统级回归，避免只在单模块测试里验证局部语义。
+
+### 具体改动
+
+#### 1. 增加“换届后再升级”的系统级回归
+
+新增一条用例，覆盖：
+
+1. 通过 full proposal 完成委员会替换
+2. 旧委员不能再发起 upgrade proposal
+3. 新委员可以发起并投票通过 `Dao` 升级提案
+4. 升级后的 `Dao` 仍保持原有模块 wiring
+
+#### 2. 增加“多 voter + 分批 settle”的系统级回归
+
+新增一条用例，覆盖：
+
+1. 在真实已配置系统里，多个 token holder 参与同一个 full proposal
+2. 第一次 `endFullPropose(...)` 只结算部分 voter，proposal 仍保持 `InProgress`
+3. 第二次 `endFullPropose(...)` 结算剩余 voter，并忽略重复地址
+4. 最终 proposal 正确进入 `Accepted`
+
+### 验证方式
+
+新增的两条系统测试都放在 `test/system_integration.ts`，后续会随全量 `npm test` 一起回归。
+
 ## 2026-03-16 Dao Bootstrap 语义简化记录
 
 ### 范围

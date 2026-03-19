@@ -40,6 +40,19 @@ function setCommitteesParams(members: string[]) {
     ];
 }
 
+function upgradeParams(
+    proxyAddress: string,
+    implementationAddress: string,
+    upgradeData: string = "0x"
+) {
+    return [
+        ethers.zeroPadValue(proxyAddress, 32),
+        ethers.zeroPadValue(implementationAddress, 32),
+        ethers.keccak256(upgradeData),
+        ethers.encodeBytes32String("upgradeContract")
+    ];
+}
+
 async function deployConfiguredSystemFixture() {
     const signers = await ethers.getSigners();
     const [manager, memberTwo, memberThree, contributor, buyer] = signers;
@@ -336,6 +349,60 @@ describe("system integration", function () {
         expect((await fixture.committee.proposalOf(acceptProposalId)).state).to.equal(4n);
     });
 
+    it("settles a multi-voter full proposal across batches on a configured system", async function () {
+        const signers = await ethers.getSigners();
+        const fixture = await networkHelpers.loadFixture(deployConfiguredSystemFixture);
+        const candidate = signers[5];
+        const candidateTwo = signers[6];
+        const replacementMembers = [fixture.manager.address, candidate.address, candidateTwo.address];
+        const proposalId = 1n;
+        const proposalParams = setCommitteesParams(replacementMembers);
+
+        await (await fixture.normalToken.transfer(fixture.contributor.address, 100n)).wait();
+
+        expect(await fixture.normalToken.balanceOf(fixture.manager.address)).to.equal(700n);
+        expect(await fixture.normalToken.balanceOf(fixture.buyer.address)).to.equal(200n);
+        expect(await fixture.normalToken.balanceOf(fixture.contributor.address)).to.equal(100n);
+
+        await expect(fixture.committee.connect(fixture.manager).prepareSetCommittees(replacementMembers, true))
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(proposalId, true);
+
+        await (await fixture.committee.connect(fixture.manager).support(proposalId, proposalParams)).wait();
+        await (await fixture.committee.connect(fixture.buyer).reject(proposalId, proposalParams)).wait();
+        await (await fixture.committee.connect(fixture.contributor).support(proposalId, proposalParams)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1n);
+
+        await (await fixture.committee.endFullPropose(proposalId, [fixture.manager.address])).wait();
+
+        const partialExtra = await fixture.committee.proposalExtraOf(proposalId);
+        expect(partialExtra.agree).to.equal(8_700n);
+        expect(partialExtra.reject).to.equal(0n);
+        expect(partialExtra.settled).to.equal(1n);
+        expect(partialExtra.totalReleasedToken).to.equal(9_000n);
+        expect((await fixture.committee.proposalOf(proposalId)).state).to.equal(1n);
+
+        await expect(
+            fixture.committee.endFullPropose(
+                proposalId,
+                [fixture.manager.address, fixture.buyer.address, fixture.contributor.address, fixture.manager.address]
+            )
+        )
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        const finalExtra = await fixture.committee.proposalExtraOf(proposalId);
+        expect(finalExtra.agree).to.equal(8_800n);
+        expect(finalExtra.reject).to.equal(200n);
+        expect(finalExtra.settled).to.equal(3n);
+        expect(finalExtra.totalReleasedToken).to.equal(9_000n);
+        expect((await fixture.committee.proposalOf(proposalId)).state).to.equal(2n);
+
+        await (await fixture.committee.setCommittees(replacementMembers, proposalId)).wait();
+        expect(await fixture.committee.members()).to.deep.equal(replacementMembers);
+    });
+
     it("lets a token holder initiate committee replacement after the final release and settles it with finalRatio weights", async function () {
         const signers = await ethers.getSigners();
         const fixture = await networkHelpers.loadFixture(deployConfiguredSystemFixture);
@@ -376,5 +443,67 @@ describe("system integration", function () {
 
         await (await fixture.committee.setCommittees(replacementMembers, proposalId)).wait();
         expect(await fixture.committee.members()).to.deep.equal(replacementMembers);
+    });
+
+    it("lets a replacement committee approve a dao upgrade after full-proposal rotation", async function () {
+        const signers = await ethers.getSigners();
+        const fixture = await networkHelpers.loadFixture(deployConfiguredSystemFixture);
+        const candidate = signers[5];
+        const candidateTwo = signers[6];
+        const replacementMembers = [fixture.manager.address, candidate.address, candidateTwo.address];
+        const rotateProposalId = 1n;
+        const upgradeProposalId = 2n;
+        const rotateParams = setCommitteesParams(replacementMembers);
+        const daoAddress = await fixture.dao.getAddress();
+        const nextDaoImplementation = await (await ethers.getContractFactory("SourceDaoV2Mock")).deploy();
+        await nextDaoImplementation.waitForDeployment();
+        const nextDaoImplementationAddress = await nextDaoImplementation.getAddress();
+        const upgradeProposalParams = upgradeParams(daoAddress, nextDaoImplementationAddress);
+
+        await expect(fixture.committee.connect(fixture.manager).prepareSetCommittees(replacementMembers, true))
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(rotateProposalId, true);
+
+        await (await fixture.committee.connect(fixture.manager).support(rotateProposalId, rotateParams)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1n);
+
+        await expect(fixture.committee.endFullPropose(rotateProposalId, [fixture.manager.address]))
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(rotateProposalId);
+
+        await (await fixture.committee.setCommittees(replacementMembers, rotateProposalId)).wait();
+        expect(await fixture.committee.members()).to.deep.equal(replacementMembers);
+
+        await expect(
+            fixture.committee.connect(fixture.memberTwo).prepareContractUpgrade(daoAddress, nextDaoImplementationAddress)
+        ).to.be.revertedWith("only committee can upgrade contract");
+
+        await expect(
+            fixture.committee.connect(candidate).prepareContractUpgrade(daoAddress, nextDaoImplementationAddress)
+        )
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(upgradeProposalId, false);
+
+        await expect(
+            fixture.committee.connect(fixture.memberTwo).support(upgradeProposalId, upgradeProposalParams)
+        ).to.be.revertedWith("only committee can vote");
+
+        await (await fixture.committee.connect(fixture.manager).support(upgradeProposalId, upgradeProposalParams)).wait();
+        await (await fixture.committee.connect(candidateTwo).support(upgradeProposalId, upgradeProposalParams)).wait();
+
+        await expect(fixture.dao.upgradeToAndCall(nextDaoImplementationAddress, "0x"))
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(upgradeProposalId);
+
+        const upgradedDao = await ethers.getContractAt("SourceDaoV2Mock", daoAddress);
+        expect(await upgradedDao.version()).to.equal("2.1.0");
+        expect(await upgradedDao.committee()).to.equal(await fixture.committee.getAddress());
+        expect(await upgradedDao.project()).to.equal(await fixture.project.getAddress());
+        expect(await upgradedDao.devToken()).to.equal(await fixture.devToken.getAddress());
+        expect(await upgradedDao.normalToken()).to.equal(await fixture.normalToken.getAddress());
+        expect(await upgradedDao.lockup()).to.equal(await fixture.lockup.getAddress());
+        expect(await upgradedDao.dividend()).to.equal(await fixture.dividend.getAddress());
+        expect(await upgradedDao.acquired()).to.equal(await fixture.acquired.getAddress());
     });
 });
