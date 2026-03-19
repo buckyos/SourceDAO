@@ -637,6 +637,125 @@ describe("Committee", function () {
         expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
     });
 
+    it("documents that transferred voting power can be counted twice across settlement batches", async function () {
+        const { committee, proposalCaller, members, devToken, normalToken } = await networkHelpers.loadFixture(
+            deployCommitteeGovernanceFixture
+        );
+        const proposalId = 1n;
+        const params = fullProposalParams("full-batched-double-count");
+
+        await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 90)).wait();
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+        await (await committee.connect(members[1]).support(proposalId, params)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
+
+        await (await committee.endFullPropose(proposalId, [members[0].address])).wait();
+
+        const extraAfterFirstBatch = await committee.proposalExtraOf(proposalId);
+        expect(extraAfterFirstBatch.agree).to.equal(4_000n);
+        expect(extraAfterFirstBatch.reject).to.equal(0n);
+        expect(extraAfterFirstBatch.settled).to.equal(1n);
+        expect(extraAfterFirstBatch.totalReleasedToken).to.equal(8_000n);
+        expect((await committee.proposalOf(proposalId)).state).to.equal(1n);
+
+        await (await devToken.connect(members[0]).dev2normal(2_000n)).wait();
+        await (await normalToken.connect(members[0]).transfer(members[1].address, 2_000n)).wait();
+
+        expect(await devToken.balanceOf(members[0].address)).to.equal(0n);
+        expect(await normalToken.balanceOf(members[0].address)).to.equal(0n);
+        expect(await normalToken.balanceOf(members[1].address)).to.equal(2_000n);
+
+        await expect(committee.endFullPropose(proposalId, [members[1].address]))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        const finalExtra = await committee.proposalExtraOf(proposalId);
+        expect(finalExtra.agree).to.equal(8_000n);
+        expect(finalExtra.reject).to.equal(0n);
+        expect(finalExtra.settled).to.equal(2n);
+        expect(finalExtra.totalReleasedToken).to.equal(8_000n);
+        expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
+    });
+
+    it("settles a larger full proposal consistently across multiple batches", async function () {
+        const signers = await ethers.getSigners();
+        const { committee, proposalCaller, members, devToken, normalToken } = await networkHelpers.loadFixture(
+            deployCommitteeGovernanceFixture
+        );
+        const proposalId = 1n;
+        const params = fullProposalParams("full-large-batched");
+        const extraVoters = signers.slice(4, 14);
+        const supportExtras = extraVoters.slice(0, 5);
+        const rejectExtras = extraVoters.slice(5);
+
+        await (await proposalCaller.fullPropose(await committee.getAddress(), SEVEN_DAYS, params, 40)).wait();
+        await (await devToken.connect(members[0]).dev2normal(1_000n)).wait();
+
+        for (const voter of extraVoters) {
+            await (await normalToken.connect(members[0]).transfer(voter.address, 50n)).wait();
+        }
+
+        await (await committee.connect(members[0]).support(proposalId, params)).wait();
+        await (await committee.connect(members[1]).support(proposalId, params)).wait();
+        await (await committee.connect(members[2]).reject(proposalId, params)).wait();
+
+        for (const voter of supportExtras) {
+            await (await committee.connect(voter).support(proposalId, params)).wait();
+        }
+        for (const voter of rejectExtras) {
+            await (await committee.connect(voter).reject(proposalId, params)).wait();
+        }
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
+
+        await (await committee.endFullPropose(proposalId, [
+            members[0].address,
+            supportExtras[0].address,
+            supportExtras[1].address,
+            rejectExtras[0].address,
+            members[0].address
+        ])).wait();
+
+        const firstBatch = await committee.proposalExtraOf(proposalId);
+        expect(firstBatch.agree).to.equal(2_600n);
+        expect(firstBatch.reject).to.equal(50n);
+        expect(firstBatch.settled).to.equal(4n);
+        expect(firstBatch.totalReleasedToken).to.equal(7_000n);
+        expect((await committee.proposalOf(proposalId)).state).to.equal(1n);
+
+        await (await committee.endFullPropose(proposalId, [
+            members[1].address,
+            members[2].address,
+            supportExtras[2].address,
+            supportExtras[3].address,
+            rejectExtras[1].address,
+            rejectExtras[2].address
+        ])).wait();
+
+        const secondBatch = await committee.proposalExtraOf(proposalId);
+        expect(secondBatch.agree).to.equal(4_700n);
+        expect(secondBatch.reject).to.equal(2_150n);
+        expect(secondBatch.settled).to.equal(10n);
+        expect((await committee.proposalOf(proposalId)).state).to.equal(1n);
+
+        await expect(committee.endFullPropose(proposalId, [
+            supportExtras[4].address,
+            rejectExtras[3].address,
+            rejectExtras[4].address,
+            members[1].address
+        ]))
+            .to.emit(committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        const finalExtra = await committee.proposalExtraOf(proposalId);
+        expect(finalExtra.agree).to.equal(4_750n);
+        expect(finalExtra.reject).to.equal(2_250n);
+        expect(finalExtra.settled).to.equal(13n);
+        expect(finalExtra.totalReleasedToken).to.equal(7_000n);
+        expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
+    });
+
     it("rejects a full proposal when turnout clears the threshold but weighted votes tie", async function () {
         const { committee, proposalCaller, devToken, members } = await networkHelpers.loadFixture(deployCommitteeGovernanceFixture);
         const proposalId = 1n;
