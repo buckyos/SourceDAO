@@ -116,6 +116,47 @@ async function deployCommitteeGovernanceFixture() {
     };
 }
 
+async function deployCommitteeWithLyingVoteTokensFixture() {
+    const signers = await ethers.getSigners();
+    const members = signers.slice(1, 4);
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        members.map((signer: { address: string }) => signer.address),
+        1,
+        200,
+        MAIN_PROJECT_NAME,
+        1,
+        150,
+        daoAddress
+    ]);
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+
+    const project: any = await (await ethers.getContractFactory("ProjectVersionMock")).deploy();
+    await project.waitForDeployment();
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+
+    const normalToken = await (await ethers.getContractFactory("LyingNormalTokenMock")).deploy();
+    await normalToken.waitForDeployment();
+    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
+
+    const devToken = await (await ethers.getContractFactory("LyingDevTokenMock")).deploy();
+    await devToken.waitForDeployment();
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+
+    return {
+        committee,
+        dao,
+        project,
+        normalToken,
+        devToken,
+        members,
+        outsider: signers[4],
+        candidate: signers[5]
+    };
+}
+
 async function passAddMemberProposal(
     committee: any,
     voters: any[],
@@ -706,6 +747,60 @@ describe("Committee", function () {
         expect(extra.agree).to.equal(3_500n);
         expect(extra.settled).to.equal(2n);
         expect((await committee.proposalOf(proposalId)).state).to.equal(2n);
+    });
+
+    it("documents that a lying normal token can fabricate full-proposal voting power", async function () {
+        const { committee, normalToken, devToken, outsider, candidate, members } = await networkHelpers.loadFixture(
+            deployCommitteeWithLyingVoteTokensFixture
+        );
+        const proposalId = 1n;
+        const replacementMembers = [members[0].address, members[1].address, candidate.address];
+        const params = setCommitteesParams(replacementMembers);
+
+        await (await normalToken.setBalance(outsider.address, 1_000n)).wait();
+        await (await normalToken.setTotalSupply(1_000n)).wait();
+        await (await devToken.setBalance(outsider.address, 0n)).wait();
+        await (await devToken.setTotalReleased(0n)).wait();
+
+        await (await committee.connect(outsider).prepareSetCommittees(replacementMembers, true)).wait();
+        await (await committee.connect(outsider).support(proposalId, params)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
+        await (await committee.endFullPropose(proposalId, [outsider.address])).wait();
+
+        const proposal = await committee.proposalOf(proposalId);
+        const extra = await committee.proposalExtraOf(proposalId);
+        expect(proposal.state).to.equal(2n);
+        expect(extra.agree).to.equal(1_000n);
+        expect(extra.reject).to.equal(0n);
+        expect(extra.totalReleasedToken).to.equal(1_000n);
+    });
+
+    it("documents that a lying dev token can fabricate full-proposal voting power", async function () {
+        const { committee, normalToken, devToken, outsider, candidate, members } = await networkHelpers.loadFixture(
+            deployCommitteeWithLyingVoteTokensFixture
+        );
+        const proposalId = 1n;
+        const replacementMembers = [members[0].address, candidate.address, outsider.address];
+        const params = setCommitteesParams(replacementMembers);
+
+        await (await normalToken.setBalance(outsider.address, 0n)).wait();
+        await (await normalToken.setTotalSupply(0n)).wait();
+        await (await devToken.setBalance(outsider.address, 500n)).wait();
+        await (await devToken.setTotalReleased(500n)).wait();
+
+        await (await committee.connect(outsider).prepareSetCommittees(replacementMembers, true)).wait();
+        await (await committee.connect(outsider).support(proposalId, params)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
+        await (await committee.endFullPropose(proposalId, [outsider.address])).wait();
+
+        const proposal = await committee.proposalOf(proposalId);
+        const extra = await committee.proposalExtraOf(proposalId);
+        expect(proposal.state).to.equal(2n);
+        expect(extra.agree).to.equal(1_000n);
+        expect(extra.reject).to.equal(0n);
+        expect(extra.totalReleasedToken).to.equal(1_000n);
     });
 
     it("currently allows a zero-balance outsider to start a full committee replacement proposal but not vote in it", async function () {

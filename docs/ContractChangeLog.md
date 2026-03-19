@@ -3347,3 +3347,93 @@
 3. 共享发布信号一旦被错误或恶意 project 模块伪造，会同时影响 `Committee` 和 `Lockup`
 
 其中第三类不是本轮要直接修掉的逻辑，而是当前架构下应继续明确记录的系统级信任前提。
+
+## 2026-03-19 第二梯队恶意 token / miswired token 安全回归补充
+
+### 范围
+
+- mock：`contracts/mocks/LyingVoteTokenMock.sol`
+- 测试：`test/committee.ts`、`test/dividend.ts`、`test/acquired.ts`
+
+### 背景
+
+在第一梯队补测之后，还剩两类更贴近“恶意 token 模块”本身的边界没有被固定：
+
+1. 如果 `devToken` / `normalToken` slot 被替换成会返回伪造余额和总量的合约，full proposal 当前的票重读取会不会被操纵
+2. 如果 `Dividend` / `Acquired` 依赖的 `normalToken` / `devToken` slot 被写成“有代码但不是 token 接口”的合约，失败是否保持原子，不会留下部分记账
+
+### 具体改动
+
+#### 1. 增加 lying vote token mock
+
+新增 `LyingNormalTokenMock` 和 `LyingDevTokenMock`，支持：
+
+1. 直接设置任意地址的 `balanceOf(...)`
+2. 直接设置 `totalSupply()`
+3. 对 dev token 额外设置 `totalReleased()`
+
+这类 mock 的目的不是模拟真实 ERC20，而是表征：
+一旦 `SourceDao` 把 token slot 指向了“接口对、语义恶意”的合约，当前 full proposal 权重读取会完全信任这些返回值。
+
+#### 2. 固定 full proposal 对 lying token 返回值的信任边界
+
+在 `test/committee.ts` 中新增两条表征测试：
+
+1. `normalToken` 被换成 lying 合约后，outsider 可以凭伪造的 normal balance 发起并投票 full proposal
+2. `devToken` 被换成 lying 合约后，outsider 可以凭伪造的 dev balance / totalReleased 发起并投票 full proposal
+
+当前结果是：
+
+1. `Committee` 会按这些伪造余额计算 `agree`
+2. `totalReleasedToken` 也会按伪造的 `totalSupply / totalReleased` 计算
+3. 提案会被正常接受
+
+这批测试的作用是把当前架构下的信任前提固定下来：  
+`Committee` 对 `dao.devToken()` / `dao.normalToken()` 的返回值没有额外防御层。
+
+#### 3. 固定 miswired token 对 Dividend 的原子失败边界
+
+在 `test/dividend.ts` 中新增两条回归：
+
+1. `normalToken` slot 被写成非 token 合约后，`stakeNormal(...)` 必须失败
+2. `devToken` slot 被写成非 token 合约后，`stakeDev(...)` 必须失败
+
+同时验证失败后：
+
+1. `totalStaked` 仍为 0
+2. `currentCycleIndex` 不变化
+3. 用户 stake record 不会被创建
+
+也就是说，当前失败模式是“不可用但原子”，不是“部分入账后失败”。
+
+#### 4. 固定 miswired normal token 对 Acquired 的原子失败边界
+
+在 `test/acquired.ts` 中新增两条回归：
+
+1. 当 `normalToken` slot 被写成非 token 合约时，ERC20 sale 路径下的 `startInvestment(...)` 会在读取 dao token 元信息时直接失败
+2. 在 native sale 路径下，即使 investment 已成功创建，后续 `invest(...)` 仍会因为拉取 dao token 失败而原子回滚
+
+同时验证失败后：
+
+1. `InvestmentInfo` 不会被部分写入
+2. `investedAmount / daoTokenAmount / investedAmounts[user]` 不会脏写
+3. contract 内的原生币 escrow 保持不变
+
+### 验证方式
+
+新增回归会纳入：
+
+1. `test-hh3/committee.ts`
+2. `test-hh3/dividend.ts`
+3. `test-hh3/acquired.ts`
+
+并通过全量 `npm test` 一起验证。
+
+### 当前结论
+
+这批测试把两类残余边界明确固定下来：
+
+1. 如果 token 模块本身是恶意的，full proposal 权重可以被完全操纵
+2. 如果 token 模块只是错误 wiring，`Dividend` 和 `Acquired` 当前会原子失败，不会留下部分账务状态
+
+第一类属于当前架构的信任前提，第二类则是当前实现已经具备的失败原子性边界。

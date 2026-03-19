@@ -45,6 +45,32 @@ async function deployAcquiredFixture() {
     };
 }
 
+async function deployAcquiredMiswiredNormalFixture() {
+    const [investor, buyerOne] = await ethers.getSigners();
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const wrongNormalToken = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+    await wrongNormalToken.waitForDeployment();
+    await (await dao.setNormalTokenAddress(await wrongNormalToken.getAddress())).wait();
+
+    const acquired = await deployUUPSProxy(ethers, "Acquired", [1, daoAddress]);
+    await (await dao.setAcquiredAddress(await acquired.getAddress())).wait();
+
+    const saleTokenFactory = await ethers.getContractFactory("TestToken");
+    const saleToken = await saleTokenFactory.deploy("SaleToken", "SALE", 18, 1_000_000n, investor.address);
+    await saleToken.waitForDeployment();
+
+    return {
+        investor,
+        buyerOne,
+        dao,
+        acquired,
+        saleToken,
+        wrongNormalToken
+    };
+}
+
 describe("acquired", function () {
     it("rejects invalid investment configurations", async function () {
         const { acquired, saleToken, buyerOne, buyerTwo, normalToken } = await networkHelpers.loadFixture(deployAcquiredFixture);
@@ -167,6 +193,67 @@ describe("acquired", function () {
         }
 
         expect(reverted).to.equal(true);
+    });
+
+    it("reverts ERC20 investment creation atomically when the dao normal-token slot is miswired", async function () {
+        const { investor, buyerOne, acquired, saleToken } = await networkHelpers.loadFixture(deployAcquiredMiswiredNormalFixture);
+
+        await (await saleToken.approve(await acquired.getAddress(), 500n)).wait();
+
+        let reverted = false;
+        try {
+            await (await acquired.startInvestment({
+                whitelist: [buyerOne.address],
+                firstPercent: [10_000],
+                tokenAddress: await saleToken.getAddress(),
+                tokenAmount: 500,
+                tokenRatio: { tokenAmount: 5, daoTokenAmount: 1 },
+                step1Duration: 3600,
+                step2Duration: 3600,
+                canEndEarly: false
+            })).wait();
+        } catch {
+            reverted = true;
+        }
+
+        expect(reverted).to.equal(true);
+        const info = await acquired.getInvestmentInfo(1n);
+        expect(info.investor).to.equal(ethers.ZeroAddress);
+        expect(info.totalAmount).to.equal(0n);
+        expect(info.investedAmount).to.equal(0n);
+        expect(await saleToken.balanceOf(await acquired.getAddress())).to.equal(0n);
+        expect(await saleToken.balanceOf(investor.address)).to.equal(1_000_000n);
+    });
+
+    it("reverts purchases atomically when the dao normal-token slot is miswired", async function () {
+        const { buyerOne, acquired } = await networkHelpers.loadFixture(deployAcquiredMiswiredNormalFixture);
+
+        await (await acquired.startInvestment({
+            whitelist: [buyerOne.address],
+            firstPercent: [10_000],
+            tokenAddress: ethers.ZeroAddress,
+            tokenAmount: 10n,
+            tokenRatio: { tokenAmount: 1, daoTokenAmount: 1 },
+            step1Duration: 3600,
+            step2Duration: 3600,
+            canEndEarly: false
+        }, { value: 10n })).wait();
+
+        const acquiredAddress = await acquired.getAddress();
+        let reverted = false;
+        try {
+            await (await acquired.connect(buyerOne).invest(1n, 4n)).wait();
+        } catch {
+            reverted = true;
+        }
+
+        expect(reverted).to.equal(true);
+        const info = await acquired.getInvestmentInfo(1n);
+        expect(info.investedAmount).to.equal(0n);
+        expect(info.daoTokenAmount).to.equal(0n);
+        expect(info.end).to.equal(false);
+        expect(await acquired.getAddressInvestedAmount(1n, buyerOne.address)).to.equal(0n);
+        expect(await ethers.provider.getBalance(acquiredAddress)).to.equal(10n);
     });
 
     it("rejects purchases when the sale token payout returns false", async function () {

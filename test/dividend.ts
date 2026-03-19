@@ -52,6 +52,44 @@ async function deployDividendFixture() {
     };
 }
 
+async function deployDividendMiswiredNormalFixture() {
+    const [owner] = await ethers.getSigners();
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const wrongNormalToken = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+    await wrongNormalToken.waitForDeployment();
+    await (await dao.setNormalTokenAddress(await wrongNormalToken.getAddress())).wait();
+
+    const dividend = await deployUUPSProxy(ethers, "DividendContract", [3600, daoAddress]);
+    await (await dao.setTokenDividendAddress(await dividend.getAddress())).wait();
+
+    return {
+        owner,
+        dividend,
+        wrongNormalToken
+    };
+}
+
+async function deployDividendMiswiredDevFixture() {
+    const [owner] = await ethers.getSigners();
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const wrongDevToken = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+    await wrongDevToken.waitForDeployment();
+    await (await dao.setDevTokenAddress(await wrongDevToken.getAddress())).wait();
+
+    const dividend = await deployUUPSProxy(ethers, "DividendContract", [3600, daoAddress]);
+    await (await dao.setTokenDividendAddress(await dividend.getAddress())).wait();
+
+    return {
+        owner,
+        dividend,
+        wrongDevToken
+    };
+}
+
 describe("dividend", function () {
     it("rejects a zero cycle length during initialization", async function () {
         const dao = await deployUUPSProxy(ethers, "SourceDao");
@@ -76,6 +114,42 @@ describe("dividend", function () {
 
         expect(reverted).to.equal(true);
         expect(await dividend.getDepositTokenBalance(await falseToken.getAddress())).to.equal(0n);
+    });
+
+    it("reverts miswired normal-token staking atomically without creating stake accounting", async function () {
+        const { owner, dividend } = await networkHelpers.loadFixture(deployDividendMiswiredNormalFixture);
+        const dividendAddress = await dividend.getAddress();
+
+        let reverted = false;
+        try {
+            await (await dividend.stakeNormal(100n)).wait();
+        } catch {
+            reverted = true;
+        }
+
+        expect(reverted).to.equal(true);
+        expect(await dividend.getTotalStaked(0n)).to.equal(0n);
+        expect(await dividend.getCurrentCycleIndex()).to.equal(0n);
+        expect(await getStakeRecordCount(dividendAddress, owner.address)).to.equal(0n);
+        expect(await dividend.getStakeAmount(0n)).to.equal(0n);
+    });
+
+    it("reverts miswired dev-token staking atomically without creating stake accounting", async function () {
+        const { owner, dividend } = await networkHelpers.loadFixture(deployDividendMiswiredDevFixture);
+        const dividendAddress = await dividend.getAddress();
+
+        let reverted = false;
+        try {
+            await (await dividend.stakeDev(100n)).wait();
+        } catch {
+            reverted = true;
+        }
+
+        expect(reverted).to.equal(true);
+        expect(await dividend.getTotalStaked(0n)).to.equal(0n);
+        expect(await dividend.getCurrentCycleIndex()).to.equal(0n);
+        expect(await getStakeRecordCount(dividendAddress, owner.address)).to.equal(0n);
+        expect(await dividend.getStakeAmount(0n)).to.equal(0n);
     });
 
     it("keeps claim state and balances unchanged when reward token transfer returns false", async function () {
