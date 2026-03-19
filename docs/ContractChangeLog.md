@@ -49,6 +49,61 @@
 
 ---
 
+## 2026-03-19 复杂治理/奖励链路补测记录
+
+### 范围
+
+- 测试：`test/upgrade.ts`、`test/project.ts`、`test/system_integration.ts`
+
+### 背景
+
+在上一轮系统回归之后，还剩三类更贴近真实使用场景的测试空白：
+
+1. 已配置系统里，`upgradeToAndCall(...)` 携带非空 migration calldata 的真实治理链路
+2. `acceptProject` 提案已经被批准后，项目经理继续修改 contribution 时，最终 payout 的治理语义
+3. 多贡献者拿到项目奖励后，把 token 分别流入 `Dividend` / `Lockup`，随后继续参与 full proposal 治理的跨模块链路
+
+### 具体改动
+
+#### 1. 增加“已配置系统 + 非空 migration calldata”升级回归
+
+在 `test/upgrade.ts` 中新增一条配置完整系统上的委员会升级测试，覆盖：
+
+1. 先由治理批准 `implementation + keccak256(initData)`
+2. 空 calldata 的升级执行必须失败
+3. 带已批准 `initData` 的 `upgradeToAndCall(...)` 可以成功
+4. 升级后的委员会仍然可以继续完成真实 `Project -> Committee -> DevToken` 链路
+
+#### 2. 固定 `Accepting` 阶段 contribution 变更的当前语义
+
+在 `test/project.ts` 中新增一条表征测试，覆盖：
+
+1. `acceptProject` 提案已经被委员会批准
+2. 在项目仍处于 `Accepting` 时，项目经理继续调用 `updateContribute(...)`
+3. `promoteProject(...)` 之后的最终 payout 按“最新 contribution”而不是“提案创建时 contribution”结算
+
+这条测试的目的不是宣称该语义一定最优，而是把当前实现真实行为固定下来，避免后续无意漂移。
+
+#### 3. 增加多贡献者奖励后续使用的综合回归
+
+在 `test/system_integration.ts` 中新增一条多贡献者场景，覆盖：
+
+1. 两个 contributor 从同一个 finished project 提取奖励
+2. 一人把奖励流入 `Dividend`（`stakeDev + dev2normal + stakeNormal`）
+3. 一人把奖励流入 `Lockup`（`convertAndLock`）
+4. 其中一位 contributor 随后发起并参与 `prepareSetCommittees(..., true)` 的 full proposal
+5. 提案完成后，`Dividend` 和 `Lockup` 内的状态仍保持正确
+
+### 验证方式
+
+新增回归会纳入：
+
+1. `test-hh3/upgrade.ts`
+2. `test-hh3/project.ts`
+3. `test-hh3/system_integration.ts`
+
+并通过全量 `npm test` 一起验证。
+
 ## 2026-03-19 贴近真实使用场景的综合回归补充
 
 ### 范围

@@ -2294,4 +2294,38 @@ describe("project", function () {
         expect(versionInfo.version).to.equal(PROJECT_VERSION);
         expect(await fixture.project.versionReleasedTime(PROJECT_NAME, PROJECT_VERSION)).to.be.greaterThan(0n);
     });
+
+    it("uses the latest contribution weights for payout even if they change after acceptProject has already been approved", async function () {
+        const fixture = await networkHelpers.loadFixture(deployProjectFixture);
+        const { startDate, endDate } = await createAndPromoteProject(fixture);
+
+        await (await fixture.project.acceptProject(1n, 4, [
+            { contributor: fixture.manager.address, value: 40 },
+            { contributor: fixture.contributor.address, value: 60 }
+        ])).wait();
+
+        await (await fixture.committee.support(2n, projectParams(1n, startDate, endDate, "acceptProject"))).wait();
+
+        await (await fixture.project.updateContribute(1n, {
+            contributor: fixture.manager.address,
+            value: 80
+        })).wait();
+        await (await fixture.project.updateContribute(1n, {
+            contributor: fixture.contributor.address,
+            value: 20
+        })).wait();
+
+        expect(await fixture.project.contributionOf(1n, fixture.manager.address)).to.equal(80n);
+        expect(await fixture.project.contributionOf(1n, fixture.contributor.address)).to.equal(20n);
+
+        await (await fixture.project.promoteProject(1n)).wait();
+
+        const managerBalanceBefore = await fixture.devToken.balanceOf(fixture.manager.address);
+        await (await fixture.project.withdrawContributions([1n])).wait();
+        expect(await fixture.devToken.balanceOf(fixture.manager.address)).to.equal(managerBalanceBefore + 8_000n);
+
+        const contributorBalanceBefore = await fixture.devToken.balanceOf(fixture.contributor.address);
+        await (await fixture.project.connect(fixture.contributor).withdrawContributions([1n])).wait();
+        expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(contributorBalanceBefore + 2_000n);
+    });
 });

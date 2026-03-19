@@ -773,4 +773,49 @@ describe("upgrade", function () {
         await (await fixture.project.connect(fixture.contributor).withdrawContributions([projectRun.projectId])).wait();
         expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(1_000n);
     });
+
+    it("keeps configured project governance operational across committee upgrade with approved migration calldata", async function () {
+        const fixture = await networkHelpers.loadFixture(deployConfiguredUpgradeFixture);
+        const committeeAddress = await fixture.committee.getAddress();
+        const nextCommitteeImplementation = await (await ethers.getContractFactory("SourceDaoCommitteeV2InitMock")).deploy();
+        await nextCommitteeImplementation.waitForDeployment();
+        const nextCommitteeImplementationAddress = await nextCommitteeImplementation.getAddress();
+        const initData = nextCommitteeImplementation.interface.encodeFunctionData("initializeMarker", [777n]);
+        const proposalId = 1n;
+        const params = upgradeParams(committeeAddress, nextCommitteeImplementationAddress, initData);
+
+        await expect(
+            fixture.committee.connect(fixture.manager)["prepareContractUpgrade(address,address,bytes32)"](
+                committeeAddress,
+                nextCommitteeImplementationAddress,
+                ethers.keccak256(initData)
+            )
+        )
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(proposalId, false);
+
+        await (await fixture.committee.connect(fixture.manager).support(proposalId, params)).wait();
+        await (await fixture.committee.connect(fixture.memberTwo).support(proposalId, params)).wait();
+
+        await expect(fixture.committee.upgradeToAndCall(nextCommitteeImplementationAddress, "0x")).to.be.revertedWith(
+            "verify proposal fail"
+        );
+
+        await expect(fixture.committee.upgradeToAndCall(nextCommitteeImplementationAddress, initData))
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(proposalId)
+            .to.emit(fixture.committee, "ProposalExecuted")
+            .withArgs(proposalId);
+
+        const upgradedCommittee = await ethers.getContractAt("SourceDaoCommitteeV2InitMock", committeeAddress);
+        expect(await upgradedCommittee.version()).to.equal("2.1.1");
+        expect(await upgradedCommittee.upgradeMarker()).to.equal(777n);
+
+        const projectRun = await finishProject(fixture, upgradedCommittee);
+        expect(projectRun.releaseTime).to.be.greaterThan(0n);
+        expect((await fixture.project.projectOf(projectRun.projectId)).state).to.equal(3n);
+
+        await (await fixture.project.connect(fixture.contributor).withdrawContributions([projectRun.projectId])).wait();
+        expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(1_000n);
+    });
 });

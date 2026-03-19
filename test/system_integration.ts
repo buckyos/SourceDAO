@@ -282,6 +282,63 @@ describe("system integration", function () {
         expect(await fixture.lockup.totalClaimed(fixture.contributor.address)).to.equal(33n);
     });
 
+    it("lets multiple contributors route rewards through dividend and lockup before one of them starts full-proposal governance", async function () {
+        const signers = await ethers.getSigners();
+        const fixture = await networkHelpers.loadFixture(deployConfiguredSystemFixture);
+        const candidate = signers[5];
+        const candidateTwo = signers[6];
+        const replacementMembers = [fixture.manager.address, candidate.address, candidateTwo.address];
+        const proposalParams = setCommitteesParams(replacementMembers);
+        const firstProject = await finishProject(fixture, VERSION_ONE, 1_000n, [
+            { contributor: fixture.contributor.address, value: 60 },
+            { contributor: fixture.buyer.address, value: 40 }
+        ]);
+        const proposalId = firstProject.acceptProposalId + 1n;
+
+        await (await fixture.project.connect(fixture.contributor).withdrawContributions([firstProject.projectId])).wait();
+        await (await fixture.project.connect(fixture.buyer).withdrawContributions([firstProject.projectId])).wait();
+
+        expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(600n);
+        expect(await fixture.devToken.balanceOf(fixture.buyer.address)).to.equal(400n);
+
+        await (await fixture.devToken.connect(fixture.contributor).approve(await fixture.dividend.getAddress(), 200n)).wait();
+        await (await fixture.dividend.connect(fixture.contributor).stakeDev(200n)).wait();
+        await (await fixture.devToken.connect(fixture.contributor).dev2normal(100n)).wait();
+        await (await fixture.normalToken.connect(fixture.contributor).approve(await fixture.dividend.getAddress(), 100n)).wait();
+        await (await fixture.dividend.connect(fixture.contributor).stakeNormal(100n)).wait();
+
+        const currentCycleIndex = await fixture.dividend.getCurrentCycleIndex();
+        expect(await fixture.dividend.connect(fixture.contributor).getStakeAmount(currentCycleIndex)).to.equal(300n);
+
+        await (await fixture.devToken.connect(fixture.buyer).approve(await fixture.lockup.getAddress(), 200n)).wait();
+        await (await fixture.lockup.connect(fixture.buyer).convertAndLock([fixture.buyer.address], [200n])).wait();
+        expect(await fixture.lockup.totalAssigned(fixture.buyer.address)).to.equal(200n);
+
+        await expect(fixture.committee.connect(fixture.buyer).prepareSetCommittees(replacementMembers, true))
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(proposalId, true);
+
+        await (await fixture.committee.connect(fixture.buyer).support(proposalId, proposalParams)).wait();
+        await (await fixture.committee.connect(fixture.contributor).support(proposalId, proposalParams)).wait();
+        await (await fixture.committee.connect(fixture.manager).support(proposalId, proposalParams)).wait();
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1n);
+
+        await expect(
+            fixture.committee.endFullPropose(
+                proposalId,
+                [fixture.buyer.address, fixture.contributor.address, fixture.manager.address]
+            )
+        )
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(proposalId);
+
+        await (await fixture.committee.setCommittees(replacementMembers, proposalId)).wait();
+        expect(await fixture.committee.members()).to.deep.equal(replacementMembers);
+        expect(await fixture.lockup.totalAssigned(fixture.buyer.address)).to.equal(200n);
+        expect(await fixture.dividend.connect(fixture.contributor).getStakeAmount(currentCycleIndex)).to.equal(300n);
+    });
+
     it("replaces the committee through a full proposal on a configured system and lets the new committee finish project governance", async function () {
         const signers = await ethers.getSigners();
         const fixture = await networkHelpers.loadFixture(deployConfiguredSystemFixture);
