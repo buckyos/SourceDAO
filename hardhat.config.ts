@@ -3,6 +3,13 @@ import hardhatToolboxMochaEthers from "@nomicfoundation/hardhat-toolbox-mocha-et
 
 export default defineConfig({
     plugins: [hardhatToolboxMochaEthers],
+    networks: {
+        localhost: {
+            type: "http",
+            chainType: "l1",
+            url: "http://127.0.0.1:8545",
+        },
+    },
     paths: {
         tests: {
             mocha: "./test-hh3"
