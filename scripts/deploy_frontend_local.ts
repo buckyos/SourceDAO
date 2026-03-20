@@ -1,17 +1,100 @@
 import hre from "hardhat";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
 
 const { ethers } = await hre.network.connect("localhost");
 
 const PROJECT_NAME = ethers.encodeBytes32String("Buckyos");
 const VERSION_ONE = 100001;
+const VERSION_TWO = 100002;
 const ONE_HOUR = 3600;
+const DEFAULT_FRONTEND_ENV_PATH = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../buckydaowww/src/.env.local",
+);
+
+type CliOptions = {
+    writeFrontendEnv: boolean;
+    frontendEnvOutput?: string;
+};
 
 function printHeader(title: string) {
     console.log(`\n=== ${title} ===`);
 }
 
+function buildProjectParams(
+    projectId: bigint,
+    projectName: string,
+    version: bigint,
+    startDate: bigint,
+    endDate: bigint,
+    action: string,
+) {
+    return [
+        ethers.zeroPadValue(ethers.toBeHex(projectId), 32),
+        projectName,
+        ethers.zeroPadValue(ethers.toBeHex(version), 32),
+        ethers.zeroPadValue(ethers.toBeHex(startDate), 32),
+        ethers.zeroPadValue(ethers.toBeHex(endDate), 32),
+        ethers.encodeBytes32String(action),
+    ];
+}
+
+function parseCliOptions(argv: string[]): CliOptions {
+    const options: CliOptions = { writeFrontendEnv: false };
+
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
+        if (arg === "--write-frontend-env") {
+            options.writeFrontendEnv = true;
+            const next = argv[i + 1];
+            if (next && !next.startsWith("--")) {
+                options.frontendEnvOutput = next;
+                i += 1;
+            }
+            continue;
+        }
+
+        if (arg === "--frontend-env-output") {
+            const next = argv[i + 1];
+            if (!next || next.startsWith("--")) {
+                throw new Error("--frontend-env-output requires a file path");
+            }
+            options.writeFrontendEnv = true;
+            options.frontendEnvOutput = next;
+            i += 1;
+        }
+    }
+
+    return options;
+}
+
+function resolveEnvOutputPath(options: CliOptions): string | undefined {
+    const envOutput =
+        process.env.FRONTEND_ENV_OUTPUT?.trim()
+        || process.env.npm_config_frontend_env_output?.trim();
+    if (envOutput) {
+        if (envOutput === "default") {
+            return DEFAULT_FRONTEND_ENV_PATH;
+        }
+        return path.resolve(process.cwd(), envOutput);
+    }
+
+    if (!options.writeFrontendEnv) {
+        return undefined;
+    }
+
+    if (!options.frontendEnvOutput) {
+        return DEFAULT_FRONTEND_ENV_PATH;
+    }
+
+    return path.resolve(process.cwd(), options.frontendEnvOutput);
+}
+
 async function main() {
+    const cliOptions = parseCliOptions(process.argv.slice(2));
     const signers = await ethers.getSigners();
     const [deployer, committeeTwo, committeeThree, viewer] = signers;
 
@@ -25,7 +108,7 @@ async function main() {
         1,
         200,
         PROJECT_NAME,
-        VERSION_ONE,
+        VERSION_TWO,
         150,
         daoAddress,
     ]);
@@ -40,7 +123,7 @@ async function main() {
         daoAddress,
     ]);
     const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["Bucky Token", "BDT", daoAddress]);
-    const lockup = await deployUUPSProxy(ethers, "SourceTokenLockup", [PROJECT_NAME, VERSION_ONE, daoAddress]);
+    const lockup = await deployUUPSProxy(ethers, "SourceTokenLockup", [PROJECT_NAME, VERSION_TWO, daoAddress]);
     const dividend = await deployUUPSProxy(ethers, "DividendContract", [ONE_HOUR, daoAddress]);
     const acquired = await deployUUPSProxy(ethers, "Acquired", [1, daoAddress]);
 
@@ -57,6 +140,52 @@ async function main() {
     await (await devToken.dev2normal(5_000)).wait();
     await (await normalToken.transfer(viewer.address, 1_000)).wait();
 
+    // Seed a lockup position for the viewer so /user/info shows assigned/locked
+    // values without requiring a separate backend flow.
+    await (await normalToken.approve(await lockup.getAddress(), 250)).wait();
+    await (await lockup.transferAndLock([viewer.address], [250])).wait();
+
+    // Seed a finished project that pays dev rewards to the viewer. This makes
+    // the local chain useful for committee recognition + project reward reads
+    // without requiring the proposal backend.
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const startDate = now - 2n * 24n * 60n * 60n;
+    const endDate = now - 1n * 24n * 60n * 60n;
+    await (await project.createProject(600, PROJECT_NAME, VERSION_ONE, startDate, endDate, [], [])).wait();
+    const createBrief = await project.projectOf(1);
+    const createParams = buildProjectParams(
+        1n,
+        PROJECT_NAME,
+        BigInt(VERSION_ONE),
+        startDate,
+        endDate,
+        "createProject",
+    );
+    await (await committee.support(createBrief.proposalId, createParams)).wait();
+    await (await committee.connect(committeeTwo).support(createBrief.proposalId, createParams)).wait();
+    await (await project.promoteProject(1)).wait();
+
+    await (
+        await project.acceptProject(1, 4, [{ contributor: viewer.address, value: 100 }])
+    ).wait();
+    const acceptBrief = await project.projectOf(1);
+    const acceptParams = buildProjectParams(
+        1n,
+        PROJECT_NAME,
+        BigInt(VERSION_ONE),
+        startDate,
+        endDate,
+        "acceptProject",
+    );
+    await (await committee.support(acceptBrief.proposalId, acceptParams)).wait();
+    await (await committee.connect(committeeTwo).support(acceptBrief.proposalId, acceptParams)).wait();
+    await (await project.promoteProject(1)).wait();
+    await (await project.connect(viewer).withdrawContributions([1])).wait();
+
+    const viewerDevToken = await devToken.balanceOf(viewer.address);
+    const viewerNormalToken = await normalToken.balanceOf(viewer.address);
+    const viewerAssignedLockup = await lockup.totalAssigned(viewer.address);
+
     printHeader("Module addresses");
     console.log("SourceDao        ", daoAddress);
     console.log("Committee        ", await committee.getAddress());
@@ -68,19 +197,36 @@ async function main() {
     console.log("Acquired         ", await acquired.getAddress());
 
     printHeader("Suggested frontend .env.local");
-    console.log(`NEXT_PUBLIC_CHAIN='Hardhat Local'`);
-    console.log(`NEXT_PUBLIC_NETWORK_ID='31337'`);
-    console.log(`NEXT_PUBLIC_RPC_URL='http://127.0.0.1:8545'`);
-    console.log(`NEXT_PUBLIC_MAIN='${daoAddress}'`);
-    console.log(`NEXT_PUBLIC_COMMITTEE='${await committee.getAddress()}'`);
-    console.log(`NEXT_PUBLIC_DEV_TOKEN='${await devToken.getAddress()}'`);
-    console.log(`NEXT_PUBLIC_NORMAL_TOKEN='${await normalToken.getAddress()}'`);
-    console.log(`NEXT_PUBLIC_ACQUIRED='${await acquired.getAddress()}'`);
-    console.log(`NEXT_PUBLIC_LOCKUP='${await lockup.getAddress()}'`);
-    console.log(`NEXT_PUBLIC_DIVIDEND='${await dividend.getAddress()}'`);
-    console.log(`NEXT_PUBLIC_PROJECT='${await project.getAddress()}'`);
-    console.log(`NEXT_PUBLIC_TOKEN_ADDRESS_LINK=''`);
-    console.log(`NEXT_PUBLIC_ADDRESS_LINK=''`);
+    const frontendEnvLines = [
+        `NEXT_PUBLIC_CHAIN='Hardhat Local'`,
+        `NEXT_PUBLIC_NETWORK_ID='31337'`,
+        `NEXT_PUBLIC_RPC_URL='http://127.0.0.1:8545'`,
+        `NEXT_PUBLIC_MAIN='${daoAddress}'`,
+        `NEXT_PUBLIC_COMMITTEE='${await committee.getAddress()}'`,
+        `NEXT_PUBLIC_DEV_TOKEN='${await devToken.getAddress()}'`,
+        `NEXT_PUBLIC_NORMAL_TOKEN='${await normalToken.getAddress()}'`,
+        `NEXT_PUBLIC_ACQUIRED='${await acquired.getAddress()}'`,
+        `NEXT_PUBLIC_LOCKUP='${await lockup.getAddress()}'`,
+        `NEXT_PUBLIC_DIVIDEND='${await dividend.getAddress()}'`,
+        `NEXT_PUBLIC_PROJECT='${await project.getAddress()}'`,
+        `NEXT_PUBLIC_TOKEN_ADDRESS_LINK=''`,
+        `NEXT_PUBLIC_ADDRESS_LINK=''`,
+    ];
+    console.log(frontendEnvLines.join("\n"));
+
+    const envOutputPath = resolveEnvOutputPath(cliOptions);
+    if (envOutputPath) {
+        await mkdir(path.dirname(envOutputPath), { recursive: true });
+        await writeFile(envOutputPath, `${frontendEnvLines.join("\n")}\n`, "utf8");
+        printHeader("Wrote frontend env file");
+        console.log(envOutputPath);
+    }
+
+    printHeader("Seeded local-chain state");
+    console.log(`Viewer dev token balance    : ${viewerDevToken}`);
+    console.log(`Viewer normal token balance : ${viewerNormalToken}`);
+    console.log(`Viewer assigned lockup      : ${viewerAssignedLockup}`);
+    console.log(`Sample finished project ID  : 1`);
 
     printHeader("Useful local accounts");
     console.log(`Deployer / committee member 1: ${deployer.address}`);
