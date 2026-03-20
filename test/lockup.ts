@@ -182,6 +182,57 @@ async function deployUnreleasedTrackedVersionLockupFixture() {
     return deployLockupFixture({ unlockVersion: convertVersion("1.0.1") });
 }
 
+async function deployMiswiredLockupFixture() {
+    const signers = await ethers.getSigners();
+    const [owner, beneficiary] = signers;
+    const releaseVersion = convertVersion("1.0.0");
+
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const project = await (await ethers.getContractFactory("ProjectVersionMock")).deploy();
+    await project.waitForDeployment();
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        1_000_000,
+        [owner.address],
+        [5_000],
+        daoAddress
+    ]);
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+
+    const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["BDT", "BDT", daoAddress]);
+    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
+
+    const wrongLockup = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+    await wrongLockup.waitForDeployment();
+    await (await dao.setTokenLockupAddress(await wrongLockup.getAddress())).wait();
+
+    const realLockup = await deployUUPSProxy(ethers, "SourceTokenLockup", [
+        MAIN_PROJECT_NAME,
+        releaseVersion,
+        daoAddress
+    ]);
+
+    await (await devToken.dev2normal(1_000)).wait();
+    await (await normalToken.transfer(beneficiary.address, 200n)).wait();
+
+    return {
+        owner,
+        beneficiary,
+        dao,
+        project,
+        devToken,
+        normalToken,
+        wrongLockup,
+        realLockup,
+        releaseVersion
+    };
+}
+
 describe("Lockup", function () {
     it("rejects invalid tracked unlock configuration during initialization", async function () {
         const dao = await deployUUPSProxy(ethers, "SourceDao");
@@ -198,6 +249,51 @@ describe("Lockup", function () {
             0,
             daoAddress
         ])).to.be.revertedWith("invalid unlock version");
+    });
+
+    it("reverts convertAndLock atomically when the registered lockup slot points elsewhere", async function () {
+        const { owner, devToken, realLockup } = await networkHelpers.loadFixture(deployMiswiredLockupFixture);
+        const ownerDevBefore = await devToken.balanceOf(owner.address);
+
+        await (await devToken.approve(await realLockup.getAddress(), 300n)).wait();
+        await expect(realLockup.convertAndLock([owner.address], [300n])).to.be.revertedWith("invalid transfer");
+
+        expect(await devToken.balanceOf(owner.address)).to.equal(ownerDevBefore);
+        expect(await devToken.balanceOf(await realLockup.getAddress())).to.equal(0n);
+        expect(await realLockup.totalAssigned(owner.address)).to.equal(0n);
+        expect(await realLockup.totalAssigned(ethers.ZeroAddress)).to.equal(0n);
+        expect(await realLockup.totalClaimed(owner.address)).to.equal(0n);
+    });
+
+    it("keeps claims functional on the actual lockup contract even if the registered slot is miswired", async function () {
+        const { owner, dao, project, normalToken, wrongLockup, realLockup, releaseVersion } = await networkHelpers.loadFixture(
+            deployMiswiredLockupFixture
+        );
+        const registeredLockup = await ethers.getContractAt("SourceTokenLockup", await dao.lockup());
+
+        await (await normalToken.approve(await realLockup.getAddress(), 300n)).wait();
+        await (await realLockup.transferAndLock([owner.address], [300n])).wait();
+
+        const latest = await networkHelpers.time.latest();
+        await (await project.setVersionReleasedTime(MAIN_PROJECT_NAME, Number(releaseVersion), latest)).wait();
+        await networkHelpers.time.increase(THIRTY_DAYS + 1n);
+
+        let registryClaimReverted = false;
+        try {
+            await registeredLockup.claimTokens(1n);
+        } catch {
+            registryClaimReverted = true;
+        }
+
+        expect(registryClaimReverted).to.equal(true);
+        const ownerNormalBeforeClaim = await normalToken.balanceOf(owner.address);
+        await (await realLockup.claimTokens(50n)).wait();
+
+        expect(await normalToken.balanceOf(owner.address)).to.equal(ownerNormalBeforeClaim + 50n);
+        expect(await normalToken.balanceOf(await realLockup.getAddress())).to.equal(250n);
+        expect(await normalToken.balanceOf(await wrongLockup.getAddress())).to.equal(0n);
+        expect(await realLockup.totalClaimed(owner.address)).to.equal(50n);
+        expect(await realLockup.totalClaimed(ethers.ZeroAddress)).to.equal(50n);
     });
 
     it("rejects lock operations with mismatched recipient and amount arrays", async function () {

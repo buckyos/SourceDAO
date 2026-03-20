@@ -136,4 +136,23 @@ describe("dev", function () {
         expect(await devToken.balanceOf(await dividendOperator.getAddress())).to.equal(60n);
         expect(await devToken.balanceOf(beneficiary.address)).to.equal(30n);
     });
+
+    it("treats a miswired dividend slot as a privileged dev-token operator", async function () {
+        const { beneficiary, dividendOperator, devToken } = await networkHelpers.loadFixture(deployDevFixture);
+        const fakeDividend = await ethers.getContractAt("DividendContract", await dividendOperator.getAddress());
+
+        let reverted = false;
+        try {
+            await fakeDividend.getCurrentCycleIndex();
+        } catch {
+            reverted = true;
+        }
+        expect(reverted).to.equal(true);
+
+        await (await devToken.transfer(await dividendOperator.getAddress(), 75)).wait();
+        await (await dividendOperator.transferToken(await devToken.getAddress(), beneficiary.address, 25)).wait();
+
+        expect(await devToken.balanceOf(await dividendOperator.getAddress())).to.equal(50n);
+        expect(await devToken.balanceOf(beneficiary.address)).to.equal(25n);
+    });
 });

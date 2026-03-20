@@ -49,6 +49,101 @@
 
 ---
 
+## 2026-03-19 剩余模块错误 Wiring 安全回归补充记录
+
+### 范围
+
+- 测试：`test/dev.ts`、`test/dividend.ts`、`test/lockup.ts`、`test/system_integration.ts`
+
+### 背景
+
+此前的错误 wiring / 恶意模块回归，已经覆盖了：
+
+1. `committee`
+2. `project`
+3. `devToken`
+4. `normalToken`
+
+但 `SourceDao` 当前仍然只校验模块地址 `code.length > 0`，不能证明目标地址真的实现了预期接口，也不能保证它的语义是安全的。
+
+因此剩余几个模块还需要补上更贴近真实后果的表征测试，重点回答三个问题：
+
+1. `dividend` slot 配错后，会不会意外获得 `DevToken` 的受信转账权限
+2. `lockup` slot 配错后，会如何影响 `convertAndLock(...)` 与 `claimTokens(...)`
+3. `acquired` slot 配错后，会如何影响真实系统里项目奖励与收购流程的隔离性
+
+### 具体改动
+
+#### 1. 为 `dividend` 误配补充两层测试
+
+在 `test/dev.ts` 中新增：
+
+1. 将 `dao.dividend()` 指向一个仅有代码、但并不是 `DividendContract` 的 `TokenOperatorMock`
+2. 证明它虽然不是合法分红模块，却仍然可以因为 `DevToken._update(...)` 的地址白名单而成为一个“受信任的 dev-token route”
+3. 该错误模块可以接收 `DevToken`，并再次把 `DevToken` 转出
+
+在 `test/dividend.ts` 中新增：
+
+1. 当 `dao.dividend()` 指向一个不实现分红接口的合约时
+2. 通过注册表读取到的“分红模块地址”去执行 `stakeDev(...)` / `stakeNormal(...)`
+3. 会直接失败，且不会发生任何部分转账或脏状态
+
+这两条一起固定了：
+
+1. `dividend` 误配不仅会让 registry-based staking 失效
+2. 还会把错误地址提升成一个 `DevToken` 受信任路由
+
+#### 2. 为 `lockup` 误配补充 `convertAndLock / claim` 差异语义
+
+在 `test/lockup.ts` 中新增两条：
+
+1. 当 `dao.lockup()` 指向错误合约时，真实 `SourceTokenLockup.convertAndLock(...)` 会因为 `DevToken` 路由检查失败而原子回滚
+2. 但只要真实 lockup 合约本身已经持有并锁定了 `NormalToken`，`claimTokens(...)` 仍然可以在真实 lockup 地址上正常执行
+
+同时也固定了 registry-based 故障语义：
+
+1. 通过 `dao.lockup()` 读到的错误地址去调用 `claimTokens(...)` 会失败
+2. 但这不会污染真实 lockup 合约的状态
+
+换句话说：
+
+1. `lockup` 误配会打断依赖 `dao.lockup()` 的 `DevToken -> Lockup` 路径
+2. 但不会自动破坏真实 lockup 合约里已经存在的 claim 记账
+
+#### 3. 为 `acquired` 误配补充系统级故障隔离测试
+
+在 `test/system_integration.ts` 中新增：
+
+1. 真实项目治理和奖励分发链路仍可正常完成
+2. 但如果 `dao.acquired()` 指向的是一个不实现 `Acquired` 接口的错误地址
+3. 那么通过注册表读取到的收购模块地址去执行 `startInvestment(...)` 会失败
+4. 且不会发生 sale token 转移、也不会污染买方 `NormalToken` 状态
+
+这条测试固定了一个很实际的运维结论：
+
+1. `acquired` 误配会打断通过 registry 进入的收购流程
+2. 但不会把错误 wiring 传播成对项目奖励主链路的连带破坏
+
+### 当前结论
+
+这批测试把剩余三个模块的错误 wiring 后果补齐到了更接近真实使用语义的层面：
+
+1. `dividend`：不仅 staking 会坏，错误地址还会被当成 `DevToken` 的受信任路由
+2. `lockup`：`convertAndLock(...)` 会坏，但真实 lockup 上的 `claimTokens(...)` 仍是独立的
+3. `acquired`：registry-based 收购会坏，但项目治理与奖励主链路保持隔离
+
+### 验证方式
+
+执行：
+
+1. `npx hardhat test test-hh3/dev.ts test-hh3/dividend.ts test-hh3/lockup.ts test-hh3/system_integration.ts`
+2. `npm test`
+
+结果：
+
+- focused suites 全部通过
+- 全量测试通过，当前总数：`258 passing`
+
 ## 2026-03-19 重入攻击对抗测试补充记录
 
 ### 范围

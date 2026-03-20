@@ -90,6 +90,41 @@ async function deployDividendMiswiredDevFixture() {
     };
 }
 
+async function deployMiswiredRegisteredDividendFixture() {
+    const [owner, beneficiary] = await ethers.getSigners();
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        1_000_000,
+        [owner.address],
+        [5_000],
+        daoAddress
+    ]);
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+
+    const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["BDT", "BDT", daoAddress]);
+    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
+
+    const wrongDividend = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+    await wrongDividend.waitForDeployment();
+    await (await dao.setTokenDividendAddress(await wrongDividend.getAddress())).wait();
+
+    await (await devToken.dev2normal(300)).wait();
+    await (await normalToken.transfer(beneficiary.address, 100n)).wait();
+
+    return {
+        owner,
+        beneficiary,
+        dao,
+        devToken,
+        normalToken,
+        wrongDividend
+    };
+}
+
 describe("dividend", function () {
     it("rejects a zero cycle length during initialization", async function () {
         const dao = await deployUUPSProxy(ethers, "SourceDao");
@@ -150,6 +185,39 @@ describe("dividend", function () {
         expect(await dividend.getCurrentCycleIndex()).to.equal(0n);
         expect(await getStakeRecordCount(dividendAddress, owner.address)).to.equal(0n);
         expect(await dividend.getStakeAmount(0n)).to.equal(0n);
+    });
+
+    it("fails cleanly when the registered dividend slot points to a non-dividend contract", async function () {
+        const { owner, dao, devToken, normalToken, wrongDividend } = await networkHelpers.loadFixture(
+            deployMiswiredRegisteredDividendFixture
+        );
+        const registeredDividend = await ethers.getContractAt("DividendContract", await dao.dividend());
+        const ownerDevBefore = await devToken.balanceOf(owner.address);
+        const ownerNormalBefore = await normalToken.balanceOf(owner.address);
+
+        await (await devToken.approve(await wrongDividend.getAddress(), 100n)).wait();
+        await (await normalToken.approve(await wrongDividend.getAddress(), 100n)).wait();
+
+        let stakeDevReverted = false;
+        try {
+            await registeredDividend.stakeDev(100n);
+        } catch {
+            stakeDevReverted = true;
+        }
+
+        let stakeNormalReverted = false;
+        try {
+            await registeredDividend.stakeNormal(100n);
+        } catch {
+            stakeNormalReverted = true;
+        }
+
+        expect(stakeDevReverted).to.equal(true);
+        expect(stakeNormalReverted).to.equal(true);
+        expect(await devToken.balanceOf(owner.address)).to.equal(ownerDevBefore);
+        expect(await normalToken.balanceOf(owner.address)).to.equal(ownerNormalBefore);
+        expect(await devToken.balanceOf(await wrongDividend.getAddress())).to.equal(0n);
+        expect(await normalToken.balanceOf(await wrongDividend.getAddress())).to.equal(0n);
     });
 
     it("keeps claim state and balances unchanged when reward token transfer returns false", async function () {

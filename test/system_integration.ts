@@ -173,6 +173,69 @@ async function deploySpoofedReleaseSystemFixture() {
     };
 }
 
+async function deployMiswiredAcquiredSystemFixture() {
+    const signers = await ethers.getSigners();
+    const [manager, memberTwo, memberThree, contributor, buyer] = signers;
+    const dao = await deployUUPSProxy(ethers, "SourceDao");
+    const daoAddress = await dao.getAddress();
+
+    const committee = await deployUUPSProxy(ethers, "SourceDaoCommittee", [
+        [manager.address, memberTwo.address, memberThree.address],
+        1,
+        200,
+        PROJECT_NAME,
+        Number(VERSION_TWO),
+        150,
+        daoAddress
+    ]);
+    const project = await deployUUPSProxy(ethers, "ProjectManagement", [1, daoAddress]);
+    const devToken = await deployUUPSProxy(ethers, "DevToken", [
+        "BDDT",
+        "BDDT",
+        1_000_000,
+        [manager.address],
+        [5_000],
+        daoAddress
+    ]);
+    const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["BDT", "BDT", daoAddress]);
+    const lockup = await deployUUPSProxy(ethers, "SourceTokenLockup", [PROJECT_NAME, VERSION_TWO, daoAddress]);
+    const dividend = await deployUUPSProxy(ethers, "DividendContract", [Number(ONE_HOUR), daoAddress]);
+    const wrongAcquired = await (await ethers.getContractFactory("NativeReceiverMock")).deploy();
+    await wrongAcquired.waitForDeployment();
+
+    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
+    await (await dao.setProjectAddress(await project.getAddress())).wait();
+    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
+    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
+    await (await dao.setTokenLockupAddress(await lockup.getAddress())).wait();
+    await (await dao.setTokenDividendAddress(await dividend.getAddress())).wait();
+    await (await dao.setAcquiredAddress(await wrongAcquired.getAddress())).wait();
+
+    await (await devToken.dev2normal(1_000)).wait();
+    await (await normalToken.transfer(buyer.address, 200)).wait();
+
+    const tokenFactory = await ethers.getContractFactory("TestToken");
+    const saleToken = await tokenFactory.deploy("SaleToken", "SALE", 18, 1_000_000n, manager.address);
+    await saleToken.waitForDeployment();
+
+    return {
+        manager,
+        memberTwo,
+        memberThree,
+        contributor,
+        buyer,
+        dao,
+        committee,
+        project,
+        devToken,
+        normalToken,
+        lockup,
+        dividend,
+        wrongAcquired,
+        saleToken
+    };
+}
+
 async function finishProject(
     fixture: any,
     version: bigint,
@@ -268,6 +331,39 @@ describe("system integration", function () {
         expect(await fixture.saleToken.balanceOf(fixture.buyer.address)).to.equal(100n);
         expect((await fixture.acquired.getInvestmentInfo(1n)).end).to.equal(true);
         expect(await fixture.normalToken.balanceOf(fixture.manager.address)).to.equal(managerNormalBeforeSale + 20n);
+    });
+
+    it("keeps project rewards operational while registry-based acquired sales fail when acquired is miswired", async function () {
+        const fixture = await networkHelpers.loadFixture(deployMiswiredAcquiredSystemFixture);
+        const projectRun = await finishProject(fixture, VERSION_ONE, 1_000n, [
+            { contributor: fixture.contributor.address, value: 100 }
+        ]);
+        const contributorDevBefore = await fixture.devToken.balanceOf(fixture.contributor.address);
+        const registeredAcquired = await ethers.getContractAt("Acquired", await fixture.dao.acquired());
+
+        await (await fixture.project.connect(fixture.contributor).withdrawContributions([projectRun.projectId])).wait();
+        expect(await fixture.devToken.balanceOf(fixture.contributor.address)).to.equal(contributorDevBefore + 1_000n);
+
+        await (await fixture.saleToken.approve(await registeredAcquired.getAddress(), 100n)).wait();
+        let startInvestmentReverted = false;
+        try {
+            await registeredAcquired.startInvestment({
+                whitelist: [fixture.buyer.address],
+                firstPercent: [10_000],
+                tokenAddress: await fixture.saleToken.getAddress(),
+                tokenAmount: 100n,
+                tokenRatio: { tokenAmount: 5n, daoTokenAmount: 1n },
+                step1Duration: Number(ONE_HOUR),
+                step2Duration: Number(ONE_HOUR),
+                canEndEarly: false
+            });
+        } catch {
+            startInvestmentReverted = true;
+        }
+
+        expect(startInvestmentReverted).to.equal(true);
+        expect(await fixture.saleToken.balanceOf(fixture.manager.address)).to.equal(1_000_000n);
+        expect(await fixture.normalToken.balanceOf(fixture.buyer.address)).to.equal(200n);
     });
 
     it("routes project rewards into dividend staking and a future-version lockup after dao bootstrap wiring", async function () {
