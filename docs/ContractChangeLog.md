@@ -49,6 +49,79 @@
 
 ---
 
+## 2026-03-19 Fuzz / Invariant 随机回归测试补充记录
+
+### 范围
+
+- 测试：`test/fuzz_invariant.ts`
+
+### 背景
+
+当前仓库的单模块功能测试、跨合约联动测试和恶意回归测试已经比较完整，但它们大多仍然是手写的确定性场景。
+
+对于下面这些状态机更复杂、资金流更长、边界更容易在重构中被悄悄破坏的模块，仅靠继续追加普通 case 的收益会越来越低：
+
+1. `Dividend`
+2. `Project`
+3. `Committee` 的 `full proposal` 结算
+4. `Lockup`
+
+这些模块更适合补一层“固定种子 + 多步随机操作 + 不变量断言”的回归，用来持续校验核心账本关系、批处理语义和复杂交互时序。
+
+### 具体改动
+
+新增独立测试文件 `test/fuzz_invariant.ts`，并通过 `test-hh3/fuzz_invariant.ts` 接入现有 Hardhat 3 套件。
+
+本轮没有引入额外 property-testing 依赖，而是采用“固定随机种子 + 可重复执行”的方式，补了 4 条随机化 invariant / stress 回归：
+
+1. `Dividend`
+   - 在随机 stake / unstake / deposit / cycle rollover 的多步序列下，持续验证：
+   - 当前 cycle 的 `totalStaked`
+   - 每个用户 `getStakeAmount(currentCycle)`
+   - reward token 的链上余额与 `getDepositTokenBalance(...)`
+   - 最终所有用户提取后的 reward 守恒关系
+
+2. `Lockup`
+   - 在随机 `transferAndLock / convertAndLock` 批次和后续随机 claim 序列下，持续验证：
+   - 各地址 `totalAssigned / totalClaimed`
+   - 全局 `totalAssigned(address(0)) / totalClaimed(address(0))`
+   - `lockup` 持有的 normal token 与全局 claim 之间的守恒关系
+
+3. `Committee full proposal`
+   - 在固定余额不变的前提下，随机化 voter 方向、打乱 settlement batch 顺序并插入重复地址，验证：
+   - `agree / reject / settled`
+   - `totalReleasedToken`
+   - 最终 proposal state
+   - 重复地址不会被二次 settle
+
+4. `Project`
+   - 在多个项目上随机化：
+   - `budget`
+   - `extra token escrow`
+   - 初始 contribution 集合
+   - `Accepting` 阶段的多次 `updateContribute(...)`
+   - 最终再按随机顺序批量提取，验证：
+   - contributor 实收 dev reward
+   - contributor 实收 extra token
+   - 项目合约内剩余 dust 与整数除法模型一致
+
+### 兼容性影响
+
+- 这次仅新增测试与测试入口，不改合约逻辑
+- 不影响 ABI
+- 不影响代理升级存储布局
+- 不影响现有工具调用
+
+### 验证方式
+
+- 新增 `test/fuzz_invariant.ts`
+- 新增 `test-hh3/fuzz_invariant.ts`
+- 计划执行：
+  - `npx hardhat test test-hh3/fuzz_invariant.ts`
+  - `npm test`
+
+---
+
 ## 2026-03-19 升级提案与委员会换届并发治理回归补充记录
 
 ### 范围
