@@ -52,6 +52,13 @@ function projectParams(
     ];
 }
 
+function setCommitteesParams(members: string[]) {
+    return [
+        ...members.map((member) => ethers.zeroPadValue(member, 32)),
+        ethers.encodeBytes32String("setCommittees")
+    ];
+}
+
 async function deployDummyModuleAddresses(count: number) {
     const factory = await ethers.getContractFactory("NativeReceiverMock");
     const deployments = [];
@@ -759,6 +766,81 @@ describe("upgrade", function () {
         expect(await upgradedDao.governanceRelay()).to.equal(relayAddress);
 
         await expect(upgradedDao.setGovernanceRelayAddress(relayAddress)).to.be.revertedWith("can set once");
+    });
+
+    it("keeps upgrade proposal boundaries consistent when committee rotation happens before a queued upgrade resolves", async function () {
+        const fixture = await networkHelpers.loadFixture(deployConfiguredUpgradeFixture);
+        const daoAddress = await fixture.dao.getAddress();
+        const oldUpgradeProposalId = 1n;
+        const rotationProposalId = 2n;
+        const newUpgradeProposalId = 3n;
+        const oldUpgradeParams = upgradeParams(daoAddress, fixture.nextDaoImplementationAddress);
+        const newCommitteeMembers = [
+            fixture.manager.address,
+            fixture.contributor.address,
+            fixture.buyer.address
+        ];
+        const rotationParams = setCommitteesParams(newCommitteeMembers);
+        const replacementImplementation = await (await ethers.getContractFactory("SourceDaoV3ExtendedMock")).deploy();
+        await replacementImplementation.waitForDeployment();
+        const replacementImplementationAddress = await replacementImplementation.getAddress();
+        const newUpgradeParams = upgradeParams(daoAddress, replacementImplementationAddress);
+
+        await expect(
+            fixture.committee.connect(fixture.manager).prepareContractUpgrade(daoAddress, fixture.nextDaoImplementationAddress)
+        )
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(oldUpgradeProposalId, false);
+        await (await fixture.committee.connect(fixture.manager).support(oldUpgradeProposalId, oldUpgradeParams)).wait();
+
+        await expect(
+            fixture.committee.connect(fixture.manager).prepareSetCommittees(newCommitteeMembers, false)
+        )
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(rotationProposalId, false);
+        await (await fixture.committee.connect(fixture.manager).support(rotationProposalId, rotationParams)).wait();
+        await (await fixture.committee.connect(fixture.memberTwo).support(rotationProposalId, rotationParams)).wait();
+        await (await fixture.committee.setCommittees(newCommitteeMembers, rotationProposalId)).wait();
+
+        expect(await fixture.committee.members()).to.deep.equal(newCommitteeMembers);
+
+        await expect(
+            fixture.committee.connect(fixture.buyer).support(oldUpgradeProposalId, oldUpgradeParams)
+        ).to.be.revertedWith("only committee can vote");
+
+        await (await fixture.committee.connect(fixture.memberThree).reject(oldUpgradeProposalId, oldUpgradeParams)).wait();
+
+        await expect(
+            fixture.committee.connect(fixture.contributor).prepareContractUpgrade(daoAddress, replacementImplementationAddress)
+        ).to.be.revertedWith("already has upgrade proposal");
+
+        await networkHelpers.time.increase(SEVEN_DAYS + 1);
+        await fixture.committee.connect(fixture.contributor).cancelContractUpgrade(daoAddress);
+
+        expect((await fixture.committee.proposalOf(oldUpgradeProposalId)).state).to.equal(5n);
+        expect((await fixture.committee.getContractUpgradeProposal(daoAddress)).state).to.equal(0n);
+
+        await expect(
+            fixture.committee.connect(fixture.contributor).prepareContractUpgrade(daoAddress, replacementImplementationAddress)
+        )
+            .to.emit(fixture.committee, "ProposalStart")
+            .withArgs(newUpgradeProposalId, false);
+
+        await expect(
+            fixture.committee.connect(fixture.memberThree).support(newUpgradeProposalId, newUpgradeParams)
+        ).to.be.revertedWith("only committee can vote");
+
+        await (await fixture.committee.connect(fixture.contributor).support(newUpgradeProposalId, newUpgradeParams)).wait();
+        await (await fixture.committee.connect(fixture.buyer).support(newUpgradeProposalId, newUpgradeParams)).wait();
+
+        await expect(fixture.dao.upgradeToAndCall(replacementImplementationAddress, "0x"))
+            .to.emit(fixture.committee, "ProposalAccept")
+            .withArgs(newUpgradeProposalId);
+
+        const upgradedDao = await ethers.getContractAt("SourceDaoV3ExtendedMock", daoAddress);
+        expect(await upgradedDao.version()).to.equal("2.2.0");
+        expect(await upgradedDao.committee()).to.equal(await fixture.committee.getAddress());
+        expect((await fixture.committee.proposalOf(newUpgradeProposalId)).state).to.equal(4n);
     });
 
     it("keeps configured project governance operational across committee upgrade", async function () {
