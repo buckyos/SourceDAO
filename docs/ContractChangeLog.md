@@ -122,6 +122,45 @@
 
 ---
 
+## 2026-03-19 vote 工具端到端测试子进程清理修正记录
+
+### 范围
+
+- 测试：`test/vote_tool.ts`
+
+### 背景
+
+`vote_tool` 的端到端测试会在本地启动临时 `hardhat node`，再跑一遍 `prepare -> sign -> broadcast -> proposal_status` 全链路。
+
+原先测试里通过 `npx hardhat ...` 启动这些子进程。这个方式在测试结束时存在一个实际问题：
+
+1. `npx` 包装进程会先退出
+2. 真正的 `hardhat node` 进程会继续存活
+3. `stop()` 阶段 kill 到的是包装层，不是节点本体
+4. 结果是测试跑完后会残留本地 `hardhat node` / `hardhat test` 相关进程
+
+### 具体改动
+
+在 `test/vote_tool.ts` 中：
+
+1. 将 `runHardhatScript(...)` 从 `spawn("npx", ["hardhat", ...])` 改为直接执行仓库内的 `node_modules/.bin/hardhat`
+2. 将本地链启动逻辑 `startHardhatNodeOnPort(...)` 同样改为直接执行仓库内的 `hardhat` 可执行文件
+3. 在 `stop()` 中增加 `child.exitCode !== null` 的提前返回，避免重复关闭已退出的子进程
+
+### 修改目的
+
+- 避免 `hardhat node` 在测试完成后变成孤儿进程
+- 让 `vote_tool` 的 e2e 回归可以重复执行，而不会在本地堆积残留节点
+- 避免这类测试基础设施问题把 `npm test` 的父进程长时间挂住
+
+### 验证方式
+
+- 重新执行 `npx hardhat test test-hh3/vote_tool.ts`
+- 确认 6 条 vote tool 测试全部通过
+- 测试结束后检查进程列表，不再残留 `SourceDAO/node_modules/.bin/hardhat node` 或 `hardhat test` 相关孤儿进程
+
+---
+
 ## 2026-03-19 升级提案与委员会换届并发治理回归补充记录
 
 ### 范围

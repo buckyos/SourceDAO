@@ -9,6 +9,7 @@ import { expect } from "chai";
 import { Contract, ContractFactory, Interface, JsonRpcProvider, Wallet, ethers } from "ethers";
 
 const REPO_ROOT = process.cwd();
+const HARDHAT_BIN = join(REPO_ROOT, "node_modules", ".bin", "hardhat");
 const FIRST_PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const FIRST_ADDRESS = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
 const SECOND_ADDRESS = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
@@ -69,7 +70,7 @@ interface OfflineVoteBundle {
 
 function runHardhatScript(script: string, env: NodeJS.ProcessEnv, options: ScriptOptions = {}): Promise<ToolResult> {
     return new Promise((resolve, reject) => {
-        const args = ["hardhat", "run", "--no-compile"];
+        const args = ["run", "--no-compile"];
         if (options.configPath !== undefined) {
             args.push("--config", options.configPath);
         }
@@ -78,7 +79,7 @@ function runHardhatScript(script: string, env: NodeJS.ProcessEnv, options: Scrip
         }
         args.push(script);
 
-        const child = spawn("npx", args, {
+        const child = spawn(HARDHAT_BIN, args, {
             cwd: REPO_ROOT,
             env: {
                 ...process.env,
@@ -272,7 +273,7 @@ async function startHardhatNodeOnPort(port: number): Promise<{
     process: ChildProcessWithoutNullStreams;
     stop: () => Promise<void>;
 }> {
-    const child = spawn("npx", ["hardhat", "node", "--hostname", "127.0.0.1", "--port", String(port)], {
+    const child = spawn(HARDHAT_BIN, ["node", "--hostname", "127.0.0.1", "--port", String(port)], {
         cwd: REPO_ROOT,
         env: process.env,
         stdio: ["ignore", "pipe", "pipe"]
@@ -309,7 +310,7 @@ async function startHardhatNodeOnPort(port: number): Promise<{
     return {
         process: child,
         stop: async () => {
-            if (child.killed) {
+            if (child.killed || child.exitCode !== null) {
                 return;
             }
 
