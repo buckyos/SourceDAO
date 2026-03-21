@@ -117,6 +117,10 @@ async function main() {
     const cliOptions = parseCliOptions(process.argv.slice(2));
     const frontendServerUrl =
         process.env.FRONTEND_BACKEND_URL?.trim() || DEFAULT_FRONTEND_SERVER_URL;
+    const localAuthMode =
+        process.env.FRONTEND_LOCAL_AUTH_MODE?.trim()
+        || process.env.SOURCE_DAO_LOCAL_AUTH_MODE?.trim()
+        || "dev";
     const signers = await ethers.getSigners();
     const [deployer, committeeTwo, committeeThree, viewer] = signers;
 
@@ -223,6 +227,7 @@ async function main() {
     const frontendEnvLines = [
         `NEXT_PUBLIC_CHAIN='Hardhat Local'`,
         `NEXT_PUBLIC_NETWORK_ID='31337'`,
+        `NEXT_PUBLIC_LOCAL_AUTH_MODE='${localAuthMode}'`,
         `NEXT_PUBLIC_RPC_URL='http://127.0.0.1:8545'`,
         `NEXT_PUBLIC_SERVER='${frontendServerUrl}'`,
         `NEXT_PUBLIC_MAIN='${daoAddress}'`,
