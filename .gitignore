@@ -15,3 +15,4 @@ artifacts
 
 /abi/
 tools/config/local.json
+.local-dev/

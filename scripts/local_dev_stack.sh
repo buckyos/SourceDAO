@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_DAO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BACKEND_ROOT="$(cd "${SOURCE_DAO_ROOT}/../SourceDAOBackend" && pwd)"
+FRONTEND_ROOT="$(cd "${SOURCE_DAO_ROOT}/../buckydaowww/src" && pwd)"
+STATE_DIR="${SOURCE_DAO_ROOT}/.local-dev"
+LOG_DIR="${STATE_DIR}/logs"
+PID_DIR="${STATE_DIR}/pids"
+FRONTEND_HOST="${SOURCE_DAO_FRONTEND_HOST:-127.0.0.1}"
+FRONTEND_PORT="${SOURCE_DAO_FRONTEND_PORT:-3000}"
+BACKEND_LISTEN="${SOURCE_DAO_BACKEND_LISTEN:-127.0.0.1:3333}"
+BACKEND_URL="http://${BACKEND_LISTEN}"
+
+mkdir -p "${LOG_DIR}" "${PID_DIR}"
+
+source_nvm() {
+    if [[ -s "${HOME}/.nvm/nvm.sh" ]]; then
+        # shellcheck disable=SC1090
+        source "${HOME}/.nvm/nvm.sh"
+    fi
+}
+
+run_in_dir() {
+    local workdir="$1"
+    shift
+    (
+        source_nvm
+        cd "${workdir}"
+        "$@"
+    )
+}
+
+run_bg() {
+    local name="$1"
+    local workdir="$2"
+    local pid_file="${PID_DIR}/${name}.pid"
+    local log_file="${LOG_DIR}/${name}.log"
+    shift 2
+
+    (
+        source_nvm
+        cd "${workdir}"
+        exec "$@"
+    ) >"${log_file}" 2>&1 &
+    local pid=$!
+    echo "${pid}" > "${pid_file}"
+}
+
+stop_pid_file() {
+    local pid_file="$1"
+    if [[ ! -f "${pid_file}" ]]; then
+        return 0
+    fi
+
+    local pid
+    pid="$(cat "${pid_file}")"
+    if kill -0 "${pid}" 2>/dev/null; then
+        kill "${pid}" 2>/dev/null || true
+        for _ in $(seq 1 30); do
+            if ! kill -0 "${pid}" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill -9 "${pid}" 2>/dev/null || true
+        fi
+    fi
+    rm -f "${pid_file}"
+}
+
+wait_for_http() {
+    local url="$1"
+    local label="$2"
+    for _ in $(seq 1 90); do
+        if curl -fsS "${url}" >/dev/null 2>&1; then
+            echo "${label} is ready: ${url}"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "Timed out waiting for ${label}: ${url}" >&2
+    return 1
+}
+
+wait_for_jsonrpc() {
+    local url="$1"
+    for _ in $(seq 1 90); do
+        if curl -fsS -H 'Content-Type: application/json' \
+            --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+            "${url}" >/dev/null 2>&1; then
+            echo "Hardhat node is ready: ${url}"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "Timed out waiting for Hardhat node: ${url}" >&2
+    return 1
+}
+
+port_in_use() {
+    local port="$1"
+    ss -ltn "( sport = :${port} )" | grep -q ":${port}"
+}
+
+ensure_port_available_or_owned() {
+    local port="$1"
+    local pid_file="$2"
+    local label="$3"
+    if ! port_in_use "${port}"; then
+        return 0
+    fi
+    if [[ -f "${pid_file}" ]]; then
+        return 0
+    fi
+    echo "${label} port ${port} is already in use by another process." >&2
+    echo "Stop that process first, or use the existing service manually." >&2
+    return 1
+}
+
+print_summary() {
+    cat <<EOF
+
+Local dev stack is ready.
+
+URLs:
+  Frontend : http://${FRONTEND_HOST}:${FRONTEND_PORT}
+  Backend  : ${BACKEND_URL}
+  Hardhat  : http://127.0.0.1:8545
+
+Logs:
+  Frontend : ${LOG_DIR}/frontend.log
+  Backend  : ${LOG_DIR}/backend.log
+  Hardhat  : ${LOG_DIR}/hardhat.log
+
+State:
+  Frontend env  : ${FRONTEND_ROOT}/.env.local
+  Backend config: ${BACKEND_ROOT}/src/config.local.toml
+
+Stop:
+  cd ${SOURCE_DAO_ROOT}
+  npm run stack:local:stop
+EOF
+}
+
+main() {
+    local hardhat_pid_file="${PID_DIR}/hardhat.pid"
+    local backend_pid_file="${PID_DIR}/backend.pid"
+    local frontend_pid_file="${PID_DIR}/frontend.pid"
+    local rpc_url="http://127.0.0.1:8545"
+
+    ensure_port_available_or_owned "${BACKEND_LISTEN##*:}" "${backend_pid_file}" "Backend"
+    ensure_port_available_or_owned "${FRONTEND_PORT}" "${frontend_pid_file}" "Frontend"
+
+    stop_pid_file "${backend_pid_file}"
+    stop_pid_file "${frontend_pid_file}"
+    stop_pid_file "${hardhat_pid_file}"
+
+    if curl -fsS -H 'Content-Type: application/json' \
+        --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+        "${rpc_url}" >/dev/null 2>&1; then
+        echo "Reusing existing Hardhat node at ${rpc_url}"
+    else
+        echo "Starting Hardhat node..."
+        run_bg "hardhat" "${SOURCE_DAO_ROOT}" npm run node:local
+        wait_for_jsonrpc "${rpc_url}"
+    fi
+
+    echo "Deploying local SourceDAO stack and writing frontend .env.local..."
+    run_in_dir "${SOURCE_DAO_ROOT}" npm run deploy:frontend-local:write
+
+    echo "Starting backend..."
+    run_bg "backend" "${BACKEND_ROOT}" env SOURCE_DAO_BACKEND_LISTEN="${BACKEND_LISTEN}" ./scripts/backend_local_dev.sh --reset-sqlite
+    wait_for_http "${BACKEND_URL}/status" "Backend"
+
+    echo "Starting frontend..."
+    if [[ ! -d "${FRONTEND_ROOT}/node_modules" ]]; then
+        run_in_dir "${FRONTEND_ROOT}" npm i
+    fi
+    run_bg "frontend" "${FRONTEND_ROOT}" npm run dev -- --hostname "${FRONTEND_HOST}" --port "${FRONTEND_PORT}"
+    wait_for_http "http://${FRONTEND_HOST}:${FRONTEND_PORT}" "Frontend"
+
+    print_summary
+}
+
+main "$@"
