@@ -91,3 +91,15 @@ Both are local-only files and should not be committed.
 - If an external Hardhat node is already running on `127.0.0.1:8545`, the script will reuse it.
 - If frontend or backend ports are occupied by unrelated processes, the script will stop with a clear error instead of reusing them silently.
 - If frontend `node_modules` is missing, the script will run `npm i` in [buckydaowww/src](/home/bucky/work/buckydaowww/src) before starting `next dev`.
+
+## MetaMask Troubleshooting
+
+If a proposal signature succeeds but MetaMask later reports `eth_sendTransaction -> Failed to fetch`, first verify that the local Hardhat node is still running on `http://127.0.0.1:8545`.
+
+For local dev this usually means MetaMask is still pointing at an old `31337` network entry. Re-select or recreate the local network in MetaMask with:
+
+- RPC URL: `http://127.0.0.1:8545`
+- Chain ID: `31337`
+- Network name: `Hardhat Local`
+
+The frontend will also try to push this network configuration into the wallet when connecting in local mode, but if MetaMask already has a stale entry you may still need to remove and re-add it once manually.
