@@ -48,6 +48,37 @@ Then open:
 
 - `http://127.0.0.1:3001`
 
+## Local Auth Mode
+
+By default, local mode uses wallet-based `devlogin`.
+
+If you want to test the full GitHub OAuth flow locally instead, export these variables before `npm run stack:local`:
+
+```bash
+export SOURCE_DAO_BACKEND_GITHUB_CLIENT_ID='your GitHub Client ID'
+export SOURCE_DAO_BACKEND_GITHUB_CLIENT_SECRET='your GitHub Client Secret'
+export SOURCE_DAO_BACKEND_GITHUB_CALLBACK_URL='http://127.0.0.1:3000/login'
+export SOURCE_DAO_BACKEND_ALLOW_DEV_LOGIN='false'
+export SOURCE_DAO_LOCAL_AUTH_MODE='github'
+```
+
+Then restart the stack:
+
+```bash
+npm run stack:local:stop
+npm run stack:local
+```
+
+This changes local login behavior to:
+
+- frontend shows `Login with GitHub`
+- backend disables `/user/devlogin`
+- the browser exercises the full GitHub OAuth redirect + callback flow
+
+Full step-by-step setup is documented in:
+
+- [LocalGitHubOAuthTesting.md](/home/bucky/work/SourceDAO/docs/LocalGitHubOAuthTesting.md)
+
 ---
 
 ## Stop Everything

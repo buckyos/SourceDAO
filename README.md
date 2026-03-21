@@ -144,6 +144,7 @@ npm test
 - [docs/VoteTool.md](docs/VoteTool.md)
 - [docs/VoteOffline.md](docs/VoteOffline.md)
 - [docs/StatusTools.md](docs/StatusTools.md)
+- [docs/LocalGitHubOAuthTesting.md](docs/LocalGitHubOAuthTesting.md)
 
 ## 投票与状态查询
 
