@@ -15,6 +15,7 @@ const DEFAULT_FRONTEND_ENV_PATH = path.resolve(
     "../../buckydaowww/src/.env.local",
 );
 const DEFAULT_FRONTEND_SERVER_URL = "http://127.0.0.1:3333";
+const DEFAULT_HARDHAT_MNEMONIC = "test test test test test test test test test test test junk";
 
 type CliOptions = {
     writeFrontendEnv: boolean;
@@ -23,6 +24,19 @@ type CliOptions = {
 
 function printHeader(title: string) {
     console.log(`\n=== ${title} ===`);
+}
+
+function deriveDefaultHardhatAccounts(count: number) {
+    const accounts = new Map<string, string>();
+    for (let index = 0; index < count; index += 1) {
+        const wallet = ethers.HDNodeWallet.fromPhrase(
+            DEFAULT_HARDHAT_MNEMONIC,
+            undefined,
+            `m/44'/60'/0'/0/${index}`,
+        );
+        accounts.set(wallet.address.toLowerCase(), wallet.privateKey);
+    }
+    return accounts;
 }
 
 function buildProjectParams(
@@ -188,6 +202,7 @@ async function main() {
     const viewerDevToken = await devToken.balanceOf(viewer.address);
     const viewerNormalToken = await normalToken.balanceOf(viewer.address);
     const viewerAssignedLockup = await lockup.totalAssigned(viewer.address);
+    const localPrivateKeys = deriveDefaultHardhatAccounts(signers.length);
 
     printHeader("Module addresses");
     console.log("SourceDao        ", daoAddress);
@@ -233,11 +248,36 @@ async function main() {
     console.log(`Sample finished project ID  : 1`);
 
     printHeader("Useful local accounts");
-    console.log(`Deployer / committee member 1: ${deployer.address}`);
-    console.log(`Committee member 2          : ${committeeTwo.address}`);
-    console.log(`Committee member 3          : ${committeeThree.address}`);
-    console.log(`Viewer / token holder       : ${viewer.address}`);
-    console.log("\nImport the corresponding private keys from the `hardhat node` output into MetaMask or OKX Wallet.");
+    const usefulAccounts = [
+        ["Deployer / committee member 1", deployer.address],
+        ["Committee member 2", committeeTwo.address],
+        ["Committee member 3", committeeThree.address],
+        ["Viewer / token holder", viewer.address],
+    ] as const;
+    for (const [label, address] of usefulAccounts) {
+        const privateKey = localPrivateKeys.get(address.toLowerCase()) ?? "<private key unavailable>";
+        console.log(`${label.padEnd(30)}: ${address}`);
+        console.log(`${"Private key".padEnd(30)}: ${privateKey}`);
+        console.log("");
+    }
+
+    printHeader("Full local accounts");
+    const namedAccounts = new Map<string, string>([
+        [deployer.address.toLowerCase(), "deployer / committee member 1"],
+        [committeeTwo.address.toLowerCase(), "committee member 2"],
+        [committeeThree.address.toLowerCase(), "committee member 3"],
+        [viewer.address.toLowerCase(), "viewer / token holder"],
+    ]);
+    signers.forEach((signer, index) => {
+        const address = signer.address;
+        const privateKey = localPrivateKeys.get(address.toLowerCase()) ?? "<private key unavailable>";
+        const label = namedAccounts.get(address.toLowerCase()) ?? `account ${index}`;
+        console.log(`[${index}] ${label}`);
+        console.log(`  Address     : ${address}`);
+        console.log(`  Private key : ${privateKey}`);
+    });
+
+    console.log("\nYou can import any of the above private keys into MetaMask or OKX Wallet.");
 }
 
 main().catch((error) => {
