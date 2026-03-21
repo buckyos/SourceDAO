@@ -26,8 +26,8 @@ npm run stack:local
 The script will:
 
 1. start or reuse `hardhat node` on `127.0.0.1:8545`
-2. deploy a fresh local SourceDAO stack
-3. write [buckydaowww/src/.env.local](/home/bucky/work/buckydaowww/src/.env.local)
+2. if it is a fresh chain, deploy a fresh local SourceDAO stack
+3. reuse the existing [buckydaowww/src/.env.local](/home/bucky/work/buckydaowww/src/.env.local) when preserving state
 4. generate [SourceDAOBackend/src/config.local.toml](/home/bucky/work/SourceDAOBackend/src/config.local.toml)
 5. start `SourceDAOBackend`
 6. start the Next.js frontend
@@ -56,7 +56,20 @@ Then open:
 npm run stack:local:stop
 ```
 
-This only stops processes started by the local stack script.
+This stops the frontend and backend, but preserves the managed Hardhat node so local chain state stays available.
+
+## Reset Everything
+
+```bash
+npm run stack:local:reset
+```
+
+This performs a full local reset:
+
+1. restart from a fresh Hardhat chain
+2. redeploy the local SourceDAO contracts
+3. rewrite frontend env and backend config
+4. reset the backend SQLite database
 
 ---
 
@@ -88,6 +101,8 @@ Both are local-only files and should not be committed.
 ## Notes
 
 - The backend defaults to SQLite in local mode.
+- `npm run stack:local` now preserves existing local chain state by default when the managed Hardhat node is still running.
+- If no reusable Hardhat node exists, `stack:local` will start a fresh chain and reset backend SQLite automatically to avoid chain/database mismatch.
 - If an external Hardhat node is already running on `127.0.0.1:8545`, the script will reuse it.
 - If frontend or backend ports are occupied by unrelated processes, the script will stop with a clear error instead of reusing them silently.
 - If frontend `node_modules` is missing, the script will run `npm i` in [buckydaowww/src](/home/bucky/work/buckydaowww/src) before starting `next dev`.

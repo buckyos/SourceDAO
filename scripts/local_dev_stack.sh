@@ -9,6 +9,7 @@ FRONTEND_ROOT="$(cd "${SOURCE_DAO_ROOT}/../buckydaowww/src" && pwd)"
 STATE_DIR="${SOURCE_DAO_ROOT}/.local-dev"
 LOG_DIR="${STATE_DIR}/logs"
 PID_DIR="${STATE_DIR}/pids"
+FRONTEND_ENV_FILE="${FRONTEND_ROOT}/.env.local"
 FRONTEND_HOST="${SOURCE_DAO_FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_PORT="${SOURCE_DAO_FRONTEND_PORT:-3000}"
 BACKEND_LISTEN="${SOURCE_DAO_BACKEND_LISTEN:-127.0.0.1:3333}"
@@ -19,8 +20,22 @@ if [[ "${BACKEND_HOST}" == "0.0.0.0" ]]; then
     BACKEND_HOST="127.0.0.1"
 fi
 BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
+HARDHAT_RPC_URL="${SOURCE_DAO_HARDHAT_RPC_URL:-http://127.0.0.1:8545}"
+HARDHAT_PORT="${HARDHAT_RPC_URL##*:}"
+RESET_STATE=0
 
 mkdir -p "${LOG_DIR}" "${PID_DIR}"
+
+usage() {
+    cat <<EOF
+Usage:
+  bash scripts/local_dev_stack.sh [--reset]
+
+Options:
+  --reset    Recreate the local chain deployment and reset backend sqlite state
+  --help     Show this message
+EOF
+}
 
 source_nvm() {
     unset npm_config_prefix
@@ -270,6 +285,10 @@ State:
 Stop:
   cd ${SOURCE_DAO_ROOT}
   npm run stack:local:stop
+
+Reset and redeploy:
+  cd ${SOURCE_DAO_ROOT}
+  npm run stack:local:reset
 EOF
 }
 
@@ -277,30 +296,81 @@ main() {
     local hardhat_pid_file="${PID_DIR}/hardhat.pid"
     local backend_pid_file="${PID_DIR}/backend.pid"
     local frontend_pid_file="${PID_DIR}/frontend.pid"
-    local rpc_url="http://127.0.0.1:8545"
+    local started_fresh_hardhat=0
+    local should_deploy=0
+    local reset_backend_sqlite=0
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --reset)
+                RESET_STATE=1
+                shift
+                ;;
+            --help)
+                usage
+                exit 0
+                ;;
+            *)
+                echo "Unknown option: $1" >&2
+                usage >&2
+                exit 1
+                ;;
+        esac
+    done
 
     ensure_port_available_or_owned "${BACKEND_PORT}" "${backend_pid_file}" "Backend" "${BACKEND_ROOT}"
     ensure_port_available_or_owned "${FRONTEND_PORT}" "${frontend_pid_file}" "Frontend" "${FRONTEND_ROOT}"
 
     stop_pid_file "${backend_pid_file}"
     stop_pid_file "${frontend_pid_file}"
-    stop_pid_file "${hardhat_pid_file}"
+    if [[ "${RESET_STATE}" == "1" ]]; then
+        stop_pid_file "${hardhat_pid_file}"
+        if port_in_use "${HARDHAT_PORT}"; then
+            if ! reclaim_managed_port "${HARDHAT_PORT}" "${SOURCE_DAO_ROOT}" "Hardhat"; then
+                echo "Hardhat port ${HARDHAT_PORT} is already in use by another process." >&2
+                echo "Stop that process first before running a full local reset." >&2
+                return 1
+            fi
+        fi
+    fi
 
     if curl -fsS -H 'Content-Type: application/json' \
         --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
-        "${rpc_url}" >/dev/null 2>&1; then
-        echo "Reusing existing Hardhat node at ${rpc_url}"
+        "${HARDHAT_RPC_URL}" >/dev/null 2>&1; then
+        echo "Reusing existing Hardhat node at ${HARDHAT_RPC_URL}"
     else
-        echo "Starting Hardhat node..."
+        if [[ "${RESET_STATE}" == "1" ]]; then
+            echo "Starting fresh Hardhat node after reset..."
+        else
+            echo "No reusable Hardhat node found. Starting a fresh node and resetting backend sqlite to match the new chain..."
+        fi
         run_bg "hardhat" "${SOURCE_DAO_ROOT}" npm run node:local
-        wait_for_jsonrpc "${rpc_url}"
+        wait_for_jsonrpc "${HARDHAT_RPC_URL}"
+        started_fresh_hardhat=1
     fi
 
-    echo "Deploying local SourceDAO stack and writing frontend .env.local..."
-    run_in_dir "${SOURCE_DAO_ROOT}" env FRONTEND_BACKEND_URL="${BACKEND_URL}" npm run deploy:frontend-local:write
+    if [[ "${RESET_STATE}" == "1" || "${started_fresh_hardhat}" == "1" ]]; then
+        should_deploy=1
+        reset_backend_sqlite=1
+    fi
+
+    if [[ "${should_deploy}" == "1" ]]; then
+        echo "Deploying local SourceDAO stack and writing frontend .env.local..."
+        run_in_dir "${SOURCE_DAO_ROOT}" env FRONTEND_BACKEND_URL="${BACKEND_URL}" npm run deploy:frontend-local:write
+    elif [[ ! -f "${FRONTEND_ENV_FILE}" ]]; then
+        echo "Missing frontend env file: ${FRONTEND_ENV_FILE}" >&2
+        echo "Run 'npm run stack:local:reset' to create a fresh local deployment." >&2
+        return 1
+    else
+        echo "Preserving existing Hardhat chain and frontend env; skipping redeploy."
+    fi
 
     echo "Starting backend..."
-    run_bg "backend" "${BACKEND_ROOT}" env SOURCE_DAO_BACKEND_LISTEN="${BACKEND_LISTEN}" ./scripts/backend_local_dev.sh --reset-sqlite
+    if [[ "${reset_backend_sqlite}" == "1" ]]; then
+        run_bg "backend" "${BACKEND_ROOT}" env SOURCE_DAO_BACKEND_LISTEN="${BACKEND_LISTEN}" ./scripts/backend_local_dev.sh --reset-sqlite
+    else
+        run_bg "backend" "${BACKEND_ROOT}" env SOURCE_DAO_BACKEND_LISTEN="${BACKEND_LISTEN}" ./scripts/backend_local_dev.sh
+    fi
     wait_for_http "${BACKEND_URL}/status" "Backend"
 
     echo "Starting frontend..."

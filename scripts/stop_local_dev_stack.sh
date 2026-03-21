@@ -10,6 +10,19 @@ BACKEND_ROOT="$(cd "${SOURCE_DAO_ROOT}/../SourceDAOBackend" && pwd)"
 FRONTEND_PORT="${SOURCE_DAO_FRONTEND_PORT:-3000}"
 BACKEND_LISTEN="${SOURCE_DAO_BACKEND_LISTEN:-127.0.0.1:3333}"
 BACKEND_PORT="${BACKEND_LISTEN##*:}"
+HARDHAT_PORT="${SOURCE_DAO_HARDHAT_PORT:-8545}"
+STOP_HARDHAT=0
+
+usage() {
+    cat <<EOF
+Usage:
+  bash scripts/stop_local_dev_stack.sh [--all]
+
+Options:
+  --all     Also stop the managed Hardhat node
+  --help    Show this message
+EOF
+}
 
 parent_pid() {
     local pid="$1"
@@ -127,10 +140,33 @@ stop_managed_listener_on_port() {
     done < <(find_listen_pids "${port}")
 }
 
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --all)
+            STOP_HARDHAT=1
+            shift
+            ;;
+        --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
 stop_pid_file "${PID_DIR}/frontend.pid"
 stop_pid_file "${PID_DIR}/backend.pid"
-stop_pid_file "${PID_DIR}/hardhat.pid"
 stop_managed_listener_on_port "${FRONTEND_PORT}" "${FRONTEND_ROOT}" "frontend"
 stop_managed_listener_on_port "${BACKEND_PORT}" "${BACKEND_ROOT}" "backend"
 
-echo "Stopped local dev stack processes started by SourceDAO/scripts/local_dev_stack.sh"
+if [[ "${STOP_HARDHAT}" == "1" ]]; then
+    stop_pid_file "${PID_DIR}/hardhat.pid"
+    stop_managed_listener_on_port "${HARDHAT_PORT}" "${SOURCE_DAO_ROOT}" "hardhat"
+    echo "Stopped frontend, backend, and managed Hardhat local dev processes"
+else
+    echo "Stopped frontend and backend local dev processes. Hardhat was preserved."
+fi
