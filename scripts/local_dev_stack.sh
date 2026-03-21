@@ -51,10 +51,98 @@ run_bg() {
     (
         source_nvm
         cd "${workdir}"
+        if command -v setsid >/dev/null 2>&1; then
+            exec setsid "$@"
+        fi
         exec "$@"
     ) >"${log_file}" 2>&1 &
     local pid=$!
     echo "${pid}" > "${pid_file}"
+}
+
+process_group_alive() {
+    local pid="$1"
+    if command -v pgrep >/dev/null 2>&1; then
+        pgrep -g "${pid}" >/dev/null 2>&1
+        return
+    fi
+    kill -0 "${pid}" 2>/dev/null
+}
+
+parent_pid() {
+    local pid="$1"
+    ps -o ppid= -p "${pid}" 2>/dev/null | tr -d ' ' || true
+}
+
+process_cwd() {
+    local pid="$1"
+    if [[ -e "/proc/${pid}/cwd" ]]; then
+        readlink -f "/proc/${pid}/cwd" 2>/dev/null || true
+    fi
+}
+
+process_command() {
+    local pid="$1"
+    ps -o command= -p "${pid}" 2>/dev/null || true
+}
+
+process_or_ancestor_matches_root() {
+    local pid="$1"
+    local root="$2"
+    local current="${pid}"
+    local cwd
+    local cmd
+
+    while [[ -n "${current}" && "${current}" != "0" && "${current}" != "1" ]]; do
+        cwd="$(process_cwd "${current}")"
+        cmd="$(process_command "${current}")"
+        if [[ -n "${cwd}" && ( "${cwd}" == "${root}" || "${cwd}" == "${root}/"* ) ]]; then
+            return 0
+        fi
+        if [[ -n "${cmd}" && "${cmd}" == *"${root}"* ]]; then
+            return 0
+        fi
+        current="$(parent_pid "${current}")"
+    done
+
+    return 1
+}
+
+stop_pid() {
+    local pid="$1"
+    local pgid
+
+    pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ' || true)"
+    if ! kill -0 "${pid}" 2>/dev/null; then
+        return 0
+    fi
+
+    if [[ -n "${pgid}" && "${pgid}" != "0" ]]; then
+        kill -- "-${pgid}" 2>/dev/null || true
+    else
+        kill "${pid}" 2>/dev/null || true
+    fi
+
+    for _ in $(seq 1 30); do
+        if [[ -n "${pgid}" && "${pgid}" != "0" ]]; then
+            if command -v pgrep >/dev/null 2>&1; then
+                if ! pgrep -g "${pgid}" >/dev/null 2>&1; then
+                    return 0
+                fi
+            elif ! kill -0 "${pid}" 2>/dev/null; then
+                return 0
+            fi
+        elif ! kill -0 "${pid}" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    if [[ -n "${pgid}" && "${pgid}" != "0" ]]; then
+        kill -9 -- "-${pgid}" 2>/dev/null || true
+    elif kill -0 "${pid}" 2>/dev/null; then
+        kill -9 "${pid}" 2>/dev/null || true
+    fi
 }
 
 stop_pid_file() {
@@ -65,19 +153,21 @@ stop_pid_file() {
 
     local pid
     pid="$(cat "${pid_file}")"
-    if kill -0 "${pid}" 2>/dev/null; then
-        kill "${pid}" 2>/dev/null || true
-        for _ in $(seq 1 30); do
-            if ! kill -0 "${pid}" 2>/dev/null; then
-                break
-            fi
-            sleep 1
-        done
-        if kill -0 "${pid}" 2>/dev/null; then
-            kill -9 "${pid}" 2>/dev/null || true
-        fi
-    fi
+    stop_pid "${pid}"
     rm -f "${pid_file}"
+}
+
+find_listen_pids() {
+    local port="$1"
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -tiTCP:"${port}" -sTCP:LISTEN -n -P 2>/dev/null || true
+        return 0
+    fi
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltnp "( sport = :${port} )" 2>/dev/null \
+            | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' \
+            | sort -u
+    fi
 }
 
 wait_for_http() {
@@ -111,17 +201,46 @@ wait_for_jsonrpc() {
 
 port_in_use() {
     local port="$1"
-    ss -ltn "( sport = :${port} )" | grep -q ":${port}"
+    find_listen_pids "${port}" | grep -q '^[0-9]'
+}
+
+reclaim_managed_port() {
+    local port="$1"
+    local root="$2"
+    local label="$3"
+    local pid
+    local reclaimed=0
+
+    while read -r pid; do
+        [[ -z "${pid}" ]] && continue
+        if process_or_ancestor_matches_root "${pid}" "${root}"; then
+            echo "Stopping stale ${label} process on port ${port} (pid ${pid})..."
+            stop_pid "${pid}"
+            reclaimed=1
+        fi
+    done < <(find_listen_pids "${port}")
+
+    if [[ "${reclaimed}" == "1" ]]; then
+        sleep 1
+        ! port_in_use "${port}"
+        return
+    fi
+
+    return 1
 }
 
 ensure_port_available_or_owned() {
     local port="$1"
     local pid_file="$2"
     local label="$3"
+    local root="$4"
     if ! port_in_use "${port}"; then
         return 0
     fi
     if [[ -f "${pid_file}" ]]; then
+        return 0
+    fi
+    if reclaim_managed_port "${port}" "${root}" "${label}"; then
         return 0
     fi
     echo "${label} port ${port} is already in use by another process." >&2
@@ -160,8 +279,8 @@ main() {
     local frontend_pid_file="${PID_DIR}/frontend.pid"
     local rpc_url="http://127.0.0.1:8545"
 
-    ensure_port_available_or_owned "${BACKEND_PORT}" "${backend_pid_file}" "Backend"
-    ensure_port_available_or_owned "${FRONTEND_PORT}" "${frontend_pid_file}" "Frontend"
+    ensure_port_available_or_owned "${BACKEND_PORT}" "${backend_pid_file}" "Backend" "${BACKEND_ROOT}"
+    ensure_port_available_or_owned "${FRONTEND_PORT}" "${frontend_pid_file}" "Frontend" "${FRONTEND_ROOT}"
 
     stop_pid_file "${backend_pid_file}"
     stop_pid_file "${frontend_pid_file}"
