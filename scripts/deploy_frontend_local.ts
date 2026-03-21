@@ -16,6 +16,11 @@ const DEFAULT_FRONTEND_ENV_PATH = path.resolve(
 );
 const DEFAULT_FRONTEND_SERVER_URL = "http://127.0.0.1:3333";
 const DEFAULT_HARDHAT_MNEMONIC = "test test test test test test test test test test test junk";
+const TOKEN_DECIMALS = 18;
+
+function tokenUnits(value: number | string | bigint) {
+    return ethers.parseUnits(value.toString(), TOKEN_DECIMALS);
+}
 
 type CliOptions = {
     writeFrontendEnv: boolean;
@@ -134,9 +139,9 @@ async function main() {
     const devToken = await deployUUPSProxy(ethers, "DevToken", [
         "Bucky Dev Token",
         "BDDT",
-        1_000_000,
+        tokenUnits(1_000_000),
         [deployer.address, committeeTwo.address, committeeThree.address],
-        [50_000, 20_000, 20_000],
+        [tokenUnits(50_000), tokenUnits(20_000), tokenUnits(20_000)],
         daoAddress,
     ]);
     const normalToken = await deployUUPSProxy(ethers, "NormalToken", ["Bucky Token", "BDT", daoAddress]);
@@ -154,13 +159,13 @@ async function main() {
 
     // Seed a small amount of BDT so a non-committee wallet can still exercise
     // balance reads and token-holder gated UI.
-    await (await devToken.dev2normal(5_000)).wait();
-    await (await normalToken.transfer(viewer.address, 1_000)).wait();
+    await (await devToken.dev2normal(tokenUnits(5_000))).wait();
+    await (await normalToken.transfer(viewer.address, tokenUnits(1_000))).wait();
 
     // Seed a lockup position for the viewer so /user/info shows assigned/locked
     // values without requiring a separate backend flow.
-    await (await normalToken.approve(await lockup.getAddress(), 250)).wait();
-    await (await lockup.transferAndLock([viewer.address], [250])).wait();
+    await (await normalToken.approve(await lockup.getAddress(), tokenUnits(250))).wait();
+    await (await lockup.transferAndLock([viewer.address], [tokenUnits(250)])).wait();
 
     // Seed a finished project that pays dev rewards to the viewer. This makes
     // the local chain useful for committee recognition + project reward reads
@@ -168,7 +173,7 @@ async function main() {
     const now = BigInt(Math.floor(Date.now() / 1000));
     const startDate = now - 2n * 24n * 60n * 60n;
     const endDate = now - 1n * 24n * 60n * 60n;
-    await (await project.createProject(600, PROJECT_NAME, VERSION_ONE, startDate, endDate, [], [])).wait();
+    await (await project.createProject(tokenUnits(600), PROJECT_NAME, VERSION_ONE, startDate, endDate, [], [])).wait();
     const createBrief = await project.projectOf(1);
     const createParams = buildProjectParams(
         1n,
