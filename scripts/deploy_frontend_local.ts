@@ -14,6 +14,7 @@ const DEFAULT_FRONTEND_ENV_PATH = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "../../buckydaowww/src/.env.local",
 );
+const DEFAULT_FRONTEND_SERVER_URL = "http://127.0.0.1:3333";
 
 type CliOptions = {
     writeFrontendEnv: boolean;
@@ -95,6 +96,8 @@ function resolveEnvOutputPath(options: CliOptions): string | undefined {
 
 async function main() {
     const cliOptions = parseCliOptions(process.argv.slice(2));
+    const frontendServerUrl =
+        process.env.FRONTEND_BACKEND_URL?.trim() || DEFAULT_FRONTEND_SERVER_URL;
     const signers = await ethers.getSigners();
     const [deployer, committeeTwo, committeeThree, viewer] = signers;
 
@@ -201,6 +204,7 @@ async function main() {
         `NEXT_PUBLIC_CHAIN='Hardhat Local'`,
         `NEXT_PUBLIC_NETWORK_ID='31337'`,
         `NEXT_PUBLIC_RPC_URL='http://127.0.0.1:8545'`,
+        `NEXT_PUBLIC_SERVER='${frontendServerUrl}'`,
         `NEXT_PUBLIC_MAIN='${daoAddress}'`,
         `NEXT_PUBLIC_COMMITTEE='${await committee.getAddress()}'`,
         `NEXT_PUBLIC_DEV_TOKEN='${await devToken.getAddress()}'`,

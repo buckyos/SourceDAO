@@ -12,11 +12,19 @@ PID_DIR="${STATE_DIR}/pids"
 FRONTEND_HOST="${SOURCE_DAO_FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_PORT="${SOURCE_DAO_FRONTEND_PORT:-3000}"
 BACKEND_LISTEN="${SOURCE_DAO_BACKEND_LISTEN:-127.0.0.1:3333}"
-BACKEND_URL="http://${BACKEND_LISTEN}"
+BACKEND_BIND_HOST="${BACKEND_LISTEN%:*}"
+BACKEND_PORT="${BACKEND_LISTEN##*:}"
+BACKEND_HOST="${BACKEND_BIND_HOST}"
+if [[ "${BACKEND_HOST}" == "0.0.0.0" ]]; then
+    BACKEND_HOST="127.0.0.1"
+fi
+BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
 
 mkdir -p "${LOG_DIR}" "${PID_DIR}"
 
 source_nvm() {
+    unset npm_config_prefix
+    unset NPM_CONFIG_PREFIX
     if [[ -s "${HOME}/.nvm/nvm.sh" ]]; then
         # shellcheck disable=SC1090
         source "${HOME}/.nvm/nvm.sh"
@@ -152,7 +160,7 @@ main() {
     local frontend_pid_file="${PID_DIR}/frontend.pid"
     local rpc_url="http://127.0.0.1:8545"
 
-    ensure_port_available_or_owned "${BACKEND_LISTEN##*:}" "${backend_pid_file}" "Backend"
+    ensure_port_available_or_owned "${BACKEND_PORT}" "${backend_pid_file}" "Backend"
     ensure_port_available_or_owned "${FRONTEND_PORT}" "${frontend_pid_file}" "Frontend"
 
     stop_pid_file "${backend_pid_file}"
@@ -170,7 +178,7 @@ main() {
     fi
 
     echo "Deploying local SourceDAO stack and writing frontend .env.local..."
-    run_in_dir "${SOURCE_DAO_ROOT}" npm run deploy:frontend-local:write
+    run_in_dir "${SOURCE_DAO_ROOT}" env FRONTEND_BACKEND_URL="${BACKEND_URL}" npm run deploy:frontend-local:write
 
     echo "Starting backend..."
     run_bg "backend" "${BACKEND_ROOT}" env SOURCE_DAO_BACKEND_LISTEN="${BACKEND_LISTEN}" ./scripts/backend_local_dev.sh --reset-sqlite
@@ -180,7 +188,7 @@ main() {
     if [[ ! -d "${FRONTEND_ROOT}/node_modules" ]]; then
         run_in_dir "${FRONTEND_ROOT}" npm i
     fi
-    run_bg "frontend" "${FRONTEND_ROOT}" npm run dev -- --hostname "${FRONTEND_HOST}" --port "${FRONTEND_PORT}"
+    run_bg "frontend" "${FRONTEND_ROOT}" env NEXT_PUBLIC_SERVER="${BACKEND_URL}" npm run dev -- --hostname "${FRONTEND_HOST}" --port "${FRONTEND_PORT}"
     wait_for_http "http://${FRONTEND_HOST}:${FRONTEND_PORT}" "Frontend"
 
     print_summary
