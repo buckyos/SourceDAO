@@ -1,5 +1,9 @@
 # Vote Tool
 
+如果你是从 proposal 页面点击 `How to vote?` 进入文档，建议先看：
+
+- [VoteGuide.md](VoteGuide.md)
+
 ## 目标
 
 `tools/vote.ts` 是当前仓库内的交互式投票辅助脚本，用于向 `SourceDaoCommittee` 提交 `support` / `reject` 交易。
