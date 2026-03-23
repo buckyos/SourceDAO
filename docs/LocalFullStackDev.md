@@ -75,6 +75,11 @@ This changes local login behavior to:
 - backend disables `/user/devlogin`
 - the browser exercises the full GitHub OAuth redirect + callback flow
 
+Note:
+
+- `npm run seed:local` currently depends on local `devlogin`
+- if you switched local auth to GitHub mode for OAuth testing, switch it back before running the scenario seed script
+
 Full step-by-step setup is documented in:
 
 - [LocalGitHubOAuthTesting.md](/home/bucky/work/SourceDAO/docs/LocalGitHubOAuthTesting.md)
@@ -101,6 +106,33 @@ This performs a full local reset:
 2. redeploy the local SourceDAO contracts
 3. rewrite frontend env and backend config
 4. reset the backend SQLite database
+
+## Seed Richer Demo State
+
+If you want a fuller local dataset for `/funding`, `/token`, `/me`, projects, versions, investments, dividends, and lockup reads, run:
+
+```bash
+npm run seed:local
+```
+
+This command:
+
+- keeps the deployed local contracts
+- creates richer on-chain state
+- submits matching backend metadata through normal local APIs
+- writes a manifest under:
+  [SourceDAO/.local-dev/seed-manifest.json](/home/bucky/work/SourceDAO/.local-dev/seed-manifest.json)
+
+The first preset is designed for a fresh local stack, so the recommended sequence is:
+
+```bash
+npm run stack:local:reset
+npm run seed:local
+```
+
+Full details are documented in:
+
+- [LocalScenarioSeeding.md](/home/bucky/work/SourceDAO/docs/LocalScenarioSeeding.md)
 
 ---
 

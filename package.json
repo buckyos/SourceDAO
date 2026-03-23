@@ -16,6 +16,7 @@
     "node:local": "hardhat node --hostname 127.0.0.1 --port 8545",
     "deploy:frontend-local": "hardhat run scripts/deploy_frontend_local.ts --network localhost",
     "deploy:frontend-local:write": "FRONTEND_ENV_OUTPUT=default hardhat run scripts/deploy_frontend_local.ts --network localhost",
+    "seed:local": "SOURCE_DAO_LOCAL_SCENARIO=full-ui hardhat run scripts/seed_local_scenarios.ts --network localhost",
     "stack:local": "bash scripts/local_dev_stack.sh",
     "stack:local:stop": "bash scripts/stop_local_dev_stack.sh",
     "stack:local:reset": "bash scripts/local_dev_stack.sh --reset"
