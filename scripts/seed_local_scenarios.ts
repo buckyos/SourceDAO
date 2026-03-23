@@ -128,6 +128,11 @@ type SeedManifest = {
     notes: string[];
 };
 
+const INVESTMENT_RATIO_FIVE_TO_ONE = {
+    tokenAmount: 5n,
+    daoTokenAmount: 1n,
+};
+
 function printHeader(title: string) {
     console.log(`\n=== ${title} ===`);
 }
@@ -970,7 +975,7 @@ async function main() {
             firstPercent: [10_000],
             tokenAddress: await saleToken.getAddress(),
             tokenAmount: tokenUnits(500),
-            tokenRatio: { tokenAmount: tokenUnits(5), daoTokenAmount: tokenUnits(1) },
+            tokenRatio: INVESTMENT_RATIO_FIVE_TO_ONE,
             step1Duration: TWO_DAYS,
             step2Duration: TWO_DAYS,
             canEndEarly: true,
@@ -991,7 +996,7 @@ async function main() {
             firstPercent: [6_000, 4_000],
             tokenAddress: await saleToken.getAddress(),
             tokenAmount: tokenUnits(800),
-            tokenRatio: { tokenAmount: tokenUnits(5), daoTokenAmount: tokenUnits(1) },
+            tokenRatio: INVESTMENT_RATIO_FIVE_TO_ONE,
             step1Duration: TWO_DAYS,
             step2Duration: TWO_DAYS,
             canEndEarly: false,
@@ -1014,7 +1019,7 @@ async function main() {
             firstPercent: [5_000, 5_000],
             tokenAddress: await saleToken.getAddress(),
             tokenAmount: tokenUnits(700),
-            tokenRatio: { tokenAmount: tokenUnits(5), daoTokenAmount: tokenUnits(1) },
+            tokenRatio: INVESTMENT_RATIO_FIVE_TO_ONE,
             step1Duration: TWO_DAYS,
             step2Duration: THREE_DAYS,
             canEndEarly: false,
@@ -1035,7 +1040,7 @@ async function main() {
             firstPercent: [7_000, 3_000],
             tokenAddress: await saleToken.getAddress(),
             tokenAmount: tokenUnits(900),
-            tokenRatio: { tokenAmount: tokenUnits(5), daoTokenAmount: tokenUnits(1) },
+            tokenRatio: INVESTMENT_RATIO_FIVE_TO_ONE,
             step1Duration: TWO_DAYS,
             step2Duration: FOUR_DAYS,
             canEndEarly: false,

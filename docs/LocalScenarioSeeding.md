@@ -152,6 +152,13 @@ It creates multiple investment rounds so `/funding` and `/invest` show richer da
 - one ended partially filled round
 - one ended fully sold round
 
+The seeded investment ratio follows the `Acquired` contract rule:
+
+- `tokenRatio` uses plain token units, not `wei`
+- example: `5 LSALE = 1 BDT`
+
+The contract applies token decimals internally.
+
 ### 6. Proposal Metadata
 
 For project creation, settlement proposals, and investment rounds, metadata is submitted through backend APIs:
