@@ -243,6 +243,12 @@ Hardhat 本地节点不应再被视为 USDB 兼容性的最终验证目标。
 
 - 这条 smoke 预期运行在**新鲜的本地 USDB 链**上
 - 如果链已经做过 bootstrap，脚本会尽量按当前状态继续校验，但它的设计目标仍然是本地 bring-up 验证
+- `go-ethereum` 侧现在已提供一条配套启动入口：
+  - [run_local_bootstrap_smoke.sh](/home/bucky/work/go-ethereum/scripts/usdb/run_local_bootstrap_smoke.sh)
+  - 它会自动：
+    - 生成 bootstrap genesis
+    - 启动单节点 USDB geth
+    - 再调用 `npm run test:usdb:smoke`
 
 ### Phase 3
 

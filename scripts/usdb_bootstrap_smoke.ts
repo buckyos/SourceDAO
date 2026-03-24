@@ -5,6 +5,7 @@ import { ethers } from "ethers";
 
 type CliOptions = {
     configPath: string;
+    rpcUrl?: string;
 };
 
 type USDBLocalConfig = {
@@ -45,6 +46,7 @@ function printHeader(title: string) {
 function parseCliOptions(argv: string[]): CliOptions {
     let configPath =
         process.env.SOURCE_DAO_USDB_CONFIG?.trim() || DEFAULT_CONFIG_PATH;
+    let rpcUrl = process.env.SOURCE_DAO_USDB_RPC_URL?.trim() || undefined;
 
     for (let index = 0; index < argv.length; index += 1) {
         const arg = argv[index];
@@ -55,10 +57,19 @@ function parseCliOptions(argv: string[]): CliOptions {
             }
             configPath = path.resolve(process.cwd(), next);
             index += 1;
+            continue;
+        }
+        if (arg === "--rpc-url") {
+            const next = argv[index + 1];
+            if (!next || next.startsWith("--")) {
+                throw new Error("--rpc-url requires a URL");
+            }
+            rpcUrl = next;
+            index += 1;
         }
     }
 
-    return { configPath };
+    return { configPath, rpcUrl };
 }
 
 async function loadJsonFile<T>(filePath: string): Promise<T> {
@@ -103,8 +114,9 @@ async function main() {
     const options = parseCliOptions(process.argv.slice(2));
     const config = await loadJsonFile<USDBLocalConfig>(options.configPath);
     const artifactsDir = normalizeArtifactsDir(options.configPath, config.artifactsDir);
+    const rpcUrl = options.rpcUrl || config.rpcUrl;
 
-    const provider = new ethers.JsonRpcProvider(config.rpcUrl);
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
     const network = await provider.getNetwork();
     const chainId = Number(network.chainId);
     if (chainId !== config.chainId) {
@@ -119,7 +131,7 @@ async function main() {
     const dividend = new ethers.Contract(config.dividendAddress, dividendArtifact.abi, wallet);
 
     printHeader("USDB bootstrap config");
-    console.log(`RPC URL            ${config.rpcUrl}`);
+    console.log(`RPC URL            ${rpcUrl}`);
     console.log(`Chain ID           ${config.chainId}`);
     console.log(`Artifacts dir      ${artifactsDir}`);
     console.log(`Bootstrap admin    ${wallet.address}`);
