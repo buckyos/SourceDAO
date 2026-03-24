@@ -12,7 +12,11 @@
   "scripts": {
     "clean": "hardhat clean",
     "build": "hardhat build",
+    "clean:usdb": "rm -rf artifacts-usdb cache-usdb",
+    "build:usdb": "npm run clean:usdb && SOURCE_DAO_ARTIFACTS_DIR=./artifacts-usdb SOURCE_DAO_CACHE_DIR=./cache-usdb hardhat build --build-profile usdb",
     "test": "hardhat test",
+    "test:usdb:audit": "node scripts/audit_usdb_bytecode.mjs",
+    "test:usdb:compile-and-audit": "npm run build:usdb && npm run test:usdb:audit",
     "node:local": "hardhat node --hostname 127.0.0.1 --port 8545",
     "deploy:frontend-local": "hardhat run scripts/deploy_frontend_local.ts --network localhost",
     "deploy:frontend-local:write": "FRONTEND_ENV_OUTPUT=default hardhat run scripts/deploy_frontend_local.ts --network localhost",

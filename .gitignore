@@ -12,6 +12,8 @@ types
 # Hardhat files
 cache
 artifacts
+cache-usdb
+artifacts-usdb
 
 /abi/
 tools/config/local.json

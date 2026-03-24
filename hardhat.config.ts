@@ -1,6 +1,16 @@
 import { defineConfig } from "hardhat/config";
 import hardhatToolboxMochaEthers from "@nomicfoundation/hardhat-toolbox-mocha-ethers";
 
+const artifactsDir = process.env.SOURCE_DAO_ARTIFACTS_DIR ?? "./artifacts";
+const cacheDir = process.env.SOURCE_DAO_CACHE_DIR ?? "./cache";
+const commonCompilerSettings = {
+    optimizer: {
+        enabled: true,
+        runs: 200
+    },
+    viaIR: true
+};
+
 export default defineConfig({
     plugins: [hardhatToolboxMochaEthers],
     networks: {
@@ -11,19 +21,26 @@ export default defineConfig({
         },
     },
     paths: {
+        artifacts: artifactsDir,
+        cache: cacheDir,
         tests: {
             mocha: "./test-hh3"
         }
     },
     solidity: {
-        version: "0.8.20",
         npmFilesToBuild: ["@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol"],
-        settings: {
-            optimizer: {
-                enabled: true,
-                runs: 200
+        profiles: {
+            default: {
+                version: "0.8.20",
+                settings: commonCompilerSettings
             },
-            viaIR: true
+            usdb: {
+                version: "0.8.20",
+                settings: {
+                    ...commonCompilerSettings,
+                    evmVersion: "shanghai"
+                }
+            }
         }
     },
     test: {

@@ -236,6 +236,33 @@ Hardhat 本地节点不应再被视为 USDB 兼容性的最终验证目标。
 - `test:usdb:smoke`
   - 连接本地 USDB geth 节点执行最小 bootstrap 测试
 
+当前 Phase 1 已经落下来的入口是：
+
+- `npm run build:usdb`
+  - 使用 Hardhat `build profile: usdb`
+  - 当前固定：
+    - `solc = 0.8.20`
+    - `evmVersion = "shanghai"`
+  - 默认输出到：
+    - `artifacts-usdb/`
+    - `cache-usdb/`
+- `npm run test:usdb:audit`
+  - 对 `artifacts-usdb` 下的 runtime bytecode 做 opcode 级审计
+  - 当前明确禁止：
+    - `TLOAD`
+    - `TSTORE`
+    - `MCOPY`
+    - `BLOBHASH`
+    - `BLOBBASEFEE`
+- `npm run test:usdb:compile-and-audit`
+  - 串联执行上述两步
+
+说明：
+
+- 当前仓库使用 Hardhat `3.x`
+- 在本地运行 `build:usdb` 需要 `Node 22+`
+- 这属于当前 Hardhat 工具链前提，不是 USDB profile 额外引入的新限制
+
 ## 11. 结论
 
 SourceDAO 当前不应再把 Hardhat 测试看作“对 USDB 的最终兼容证明”。
