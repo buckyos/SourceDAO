@@ -249,6 +249,9 @@ Hardhat 本地节点不应再被视为 USDB 兼容性的最终验证目标。
     - 生成 bootstrap genesis
     - 启动单节点 USDB geth
     - 再调用 `npm run test:usdb:smoke`
+  - 对于本地双节点简单组网，还可以使用：
+    - [run_local_two_node_network.sh](/home/bucky/work/go-ethereum/scripts/usdb/run_local_two_node_network.sh)
+    - 用同一份 bootstrap genesis 起两节点，并用 `admin_addPeer` 建立最小网络
 
 ### Phase 3
 
