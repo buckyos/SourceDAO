@@ -1,0 +1,13 @@
+{
+  "chainId": 20260323,
+  "rpcUrl": "http://127.0.0.1:8545",
+  "artifactsDir": "./artifacts-usdb",
+  "daoAddress": "0x0000000000000000000000000000000000001001",
+  "dividendAddress": "0x0000000000000000000000000000000000001002",
+  "bootstrapAdminPrivateKey": "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce036f4f5bcaeaf3f4e6f54",
+  "cycleMinLength": 60,
+  "dividendFeeSplitBlock": 16,
+  "nativeDepositWei": "1000000000000000",
+  "transactionGasLimit": 8000000,
+  "nativeTransferGasLimit": 200000
+}

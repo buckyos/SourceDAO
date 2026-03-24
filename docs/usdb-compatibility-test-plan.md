@@ -217,6 +217,33 @@ Hardhat 本地节点不应再被视为 USDB 兼容性的最终验证目标。
 - 完成 bootstrap
 - 验证 `Dividend` 收款路径
 
+当前已落地的 Phase 2 前两项是：
+
+- `tools/config/usdb-local.json`
+  - 本地 USDB smoke 所需的最小 manifest
+  - 固定：
+    - `chainId`
+    - `rpcUrl`
+    - `daoAddress`
+    - `dividendAddress`
+    - `bootstrapAdminPrivateKey`
+    - `cycleMinLength`
+    - `nativeDepositWei`
+- `npm run test:usdb:smoke`
+  - 通过 [scripts/usdb_bootstrap_smoke.ts](/home/bucky/work/SourceDAO/scripts/usdb_bootstrap_smoke.ts) 执行最小 geth smoke
+  - 主要覆盖：
+    - 检查 DAO / Dividend 地址上已有 code
+    - `Dao.initialize()`
+    - `Dividend.initialize(...)`
+    - `Dao.setTokenDividendAddress(...)`
+    - 向 `Dividend` 发送原生币
+    - 读回 bootstrap 后的关键链上状态
+
+说明：
+
+- 这条 smoke 预期运行在**新鲜的本地 USDB 链**上
+- 如果链已经做过 bootstrap，脚本会尽量按当前状态继续校验，但它的设计目标仍然是本地 bring-up 验证
+
 ### Phase 3
 
 等 fee split 真正接入链执行层后，再扩到：
