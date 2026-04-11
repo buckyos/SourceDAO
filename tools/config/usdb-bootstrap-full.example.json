@@ -1,0 +1,65 @@
+{
+  "chainId": 20260323,
+  "rpcUrl": "http://127.0.0.1:8545",
+  "artifactsDir": "./artifacts-usdb",
+  "daoAddress": "0x0000000000000000000000000000000000001001",
+  "dividendAddress": "0x0000000000000000000000000000000000001002",
+  "bootstrapAdminPrivateKey": "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce036f4f5bcaeaf3f4e6f54",
+  "cycleMinLength": 60,
+  "transactionGasLimit": 8000000,
+  "devToken": {
+    "name": "BuckyOS Develop DAO Token",
+    "symbol": "BDDT",
+    "totalSupply": "2100000000000000000000000000",
+    "initAddresses": [
+      "0x2DFD1FCFC9601E7De871b0BbcBCbB6Cad6901697",
+      "0xad82A5fb394a525835A3a6DC34C1843e19160CFA",
+      "0x0Ef9534aE246d24e1C79BC1fE8c8718C11a7fF09",
+      "0x2514d2FEAAC3bFD8361333d1341dC8823595f744",
+      "0x0F56a6f7662B38506f7Ad0ad0cc952b79b8e90e7",
+      "0x71165cD9579b495276De7b0389bB2Cd5352DaFE6",
+      "0x865d123D1CFC7F95B48495A854173408032b9358",
+      "0x19b54B60908241C301d5c95EDbd4C80081dF95B5",
+      "0xC7ced856D14720547533E1E32D7FEfb9877E84E5",
+      "0xdc7dD66eafdBf4B2e40CbC7bEb93f732f8F86518"
+    ],
+    "initAmounts": [
+      "109876068779349609949184721",
+      "6035901558616593430477310",
+      "6830778957104289571042895",
+      "2580803954604539546045395",
+      "4155646470352964703529647",
+      "35000000000000000000000",
+      "1950866948305169483051694",
+      "4466415393460653934606539",
+      "4945967938206179382061793",
+      "6122550000000000000000000"
+    ]
+  },
+  "normalToken": {
+    "name": "BuckyOS DAO Token",
+    "symbol": "BDT"
+  },
+  "committee": {
+    "initialMembers": [
+      "0xad82A5fb394a525835A3a6DC34C1843e19160CFA",
+      "0x2514d2FEAAC3bFD8361333d1341dC8823595f744",
+      "0x2DFD1FCFC9601E7De871b0BbcBCbB6Cad6901697"
+    ],
+    "initProposalId": 7,
+    "initDevRatio": 400,
+    "mainProjectName": "Buckyos",
+    "finalVersion": "1.0.0",
+    "finalDevRatio": 120
+  },
+  "project": {
+    "initProjectIdCounter": 4
+  },
+  "tokenLockup": {
+    "unlockProjectName": "Buckyos",
+    "unlockVersion": "1.0.0"
+  },
+  "acquired": {
+    "initInvestmentCount": 4
+  }
+}
