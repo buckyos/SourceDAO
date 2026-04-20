@@ -71,13 +71,32 @@ type ModuleRecord = {
   wiring_tx_hash?: string;
 };
 
+type ModuleName =
+  | "committee"
+  | "dev_token"
+  | "normal_token"
+  | "token_lockup"
+  | "project"
+  | "acquired";
+
+type BootstrapModules = {
+  committee: ModuleRecord | null;
+  dev_token: ModuleRecord | null;
+  normal_token: ModuleRecord | null;
+  token_lockup: ModuleRecord | null;
+  project: ModuleRecord | null;
+  acquired: ModuleRecord | null;
+};
+
 type BootstrapState = {
   state_version: string;
   generated_at: string;
-  completed_at: string;
-  status: string;
+  completed_at: string | null;
+  status: "running" | "completed" | "error";
   scope: string;
   message: string;
+  current_step: string | null;
+  last_error: string | null;
   rpc_url: string;
   repo_dir: string | null;
   config_path: string;
@@ -89,22 +108,15 @@ type BootstrapState = {
   warnings: string[];
   operations: BootstrapOperation[];
   final_wiring: {
-    committee: string;
-    dev_token: string;
-    normal_token: string;
-    token_lockup: string;
-    project: string;
-    dividend: string;
-    acquired: string;
+    committee: string | null;
+    dev_token: string | null;
+    normal_token: string | null;
+    token_lockup: string | null;
+    project: string | null;
+    dividend: string | null;
+    acquired: string | null;
   };
-  modules: {
-    committee: ModuleRecord;
-    dev_token: ModuleRecord;
-    normal_token: ModuleRecord;
-    token_lockup: ModuleRecord;
-    project: ModuleRecord;
-    acquired: ModuleRecord;
-  };
+  modules: BootstrapModules;
 };
 
 const DEFAULT_CONFIG_PATH = path.resolve(
@@ -150,8 +162,92 @@ const DEFAULT_DEV_TOKEN_AMOUNTS = [
   "6122550000000000000000000",
 ];
 
+type BootstrapRuntimeContext = {
+  options: CliOptions;
+  config: ResolvedBootstrapConfig;
+  artifactsDir: string;
+  rpcUrl: string;
+  walletAddress: string;
+  operations: BootstrapOperation[];
+  modules: BootstrapModules;
+  currentStep: string | null;
+};
+
+let latestRuntimeContext: BootstrapRuntimeContext | null = null;
+
 function printHeader(title: string) {
   console.log(`\n=== ${title} ===`);
+}
+
+function createEmptyModules(): BootstrapModules {
+  return {
+    committee: null,
+    dev_token: null,
+    normal_token: null,
+    token_lockup: null,
+    project: null,
+    acquired: null,
+  };
+}
+
+function moduleAddress(modules: BootstrapModules, key: ModuleName): string | null {
+  return modules[key]?.address ?? null;
+}
+
+async function writeBootstrapStateSnapshot(
+  context: BootstrapRuntimeContext,
+  status: BootstrapState["status"],
+  message: string,
+  lastError: string | null = null,
+) {
+  const { options, config, artifactsDir, rpcUrl, walletAddress, operations, modules, currentStep } = context;
+  if (!options.stateFilePath) {
+    return;
+  }
+
+  const completedAt = status === "completed" ? new Date().toISOString() : null;
+  const state: BootstrapState = {
+    state_version: "1",
+    generated_at: new Date().toISOString(),
+    completed_at: completedAt,
+    status,
+    scope: "full",
+    message,
+    current_step: currentStep,
+    last_error: lastError,
+    rpc_url: rpcUrl,
+    repo_dir: options.repoDir ?? null,
+    config_path: options.configPath,
+    artifacts_dir: artifactsDir,
+    chain_id: config.chainId,
+    dao_address: config.daoAddress,
+    dividend_address: config.dividendAddress,
+    bootstrap_admin: walletAddress,
+    warnings: config.warnings,
+    operations,
+    final_wiring: {
+      committee: moduleAddress(modules, "committee"),
+      dev_token: moduleAddress(modules, "dev_token"),
+      normal_token: moduleAddress(modules, "normal_token"),
+      token_lockup: moduleAddress(modules, "token_lockup"),
+      project: moduleAddress(modules, "project"),
+      dividend: config.dividendAddress,
+      acquired: moduleAddress(modules, "acquired"),
+    },
+    modules,
+  };
+
+  await writeFile(options.stateFilePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
+async function updateProgress(
+  context: BootstrapRuntimeContext,
+  message: string,
+  currentStep: string | null,
+) {
+  context.currentStep = currentStep;
+  latestRuntimeContext = context;
+  await writeBootstrapStateSnapshot(context, "running", message);
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
@@ -594,7 +690,20 @@ async function main() {
   }
 
   const wallet = new ethers.Wallet(config.bootstrapAdminPrivateKey, provider);
+  const modules = createEmptyModules();
   const { dao, operations } = await ensureDaoAndDividend(config, wallet, provider, artifactsDir);
+  const context: BootstrapRuntimeContext = {
+    options,
+    config,
+    artifactsDir,
+    rpcUrl,
+    walletAddress: wallet.address,
+    operations,
+    modules,
+    currentStep: null,
+  };
+  latestRuntimeContext = context;
+  await updateProgress(context, "SourceDAO full bootstrap started", "Preflight");
 
   printHeader("SourceDAO bootstrap config");
   console.log(`RPC URL            ${rpcUrl}`);
@@ -624,6 +733,7 @@ async function main() {
   const currentProject = (await dao.project()) as string;
   const currentAcquired = (await dao.acquired()) as string;
 
+  await updateProgress(context, "Checking or deploying Committee", "Committee");
   const committee = await ensureModule(
     "Committee",
     currentCommittee,
@@ -643,17 +753,22 @@ async function main() {
         ],
         config,
       );
+      const record = moduleRecordFromDeployment(deployed);
+      modules.committee = record;
+      await updateProgress(context, "Committee deployed; wiring DAO", "Dao.setCommitteeAddress");
       const wiringTxHash = await sendAndWait("Dao.setCommitteeAddress", async () =>
         dao.setCommitteeAddress(deployed.proxyAddress, { gasLimit: gasLimit(config) }),
       );
       operations.push({ name: "Dao.setCommitteeAddress", status: "completed", tx_hash: wiringTxHash });
-      const record = moduleRecordFromDeployment(deployed);
       record.wiring_tx_hash = wiringTxHash;
       return record;
     },
     provider,
   );
+  modules.committee = committee;
+  await updateProgress(context, `Committee ready at ${committee.address}`, null);
 
+  await updateProgress(context, "Checking or deploying DevToken", "DevToken");
   const devToken = await ensureModule(
     "DevToken",
     currentDevToken,
@@ -672,17 +787,22 @@ async function main() {
         ],
         config,
       );
+      const record = moduleRecordFromDeployment(deployed);
+      modules.dev_token = record;
+      await updateProgress(context, "DevToken deployed; wiring DAO", "Dao.setDevTokenAddress");
       const wiringTxHash = await sendAndWait("Dao.setDevTokenAddress", async () =>
         dao.setDevTokenAddress(deployed.proxyAddress, { gasLimit: gasLimit(config) }),
       );
       operations.push({ name: "Dao.setDevTokenAddress", status: "completed", tx_hash: wiringTxHash });
-      const record = moduleRecordFromDeployment(deployed);
       record.wiring_tx_hash = wiringTxHash;
       return record;
     },
     provider,
   );
+  modules.dev_token = devToken;
+  await updateProgress(context, `DevToken ready at ${devToken.address}`, null);
 
+  await updateProgress(context, "Checking or deploying NormalToken", "NormalToken");
   const normalToken = await ensureModule(
     "NormalToken",
     currentNormalToken,
@@ -694,17 +814,22 @@ async function main() {
         [config.normalToken.name, config.normalToken.symbol, config.daoAddress],
         config,
       );
+      const record = moduleRecordFromDeployment(deployed);
+      modules.normal_token = record;
+      await updateProgress(context, "NormalToken deployed; wiring DAO", "Dao.setNormalTokenAddress");
       const wiringTxHash = await sendAndWait("Dao.setNormalTokenAddress", async () =>
         dao.setNormalTokenAddress(deployed.proxyAddress, { gasLimit: gasLimit(config) }),
       );
       operations.push({ name: "Dao.setNormalTokenAddress", status: "completed", tx_hash: wiringTxHash });
-      const record = moduleRecordFromDeployment(deployed);
       record.wiring_tx_hash = wiringTxHash;
       return record;
     },
     provider,
   );
+  modules.normal_token = normalToken;
+  await updateProgress(context, `NormalToken ready at ${normalToken.address}`, null);
 
+  await updateProgress(context, "Checking or deploying TokenLockup", "TokenLockup");
   const tokenLockup = await ensureModule(
     "TokenLockup",
     currentLockup,
@@ -720,17 +845,22 @@ async function main() {
         ],
         config,
       );
+      const record = moduleRecordFromDeployment(deployed);
+      modules.token_lockup = record;
+      await updateProgress(context, "TokenLockup deployed; wiring DAO", "Dao.setTokenLockupAddress");
       const wiringTxHash = await sendAndWait("Dao.setTokenLockupAddress", async () =>
         dao.setTokenLockupAddress(deployed.proxyAddress, { gasLimit: gasLimit(config) }),
       );
       operations.push({ name: "Dao.setTokenLockupAddress", status: "completed", tx_hash: wiringTxHash });
-      const record = moduleRecordFromDeployment(deployed);
       record.wiring_tx_hash = wiringTxHash;
       return record;
     },
     provider,
   );
+  modules.token_lockup = tokenLockup;
+  await updateProgress(context, `TokenLockup ready at ${tokenLockup.address}`, null);
 
+  await updateProgress(context, "Checking or deploying Project", "Project");
   const project = await ensureModule(
     "Project",
     currentProject,
@@ -742,17 +872,22 @@ async function main() {
         [projectInitProjectIdCounter, config.daoAddress],
         config,
       );
+      const record = moduleRecordFromDeployment(deployed);
+      modules.project = record;
+      await updateProgress(context, "Project deployed; wiring DAO", "Dao.setProjectAddress");
       const wiringTxHash = await sendAndWait("Dao.setProjectAddress", async () =>
         dao.setProjectAddress(deployed.proxyAddress, { gasLimit: gasLimit(config) }),
       );
       operations.push({ name: "Dao.setProjectAddress", status: "completed", tx_hash: wiringTxHash });
-      const record = moduleRecordFromDeployment(deployed);
       record.wiring_tx_hash = wiringTxHash;
       return record;
     },
     provider,
   );
+  modules.project = project;
+  await updateProgress(context, `Project ready at ${project.address}`, null);
 
+  await updateProgress(context, "Checking or deploying Acquired", "Acquired");
   const acquired = await ensureModule(
     "Acquired",
     currentAcquired,
@@ -764,16 +899,20 @@ async function main() {
         [acquiredInitInvestmentCount, config.daoAddress],
         config,
       );
+      const record = moduleRecordFromDeployment(deployed);
+      modules.acquired = record;
+      await updateProgress(context, "Acquired deployed; wiring DAO", "Dao.setAcquiredAddress");
       const wiringTxHash = await sendAndWait("Dao.setAcquiredAddress", async () =>
         dao.setAcquiredAddress(deployed.proxyAddress, { gasLimit: gasLimit(config) }),
       );
       operations.push({ name: "Dao.setAcquiredAddress", status: "completed", tx_hash: wiringTxHash });
-      const record = moduleRecordFromDeployment(deployed);
       record.wiring_tx_hash = wiringTxHash;
       return record;
     },
     provider,
   );
+  modules.acquired = acquired;
+  await updateProgress(context, `Acquired ready at ${acquired.address}`, null);
 
   const finalCommittee = (await dao.committee()) as string;
   const finalDevToken = (await dao.devToken()) as string;
@@ -804,48 +943,34 @@ async function main() {
   console.log(`Dividend           ${finalDividend}`);
   console.log(`Acquired           ${finalAcquired}`);
 
-  if (options.stateFilePath) {
-    const state: BootstrapState = {
-      state_version: "1",
-      generated_at: new Date().toISOString(),
-      completed_at: new Date().toISOString(),
-      status: "completed",
-      scope: "full",
-      message: "SourceDAO full bootstrap completed successfully",
-      rpc_url: rpcUrl,
-      repo_dir: options.repoDir ?? null,
-      config_path: options.configPath,
-      artifacts_dir: artifactsDir,
-      chain_id: config.chainId,
-      dao_address: config.daoAddress,
-      dividend_address: config.dividendAddress,
-      bootstrap_admin: wallet.address,
-      warnings: config.warnings,
-      operations,
-      final_wiring: {
-        committee: finalCommittee,
-        dev_token: finalDevToken,
-        normal_token: finalNormalToken,
-        token_lockup: finalLockup,
-        project: finalProject,
-        dividend: finalDividend,
-        acquired: finalAcquired,
-      },
-      modules: {
-        committee,
-        dev_token: devToken,
-        normal_token: normalToken,
-        token_lockup: tokenLockup,
-        project,
-        acquired,
-      },
-    };
-    await writeFile(options.stateFilePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  }
+  modules.committee = committee;
+  modules.dev_token = devToken;
+  modules.normal_token = normalToken;
+  modules.token_lockup = tokenLockup;
+  modules.project = project;
+  modules.acquired = acquired;
+  context.currentStep = null;
+  latestRuntimeContext = context;
+  await writeBootstrapStateSnapshot(context, "completed", "SourceDAO full bootstrap completed successfully");
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
+  const errorText = error instanceof Error ? error.stack || error.message : String(error);
+  if (latestRuntimeContext) {
+    try {
+      await writeBootstrapStateSnapshot(
+        latestRuntimeContext,
+        "error",
+        "SourceDAO full bootstrap failed",
+        errorText,
+      );
+    } catch (writeError) {
+      const writeText = writeError instanceof Error ? writeError.stack || writeError.message : String(writeError);
+      console.error("Failed to persist SourceDAO bootstrap error state.");
+      console.error(writeText);
+    }
+  }
   console.error("\nUSDB full SourceDAO bootstrap failed.");
-  console.error(error instanceof Error ? error.stack || error.message : String(error));
+  console.error(errorText);
   process.exitCode = 1;
 });
