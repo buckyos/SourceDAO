@@ -12,13 +12,10 @@ type USDBLocalConfig = {
     chainId: number;
     rpcUrl: string;
     artifactsDir?: string;
-    genesisDifficulty?: string;
-    minimumDifficulty?: string;
     daoAddress: string;
     dividendAddress: string;
     bootstrapAdminPrivateKey: string;
     cycleMinLength: number;
-    dividendFeeSplitBlock?: number;
     nativeDepositWei: string;
     transactionGasLimit?: number;
     nativeTransferGasLimit?: number;
@@ -32,7 +29,7 @@ type HardhatArtifact = {
 const ZERO_ADDRESS = ethers.ZeroAddress;
 const DEFAULT_CONFIG_PATH = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    "../tools/config/usdb-local.json",
+    "../tools/config/sourcedao-local.json",
 );
 const DEFAULT_ARTIFACTS_DIR = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -140,9 +137,6 @@ async function main() {
     console.log(`DAO                ${config.daoAddress}`);
     console.log(`Dividend           ${config.dividendAddress}`);
     console.log(`Cycle min length   ${config.cycleMinLength}`);
-    if (config.dividendFeeSplitBlock !== undefined) {
-        console.log(`Fee split block    ${config.dividendFeeSplitBlock}`);
-    }
 
     printHeader("Preflight checks");
     await ensureCode(provider, config.daoAddress, "DAO");

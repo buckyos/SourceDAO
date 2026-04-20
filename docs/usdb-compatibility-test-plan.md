@@ -219,7 +219,7 @@ Hardhat 本地节点不应再被视为 USDB 兼容性的最终验证目标。
 
 当前已落地的 Phase 2 前两项是：
 
-- `tools/config/usdb-local.json`
+- `tools/config/sourcedao-local.json`
   - 本地 USDB smoke 所需的最小 manifest
   - 固定：
     - `chainId`

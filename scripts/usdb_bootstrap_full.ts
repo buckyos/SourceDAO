@@ -14,8 +14,6 @@ type SourceDaoBootstrapConfig = {
   chainId: number;
   rpcUrl: string;
   artifactsDir?: string;
-  genesisDifficulty?: string;
-  minimumDifficulty?: string;
   daoAddress: string;
   dividendAddress: string;
   bootstrapAdminPrivateKey: string;
@@ -111,7 +109,7 @@ type BootstrapState = {
 
 const DEFAULT_CONFIG_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../tools/config/usdb-local.json",
+  "../tools/config/sourcedao-local.json",
 );
 const DEFAULT_ARTIFACTS_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
