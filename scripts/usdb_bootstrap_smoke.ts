@@ -12,6 +12,8 @@ type USDBLocalConfig = {
     chainId: number;
     rpcUrl: string;
     artifactsDir?: string;
+    genesisDifficulty?: string;
+    minimumDifficulty?: string;
     daoAddress: string;
     dividendAddress: string;
     bootstrapAdminPrivateKey: string;
