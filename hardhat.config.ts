@@ -1,5 +1,9 @@
 import { defineConfig } from "hardhat/config";
-import hardhatToolboxMochaEthers from "@nomicfoundation/hardhat-toolbox-mocha-ethers";
+import hardhatEthers from "@nomicfoundation/hardhat-ethers";
+import hardhatEthersChaiMatchers from "@nomicfoundation/hardhat-ethers-chai-matchers";
+import hardhatMocha from "@nomicfoundation/hardhat-mocha";
+import hardhatNetworkHelpers from "@nomicfoundation/hardhat-network-helpers";
+import hardhatTypechain from "@nomicfoundation/hardhat-typechain";
 
 const artifactsDir = process.env.SOURCE_DAO_ARTIFACTS_DIR ?? "./artifacts";
 const cacheDir = process.env.SOURCE_DAO_CACHE_DIR ?? "./cache";
@@ -12,7 +16,13 @@ const commonCompilerSettings = {
 };
 
 export default defineConfig({
-    plugins: [hardhatToolboxMochaEthers],
+    plugins: [
+        hardhatMocha,
+        hardhatEthers,
+        hardhatEthersChaiMatchers,
+        hardhatNetworkHelpers,
+        hardhatTypechain
+    ],
     networks: {
         localhost: {
             type: "http",

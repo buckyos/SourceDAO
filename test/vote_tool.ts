@@ -231,10 +231,20 @@ async function writeLocalhostConfig(port: number): Promise<string> {
     await writeFile(
         configPath,
         `import { defineConfig } from "hardhat/config";
-import hardhatToolboxMochaEthers from "@nomicfoundation/hardhat-toolbox-mocha-ethers";
+import hardhatEthers from "@nomicfoundation/hardhat-ethers";
+import hardhatEthersChaiMatchers from "@nomicfoundation/hardhat-ethers-chai-matchers";
+import hardhatMocha from "@nomicfoundation/hardhat-mocha";
+import hardhatNetworkHelpers from "@nomicfoundation/hardhat-network-helpers";
+import hardhatTypechain from "@nomicfoundation/hardhat-typechain";
 
 export default defineConfig({
-  plugins: [hardhatToolboxMochaEthers],
+  plugins: [
+    hardhatMocha,
+    hardhatEthers,
+    hardhatEthersChaiMatchers,
+    hardhatNetworkHelpers,
+    hardhatTypechain
+  ],
   paths: {
     tests: {
       mocha: "./test-hh3"
