@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployUUPSProxy } from "../test-hh3/helpers/uups.js";
 
-const { ethers } = await hre.network.connect("localhost");
+const { ethers } = await (hre.network.connect("localhost") as unknown as Promise<{ ethers: any }>);
 
 const PROJECT_NAME = ethers.encodeBytes32String("Buckyos");
 const VERSION_ONE = 100001;
@@ -60,6 +60,107 @@ function buildProjectParams(
         ethers.zeroPadValue(ethers.toBeHex(endDate), 32),
         ethers.encodeBytes32String(action),
     ];
+}
+
+function sameAddress(left: string, right: string): boolean {
+    return ethers.getAddress(left) === ethers.getAddress(right);
+}
+
+function assertAddressEqual(label: string, actual: string, expected: string) {
+    if (!sameAddress(actual, expected)) {
+        throw new Error(`${label} mismatch: have ${actual}, expected ${expected}`);
+    }
+}
+
+function assertBigIntEqual(label: string, actual: unknown, expected: bigint) {
+    if (BigInt(actual as string | number | bigint) !== expected) {
+        throw new Error(`${label} mismatch: have ${actual}, expected ${expected}`);
+    }
+}
+
+async function validateVersion(contract: any, label: string) {
+    const version = await contract.version();
+    if (typeof version !== "string" || !version.trim()) {
+        throw new Error(`${label}.version returned an empty string`);
+    }
+}
+
+async function wireDaoModule(dao: any, setterName: string, getterName: string, module: any, label: string) {
+    const moduleAddress = await module.getAddress();
+    await dao[setterName].staticCall(moduleAddress);
+    await (await dao[setterName](moduleAddress)).wait();
+
+    const readback = await dao[getterName]();
+    assertAddressEqual(`DAO.${getterName}`, readback, moduleAddress);
+
+    const registered = await dao.isDAOContract(moduleAddress);
+    if (!registered) {
+        throw new Error(`DAO.isDAOContract returned false for ${label} at ${moduleAddress}`);
+    }
+}
+
+async function validateLocalModules(contracts: {
+    committee: any;
+    project: any;
+    devToken: any;
+    normalToken: any;
+    lockup: any;
+    dividend: any;
+    acquired: any;
+}, expected: {
+    committeeMembers: string[];
+    devTokenInitialReleased: bigint;
+}) {
+    await validateVersion(contracts.committee, "Committee");
+    const members = Array.from(await contracts.committee.members()) as string[];
+    if (members.length !== expected.committeeMembers.length) {
+        throw new Error(`Committee.members length mismatch: have ${members.length}, expected ${expected.committeeMembers.length}`);
+    }
+    members.forEach((member, index) => {
+        assertAddressEqual(`Committee.members[${index}]`, member, expected.committeeMembers[index]);
+    });
+    assertBigIntEqual("Committee.devRatio", await contracts.committee.devRatio(), 200n);
+    assertBigIntEqual("Committee.finalRatio", await contracts.committee.finalRatio(), 150n);
+    assertBigIntEqual("Committee.finalVersion", await contracts.committee.finalVersion(), BigInt(VERSION_TWO));
+
+    await validateVersion(contracts.project, "Project");
+    assertBigIntEqual("Project.projectIdCounter", await contracts.project.projectIdCounter(), 1n);
+    await contracts.project.versionReleasedTime(PROJECT_NAME, VERSION_TWO);
+
+    await validateVersion(contracts.devToken, "DevToken");
+    if ((await contracts.devToken.name()) !== "Bucky Dev Token") {
+        throw new Error("DevToken.name mismatch");
+    }
+    if ((await contracts.devToken.symbol()) !== "BDDT") {
+        throw new Error("DevToken.symbol mismatch");
+    }
+    assertBigIntEqual("DevToken.totalSupply", await contracts.devToken.totalSupply(), tokenUnits(1_000_000));
+    assertBigIntEqual("DevToken.totalReleased", await contracts.devToken.totalReleased(), expected.devTokenInitialReleased);
+
+    await validateVersion(contracts.normalToken, "NormalToken");
+    if ((await contracts.normalToken.name()) !== "Bucky Token") {
+        throw new Error("NormalToken.name mismatch");
+    }
+    if ((await contracts.normalToken.symbol()) !== "BDT") {
+        throw new Error("NormalToken.symbol mismatch");
+    }
+    assertBigIntEqual("NormalToken.totalSupply", await contracts.normalToken.totalSupply(), 0n);
+
+    await validateVersion(contracts.lockup, "TokenLockup");
+    if ((await contracts.lockup.unlockProjectName()).toLowerCase() !== PROJECT_NAME.toLowerCase()) {
+        throw new Error("TokenLockup.unlockProjectName mismatch");
+    }
+    assertBigIntEqual("TokenLockup.unlockProjectVersion", await contracts.lockup.unlockProjectVersion(), BigInt(VERSION_TWO));
+    assertBigIntEqual("TokenLockup.totalAssigned(address(0))", await contracts.lockup.totalAssigned(ethers.ZeroAddress), 0n);
+
+    await validateVersion(contracts.dividend, "Dividend");
+    assertBigIntEqual("Dividend.cycleMinLength", await contracts.dividend.cycleMinLength(), BigInt(ONE_HOUR));
+    await contracts.dividend.getCurrentCycleIndex();
+    await contracts.dividend.getCurrentCycle();
+
+    await validateVersion(contracts.acquired, "Acquired");
+    await contracts.acquired.getInvestmentInfo(1);
+    await contracts.acquired.getAddressPercent(1, expected.committeeMembers[0]);
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
@@ -121,7 +222,7 @@ async function main() {
         process.env.FRONTEND_LOCAL_AUTH_MODE?.trim()
         || process.env.SOURCE_DAO_LOCAL_AUTH_MODE?.trim()
         || "dev";
-    const signers = await ethers.getSigners();
+    const signers = (await ethers.getSigners()) as any[];
     const [deployer, committeeTwo, committeeThree, viewer] = signers;
 
     printHeader("Deploying SourceDAO local stack for frontend");
@@ -153,13 +254,21 @@ async function main() {
     const dividend = await deployUUPSProxy(ethers, "DividendContract", [ONE_HOUR, daoAddress]);
     const acquired = await deployUUPSProxy(ethers, "Acquired", [1, daoAddress]);
 
-    await (await dao.setCommitteeAddress(await committee.getAddress())).wait();
-    await (await dao.setProjectAddress(await project.getAddress())).wait();
-    await (await dao.setDevTokenAddress(await devToken.getAddress())).wait();
-    await (await dao.setNormalTokenAddress(await normalToken.getAddress())).wait();
-    await (await dao.setTokenLockupAddress(await lockup.getAddress())).wait();
-    await (await dao.setTokenDividendAddress(await dividend.getAddress())).wait();
-    await (await dao.setAcquiredAddress(await acquired.getAddress())).wait();
+    await validateLocalModules(
+        { committee, project, devToken, normalToken, lockup, dividend, acquired },
+        {
+            committeeMembers: [deployer.address, committeeTwo.address, committeeThree.address],
+            devTokenInitialReleased: tokenUnits(90_000),
+        },
+    );
+
+    await wireDaoModule(dao, "setCommitteeAddress", "committee", committee, "Committee");
+    await wireDaoModule(dao, "setProjectAddress", "project", project, "Project");
+    await wireDaoModule(dao, "setDevTokenAddress", "devToken", devToken, "DevToken");
+    await wireDaoModule(dao, "setNormalTokenAddress", "normalToken", normalToken, "NormalToken");
+    await wireDaoModule(dao, "setTokenLockupAddress", "lockup", lockup, "TokenLockup");
+    await wireDaoModule(dao, "setTokenDividendAddress", "dividend", dividend, "Dividend");
+    await wireDaoModule(dao, "setAcquiredAddress", "acquired", acquired, "Acquired");
 
     // Seed a small amount of BDT so a non-committee wallet can still exercise
     // balance reads and token-holder gated UI.
@@ -278,7 +387,7 @@ async function main() {
         [committeeThree.address.toLowerCase(), "committee member 3"],
         [viewer.address.toLowerCase(), "viewer / token holder"],
     ]);
-    signers.forEach((signer, index) => {
+    signers.forEach((signer: any, index: number) => {
         const address = signer.address;
         const privateKey = localPrivateKeys.get(address.toLowerCase()) ?? "<private key unavailable>";
         const label = namedAccounts.get(address.toLowerCase()) ?? `account ${index}`;
