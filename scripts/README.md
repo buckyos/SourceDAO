@@ -34,6 +34,8 @@
 | USDB 编译并审计 | `npm run test:usdb:compile-and-audit` | 推荐作为 USDB 部署前检查。 |
 | 既有链升级 | `npm run upgrade:existing -- --config <file> --action <action>` | 面向 OP 等已部署 SourceDAO 的参数化升级脚本。 |
 | USDB 内置合约 smoke | `npm run test:usdb:smoke` | 初始化/检查内置 DAO + Dividend，并做 native deposit smoke。 |
+| USDB bootstrap 复检 | `npm run validate:bootstrap -- --config <file>` | 只读复检已部署 DAO、Dividend 和各模块 wiring。 |
+| USDB bootstrap smoke | `npm run bootstrap:smoke -- --config <file>` | `validate:bootstrap` 的只读 smoke 别名。 |
 | 本地链 | `npm run node:local` | 启动 Hardhat localhost。 |
 | 本地前端合约部署 | `npm run deploy:frontend-local` | 部署完整本地合约栈，打印前端 `.env.local` 内容。 |
 | 本地前端合约部署并写 env | `npm run deploy:frontend-local:write` | 写入 `../buckydaowww/src/.env.local`。 |
@@ -131,6 +133,45 @@ npx tsx scripts/usdb_bootstrap_full.ts \
 - `artifactsDir` 在 full bootstrap 中按配置文件所在目录解析；如果配置文件放在 `tools/config/`，可以省略该字段使用默认 `artifacts-usdb`，或写成相对该配置文件的正确路径，例如 `../../artifacts-usdb`。
 - 缺失的 `committee/devToken/normalToken/tokenLockup/project/acquired` 配置会回落到脚本内 legacy defaults，但生产配置应显式写全。
 - `--state-file` 会持续写入进度快照，适合 UI 或运维面板展示 bootstrap 状态。
+
+### `usdb_validate_bootstrap.ts`
+
+用途：对已经完成 bootstrap 的已部署地址做只读复检。它不会发交易，也不会做 native deposit，只通过 RPC 读取 DAO 和模块状态。
+
+脚本会：
+
+- 检查 `chainId`。
+- 检查 DAO 和所有 DAO wiring 模块地址非零且有 code。
+- 校验 `DAO.bootstrapAdmin`，如果配置里有 `bootstrapAdminAddress` 或 `bootstrapAdminPrivateKey`，会比对预期地址。
+- 检查 `dao.isDAOContract(moduleAddress) == true`。
+- 读取每个模块的 `version()`。
+- 校验 Committee、Token、Lockup、Project、Dividend、Acquired 的关键初始化不变量。
+- 可选读取 `usdb_bootstrap_full.ts --state-file` 生成的状态文件，比对最终 wiring 地址。
+
+推荐命令：
+
+```bash
+npm run build:usdb
+npm run test:usdb:audit
+
+npm run validate:bootstrap -- \
+  --config /path/to/sourcedao-bootstrap-full.json \
+  --rpc-url https://your-usdb-rpc \
+  --state-file .local-dev/usdb-bootstrap-state.json \
+  --output .local-dev/usdb-bootstrap-validate.json
+```
+
+`npm run bootstrap:smoke -- --config <file>` 是同一个只读复检入口，适合运维/CI 用更短的命令名。
+
+可用参数和环境变量：
+
+- `--config` / `SOURCE_DAO_USDB_CONFIG`
+- `--rpc-url` / `SOURCE_DAO_USDB_RPC_URL`
+- `--state-file` / `SOURCE_DAO_USDB_STATE_FILE`
+- `--output` / `SOURCE_DAO_BOOTSTRAP_VALIDATE_OUTPUT`
+- `--strict` / `SOURCE_DAO_BOOTSTRAP_VALIDATE_STRICT=1`
+
+默认是 relaxed 模式：允许治理运行后 Committee 成员、dev ratio、项目计数、token 发行状态等已经变化，只校验它们仍满足安全下限和基础一致性。`--strict` 用于刚 bootstrap 完成后的精确复检，会额外比对初始 Committee 成员、DevToken 初始释放量、NormalToken 初始供应量、Project 初始计数等。
 
 ## 本地前端/后端联调脚本
 
