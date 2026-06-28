@@ -32,6 +32,7 @@
 | 编译 USDB 版本 | `npm run build:usdb` | 输出到 `artifacts-usdb/`，会先清理 `artifacts-usdb` 和 `cache-usdb`。 |
 | 检查 USDB bytecode | `npm run test:usdb:audit` | 检查 `artifacts-usdb` 中是否包含 USDB 不支持的 opcode。 |
 | USDB 编译并审计 | `npm run test:usdb:compile-and-audit` | 推荐作为 USDB 部署前检查。 |
+| 既有链升级 | `npm run upgrade:existing -- --config <file> --action <action>` | 面向 OP 等已部署 SourceDAO 的参数化升级脚本。 |
 | USDB 内置合约 smoke | `npm run test:usdb:smoke` | 初始化/检查内置 DAO + Dividend，并做 native deposit smoke。 |
 | 本地链 | `npm run node:local` | 启动 Hardhat localhost。 |
 | 本地前端合约部署 | `npm run deploy:frontend-local` | 部署完整本地合约栈，打印前端 `.env.local` 内容。 |
@@ -251,6 +252,98 @@ npm run test:usdb:audit
 - `TSTORE`
 - `MCOPY`
 
+## 既有链 SourceDAO 正式升级脚本
+
+### `upgrade_existing_sourcedao.ts`
+
+用途：面向已经部署在 OP mainnet、其他 EVM 链或 fork 上的 SourceDAO proxy，按当前 Committee 治理流程完成模块升级。
+
+这个脚本不依赖 Hardhat network 配置，直接从 JSON/环境变量读取 RPC、DAO 地址、目标模块和操作私钥。它适合当前 OP 链已有 SourceDAO 的升级需求，也可以先在 fork 上演练。
+
+支持的目标模块：
+
+- `dao`
+- `committee`
+- `devToken`
+- `normalToken`
+- `lockup`
+- `project`
+- `dividend`
+- `acquired`
+- `custom`
+
+支持的 action：
+
+- `plan`：只读预览，解析目标 proxy、当前 implementation、version、calldata hash 和 proposal params。
+- `deploy`：只部署新的 implementation，不发起治理提案。
+- `prepare`：如果未提供 `newImplementationAddress`，先部署 implementation，然后调用 Committee 发起升级提案。
+- `support`：委员对升级提案投支持票。
+- `reject`：委员对升级提案投反对票。
+- `status`：读取目标 proxy 当前 queued upgrade proposal。
+- `execute`：升级提案通过后调用目标 proxy 的 `upgradeToAndCall` 或 `upgradeTo`。
+
+配置样例：`tools/config/sourcedao-upgrade.example.json`。
+
+推荐流程：
+
+```bash
+npm run build
+
+# 1. 只读检查配置和目标地址
+npm run upgrade:existing -- \
+  --config /path/to/op-upgrade.json \
+  --action plan
+
+# 2. 部署 implementation 并发起治理提案
+npm run upgrade:existing -- \
+  --config /path/to/op-upgrade.json \
+  --action prepare \
+  --output .local-dev/op-upgrade-prepare.json
+
+# 3. 每个委员使用自己的私钥投票；proposal id 来自 prepare 输出
+npm run upgrade:existing -- \
+  --config /path/to/op-upgrade.json \
+  --action support \
+  --new-implementation 0xNEW_IMPLEMENTATION \
+  --proposal-id 123
+
+# 4. 查看 queued proposal 状态
+npm run upgrade:existing -- \
+  --config /path/to/op-upgrade.json \
+  --action status \
+  --new-implementation 0xNEW_IMPLEMENTATION
+
+# 5. 票数通过后执行升级
+npm run upgrade:existing -- \
+  --config /path/to/op-upgrade.json \
+  --action execute \
+  --new-implementation 0xNEW_IMPLEMENTATION
+```
+
+关键配置：
+
+- `chainId`：防止 RPC 指错链。
+- `rpcUrl`：可用 `SOURCE_DAO_UPGRADE_RPC_URL` 覆盖。
+- `privateKey`：prepare/support/reject/execute 需要；也可用 `SOURCE_DAO_UPGRADE_PRIVATE_KEY` 或 `--private-key`。
+- `daoAddress`：已部署 SourceDAO proxy 地址。
+- `target.module`：要升级的模块；`custom` 必须额外提供 `target.proxyAddress` 和 `target.artifactPath`。
+- `target.expectedCurrentVersion` / `target.expectedNewVersion`：可选的版本防呆。
+- `newImplementationAddress`：如果 implementation 已经部署，直接填入或用 `--new-implementation` 传入。
+- `upgradeCall`：需要随升级执行的 calldata，例如 DAO 从 pre-bootstrap 实现迁移时调用 `migrateBootstrapAdmin(address)`。
+- `proposalMode`：
+  - `current`：调用 `prepareContractUpgrade(proxy, impl, calldataHash)`，适用于当前 Committee。
+  - `legacy`：调用 `prepareContractUpgrade(proxy, impl)`，适用于旧 Committee。旧模式不审批 calldata；如果必须携带 calldata，需要显式设置 `allowLegacyCalldata=true`。
+- `executeMode`：
+  - `upgradeToAndCall`：默认，适用于当前 UUPS。
+  - `upgradeTo`：只用于旧 proxy 且 calldata 必须为空。
+
+OP 链当前操作建议：
+
+- 不要直接使用 `deploy_all_as_sourcedao.ts` 或 `update_*.ts`。
+- 先在 OP fork 上使用相同 config 跑 `plan -> prepare -> support -> execute`。
+- 如果目标是升级 DAO 且现有 DAO 没有 `bootstrapAdmin`，使用 `upgradeCall.migrateBootstrapAdmin(address)`，并让 Committee 明确确认 calldata hash。
+- 如果链上 Committee 仍是旧版，只支持 implementation-only 审批，使用 `proposalMode=legacy` 时要特别审阅 `upgradeCall`，因为旧治理不会约束 calldata。
+
 ## 历史/参考脚本
 
 这些脚本保留了项目历史演进信息，但不应直接作为当前部署入口。它们可能包含硬编码地址、旧合约名、旧 setter、ethers v5 写法或 OpenZeppelin upgrades 旧接口。
@@ -263,7 +356,7 @@ npm run test:usdb:audit
 | `update_dev.ts` | legacy，不兼容当前接口 | 使用旧 `devGroup()`、`ethers.utils.*`、`receipt.events` 等旧写法，且面向旧 ProjectManagement 升级流程。 |
 | `update_invsement.ts` | legacy，不兼容当前接口 | 文件名和变量沿用 `invsement` 拼写，目标是旧 `Investment` 模块；当前对应模块已是 `Acquired`。 |
 
-如果需要恢复“已有链上 SourceDAO 的正式升级脚本”，建议新建一个参数化脚本，而不是直接修改 legacy 文件：
+如果后续继续完善“已有链上 SourceDAO 的正式升级脚本”，应优先扩展 `upgrade_existing_sourcedao.ts`，不要直接修改 legacy 文件：
 
 - 从 profile/config 读取 DAO 地址、模块名、proxy 地址、new implementation 地址或 factory 名。
 - 部署 implementation 后，调用当前 Committee 的 `prepareContractUpgrade`。

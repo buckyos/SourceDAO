@@ -1,0 +1,23 @@
+{
+  "chainId": 10,
+  "rpcUrl": "https://mainnet.optimism.io",
+  "artifactsDir": "../../artifacts",
+  "daoAddress": "0x2fc3186176B80EA829A7952b874F36f7cb8bd184",
+  "proposalMode": "current",
+  "executeMode": "upgradeToAndCall",
+  "target": {
+    "module": "dao",
+    "artifactPath": "contracts/Dao.sol/SourceDao.json",
+    "expectedCurrentVersion": "2.0.0",
+    "expectedNewVersion": "2.0.0"
+  },
+  "upgradeCall": {
+    "function": "migrateBootstrapAdmin",
+    "args": [
+      "0xYOUR_BOOTSTRAP_ADMIN_ADDRESS"
+    ]
+  },
+  "allowLegacyCalldata": false,
+  "transactionGasLimit": 4000000,
+  "outputPath": ".local-dev/op-upgrade-summary.json"
+}
