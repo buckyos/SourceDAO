@@ -11,7 +11,7 @@
 
 - USDB 冷启动使用 `usdb_bootstrap_smoke.ts` 和 `usdb_bootstrap_full.ts`。
 - 本地前端/后端联调使用 `local_dev_stack.sh`、`deploy_frontend_local.ts` 和 `seed_local_scenarios.ts`。
-- `deploy_all*.ts` 和 `update_*.ts` 是历史脚本，不是当前生产级入口。
+- `deploy_all*.ts` 和 `update_*.ts` 已移动到 `scripts/deprecated/`，不是当前生产级入口。
 - 如果还需要“已有链上 SourceDAO 的正式部署/升级入口”，应新建参数化脚本，复用 full bootstrap 中的强校验思路。
 
 ## 环境前提
@@ -380,24 +380,24 @@ npm run upgrade:existing -- \
 
 OP 链当前操作建议：
 
-- 不要直接使用 `deploy_all_as_sourcedao.ts` 或 `update_*.ts`。
+- 不要直接使用 `scripts/deprecated/deploy_all_as_sourcedao.ts` 或 `scripts/deprecated/update_*.ts`。
 - 先在 OP fork 上使用相同 config 跑 `plan -> prepare -> support -> execute`。
 - 如果目标是升级 DAO 且现有 DAO 没有 `bootstrapAdmin`，使用 `upgradeCall.migrateBootstrapAdmin(address)`，并让 Committee 明确确认 calldata hash。
 - 如果链上 Committee 仍是旧版，只支持 implementation-only 审批，使用 `proposalMode=legacy` 时要特别审阅 `upgradeCall`，因为旧治理不会约束 calldata。
 
-## 历史/参考脚本
+## Deprecated 历史脚本
 
-这些脚本保留了项目历史演进信息，但不应直接作为当前部署入口。它们可能包含硬编码地址、旧合约名、旧 setter、ethers v5 写法或 OpenZeppelin upgrades 旧接口。
+这些脚本保留了项目历史演进信息，但不应直接作为当前部署入口。它们已经移动到 `scripts/deprecated/`，以降低误用概率。它们可能包含硬编码地址、旧合约名、旧 setter、ethers v5 写法或 OpenZeppelin upgrades 旧接口。
 
 | 脚本 | 状态 | 说明 |
 | --- | --- | --- |
-| `deploy_all.ts` | legacy，不推荐运行 | 早期一次性部署脚本，引用 `SourceDaoToken`、`Investment`、`MarketingContract`、`MultiSigWallet` 和旧 DAO setter，如 `setTokenAddress`、`setDevAddress`。与当前 DevToken/NormalToken/Acquired 模块体系不匹配。 |
-| `deploy_all_as_sourcedao.ts` | 历史增量部署脚本，不推荐直接运行 | 面向已有 SourceDao 地址做模块补齐，包含多条历史主网/测试网硬编码地址。当前生产使用前必须先参数化、移除硬编码地址，并补齐强校验。 |
-| `update_committee.ts` | 历史升级参考 | 针对硬编码 amoy DAO 地址部署 Committee 新 implementation，只打印 implementation 地址，不完成治理提案执行。 |
-| `update_dev.ts` | legacy，不兼容当前接口 | 使用旧 `devGroup()`、`ethers.utils.*`、`receipt.events` 等旧写法，且面向旧 ProjectManagement 升级流程。 |
-| `update_invsement.ts` | legacy，不兼容当前接口 | 文件名和变量沿用 `invsement` 拼写，目标是旧 `Investment` 模块；当前对应模块已是 `Acquired`。 |
+| `deprecated/deploy_all.ts` | legacy，不推荐运行 | 早期一次性部署脚本，引用 `SourceDaoToken`、`Investment`、`MarketingContract`、`MultiSigWallet` 和旧 DAO setter，如 `setTokenAddress`、`setDevAddress`。与当前 DevToken/NormalToken/Acquired 模块体系不匹配。 |
+| `deprecated/deploy_all_as_sourcedao.ts` | 历史增量部署脚本，不推荐直接运行 | 面向已有 SourceDao 地址做模块补齐，包含多条历史主网/测试网硬编码地址。当前 USDB 冷启动用 `usdb_bootstrap_full.ts`，既有链升级用 `upgrade_existing_sourcedao.ts`。 |
+| `deprecated/update_committee.ts` | 历史升级参考 | 针对硬编码 amoy DAO 地址部署 Committee 新 implementation，只打印 implementation 地址，不完成治理提案执行；当前使用 `upgrade_existing_sourcedao.ts` 的 `committee` target。 |
+| `deprecated/update_dev.ts` | legacy，不兼容当前接口 | 使用旧 `devGroup()`、`ethers.utils.*`、`receipt.events` 等旧写法，且面向旧 ProjectManagement 升级流程；当前按目标模块使用 `upgrade_existing_sourcedao.ts`。 |
+| `deprecated/update_invsement.ts` | legacy，不兼容当前接口 | 文件名和变量沿用 `invsement` 拼写，目标是旧 `Investment` 模块；当前对应模块已是 `Acquired`，使用 `upgrade_existing_sourcedao.ts` 的 `acquired` target。 |
 
-如果后续继续完善“已有链上 SourceDAO 的正式升级脚本”，应优先扩展 `upgrade_existing_sourcedao.ts`，不要直接修改 legacy 文件：
+如果后续继续完善“已有链上 SourceDAO 的正式升级脚本”，应优先扩展 `upgrade_existing_sourcedao.ts`，不要直接修改 deprecated 文件：
 
 - 从 profile/config 读取 DAO 地址、模块名、proxy 地址、new implementation 地址或 factory 名。
 - 部署 implementation 后，调用当前 Committee 的 `prepareContractUpgrade`。
