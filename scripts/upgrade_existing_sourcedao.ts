@@ -610,7 +610,9 @@ async function main() {
   const newImplementationVersion = newImplementationAddress
     ? await readVersion(runner, targetArtifact, newImplementationAddress)
     : null;
-  assertExpectedVersion("new implementation", newImplementationVersion, config.target.expectedNewVersion);
+  if (newImplementationAddress) {
+    assertExpectedVersion("new implementation", newImplementationVersion, config.target.expectedNewVersion);
+  }
 
   const proposalParams = newImplementationAddress
     ? buildUpgradeParams(proxyAddress, newImplementationAddress, upgradeCalldata)

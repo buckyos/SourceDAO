@@ -10,7 +10,7 @@
 - `committee_status.ts`：读取当前委员会治理参数、成员和可选观察地址的投票资格
 - `project_status.ts`：读取项目生命周期、关联提案、贡献列表和可选观察地址的贡献状态
 - `proposal_status.ts`：读取单个 ordinary/full proposal 的只读状态
-- `config/profiles/opmain.json`：共享部署配置示例
+- `config/profiles/opmain.json`：当前 OP 部署配置示例
 - `config/local.example.json`：本地操作者配置示例
 
 根目录的 `vote.ts` 仍然保留为兼容入口；后续新增工具应优先放在 `tools/` 下，并在需要时由根目录保留薄兼容入口。

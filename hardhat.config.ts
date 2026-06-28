@@ -7,6 +7,10 @@ import hardhatTypechain from "@nomicfoundation/hardhat-typechain";
 
 const artifactsDir = process.env.SOURCE_DAO_ARTIFACTS_DIR ?? "./artifacts";
 const cacheDir = process.env.SOURCE_DAO_CACHE_DIR ?? "./cache";
+const opmainRpcUrl =
+    process.env.SOURCE_DAO_OPMAIN_RPC_URL ??
+    "https://mainnet.optimism.io";
+const deployerPrivateKey = process.env.SOURCE_DAO_PRIVATE_KEY ?? process.env.PRIVATE_KEY;
 const commonCompilerSettings = {
     optimizer: {
         enabled: true,
@@ -28,6 +32,12 @@ export default defineConfig({
             type: "http",
             chainType: "l1",
             url: "http://127.0.0.1:8545",
+        },
+        opmain: {
+            type: "http",
+            chainType: "l1",
+            url: opmainRpcUrl,
+            ...(deployerPrivateKey ? { accounts: [deployerPrivateKey] } : {}),
         },
     },
     paths: {
