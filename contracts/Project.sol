@@ -49,6 +49,7 @@ contract ProjectManagement is
 
     function initialize(uint initProjectIdCounter, address mainAddr) initializer public {
         __SourceDaoContractUpgradable_init(mainAddr);
+        __ReentrancyGuard_init();
         
         projectIdCounter = initProjectIdCounter;
         minProjectFinishDuration = 7 days;

@@ -46,6 +46,7 @@
     "@nomicfoundation/hardhat-mocha": "^3.0.21",
     "@nomicfoundation/hardhat-network-helpers": "^3.0.10",
     "@nomicfoundation/hardhat-typechain": "^3.1.1",
+    "@openzeppelin/hardhat-upgrades": "^4.0.2",
     "@types/chai": "^4.3.20",
     "@types/deep-equal-in-any-order": "^1.0.4",
     "@types/json-bigint": "^1.0.4",

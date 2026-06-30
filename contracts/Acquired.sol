@@ -47,9 +47,9 @@ contract Acquired is IAcquired, ReentrancyGuardUpgradeable, SourceDaoContractUpg
     }
 
     function initialize(uint initInvestmentCount, address _mainContractAddress) public initializer {
-        __SourceDaoContractUpgradable_init(_mainContractAddress);
         __ReentrancyGuard_init();
-
+        __SourceDaoContractUpgradable_init(_mainContractAddress);
+        
         investmentCount = initInvestmentCount;
     }
 

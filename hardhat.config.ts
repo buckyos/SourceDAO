@@ -4,6 +4,7 @@ import hardhatEthersChaiMatchers from "@nomicfoundation/hardhat-ethers-chai-matc
 import hardhatMocha from "@nomicfoundation/hardhat-mocha";
 import hardhatNetworkHelpers from "@nomicfoundation/hardhat-network-helpers";
 import hardhatTypechain from "@nomicfoundation/hardhat-typechain";
+import hardhatUpgrades from '@openzeppelin/hardhat-upgrades';
 
 const artifactsDir = process.env.SOURCE_DAO_ARTIFACTS_DIR ?? "./artifacts";
 const cacheDir = process.env.SOURCE_DAO_CACHE_DIR ?? "./cache";
@@ -25,7 +26,8 @@ export default defineConfig({
         hardhatEthers,
         hardhatEthersChaiMatchers,
         hardhatNetworkHelpers,
-        hardhatTypechain
+        hardhatTypechain,
+        hardhatUpgrades
     ],
     networks: {
         localhost: {

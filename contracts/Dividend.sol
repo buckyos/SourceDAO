@@ -4,7 +4,6 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 import "hardhat/console.sol";
@@ -52,13 +51,12 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
 
     function initialize(uint256 _cycleMinLength, address mainAddr) public initializer {
         require(_cycleMinLength > 0, "invalid cycle length");
-        __UUPSUpgradeable_init();
-        __ReentrancyGuard_init();
         __SourceDaoContractUpgradable_init(mainAddr);
-        __DividendContractUpgradable_init(_cycleMinLength);
+        __ReentrancyGuard_init();
+        __DividendContractUpgradable_init_unchained(_cycleMinLength);
     }
 
-    function __DividendContractUpgradable_init(uint256 _cycleMinLength) public onlyInitializing {
+    function __DividendContractUpgradable_init_unchained(uint256 _cycleMinLength) internal onlyInitializing {
         cycleMinLength = _cycleMinLength;
 
         cycles[0].startBlocktime = block.timestamp;
