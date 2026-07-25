@@ -11,12 +11,13 @@ type CliOptions = {
 };
 
 type SourceDaoBootstrapConfig = {
+  schemaVersion: number;
   chainId: number;
   rpcUrl: string;
   artifactsDir?: string;
   daoAddress: string;
   dividendAddress: string;
-  bootstrapAdminPrivateKey: string;
+  bootstrapAdminAddress: string;
   cycleMinLength: number;
   transactionGasLimit?: number;
   devToken?: {
@@ -57,9 +58,11 @@ type HardhatArtifact = {
 
 type BootstrapOperation = {
   name: string;
-  status: "completed" | "skipped";
+  status: "completed" | "skipped" | "error";
   tx_hash?: string;
+  block_number?: number;
   details?: string;
+  error?: string;
 };
 
 type ModuleRecord = {
@@ -67,8 +70,11 @@ type ModuleRecord = {
   source: "existing" | "deployed";
   implementation_address?: string;
   proxy_tx_hash?: string;
+  proxy_block_number?: number;
   implementation_tx_hash?: string;
+  implementation_block_number?: number;
   wiring_tx_hash?: string;
+  wiring_block_number?: number;
 };
 
 type ModuleName =
@@ -123,46 +129,16 @@ type BootstrapState = {
 
 const DEFAULT_CONFIG_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../tools/config/sourcedao-local.json",
+  "../tools/config/sourcedao-bootstrap-full.example.json",
 );
 const DEFAULT_ARTIFACTS_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../artifacts-usdb",
 );
 const DEFAULT_TRANSACTION_GAS_LIMIT = 8_000_000n;
+const SOURCE_DAO_BOOTSTRAP_SCHEMA_VERSION = 1;
+const MAX_UINT256 = (1n << 256n) - 1n;
 const ZERO_ADDRESS = ethers.ZeroAddress;
-
-const DEFAULT_COMMITTEE_MEMBERS = [
-  "0xad82A5fb394a525835A3a6DC34C1843e19160CFA",
-  "0x2514d2FEAAC3bFD8361333d1341dC8823595f744",
-  "0x2DFD1FCFC9601E7De871b0BbcBCbB6Cad6901697",
-];
-
-const DEFAULT_DEV_TOKEN_ADDRESSES = [
-  "0x2DFD1FCFC9601E7De871b0BbcBCbB6Cad6901697",
-  "0xad82A5fb394a525835A3a6DC34C1843e19160CFA",
-  "0x0Ef9534aE246d24e1C79BC1fE8c8718C11a7fF09",
-  "0x2514d2FEAAC3bFD8361333d1341dC8823595f744",
-  "0x0F56a6f7662B38506f7Ad0ad0cc952b79b8e90e7",
-  "0x71165cD9579b495276De7b0389bB2Cd5352DaFE6",
-  "0x865d123D1CFC7F95B48495A854173408032b9358",
-  "0x19b54B60908241C301d5c95EDbd4C80081dF95B5",
-  "0xC7ced856D14720547533E1E32D7FEfb9877E84E5",
-  "0xdc7dD66eafdBf4B2e40CbC7bEb93f732f8F86518",
-];
-
-const DEFAULT_DEV_TOKEN_AMOUNTS = [
-  "109876068779349609949184721",
-  "6035901558616593430477310",
-  "6830778957104289571042895",
-  "2580803954604539546045395",
-  "4155646470352964703529647",
-  "35000000000000000000000",
-  "1950866948305169483051694",
-  "4466415393460653934606539",
-  "4945967938206179382061793",
-  "6122550000000000000000000",
-];
 
 type BootstrapRuntimeContext = {
   options: CliOptions;
@@ -308,6 +284,27 @@ async function loadJsonFile<T>(filePath: string): Promise<T> {
   return JSON.parse(blob) as T;
 }
 
+function assertPublicBootstrapConfig(config: unknown): asserts config is SourceDaoBootstrapConfig {
+  if (config === null || typeof config !== "object") {
+    throw new Error("SourceDAO bootstrap config must be a JSON object");
+  }
+  if ("bootstrapAdminPrivateKey" in config) {
+    throw new Error(
+      "bootstrapAdminPrivateKey is forbidden in config; inject SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY at runtime",
+    );
+  }
+  if (!("bootstrapAdminAddress" in config)) {
+    throw new Error("bootstrapAdminAddress is required in config");
+  }
+  const schemaVersion = (config as Record<string, unknown>).schemaVersion;
+  if (schemaVersion !== SOURCE_DAO_BOOTSTRAP_SCHEMA_VERSION) {
+    throw new Error(
+      `unsupported SourceDAO bootstrap schemaVersion ${String(schemaVersion)}, ` +
+      `expected ${SOURCE_DAO_BOOTSTRAP_SCHEMA_VERSION}`,
+    );
+  }
+}
+
 async function loadArtifact(artifactsDir: string, relativePath: string): Promise<HardhatArtifact> {
   return loadJsonFile<HardhatArtifact>(path.join(artifactsDir, relativePath));
 }
@@ -319,14 +316,27 @@ function normalizeArtifactsDir(configPath: string, artifactsDir?: string) {
 }
 
 function convertVersion(version: string): number {
-  const versions = version.split(".");
-  if (versions.length < 3) {
+  const match = /^([0-9]+)\.([0-9]+)\.([0-9]+)$/.exec(version);
+  if (!match) {
     throw new Error(`Invalid version format: ${version}. Expected format is major.minor.patch`);
   }
-  const major = Number.parseInt(versions[0], 10);
-  const minor = Number.parseInt(versions[1], 10);
-  const patch = Number.parseInt(versions[2], 10);
-  return major * 10_000_000_000 + minor * 100_000 + patch;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  if (
+    !Number.isSafeInteger(major) ||
+    !Number.isSafeInteger(minor) ||
+    !Number.isSafeInteger(patch) ||
+    minor >= 100_000 ||
+    patch >= 100_000
+  ) {
+    throw new Error(`Invalid version range: ${version}`);
+  }
+  const encoded = major * 10_000_000_000 + minor * 100_000 + patch;
+  if (!Number.isSafeInteger(encoded) || encoded <= 0) {
+    throw new Error(`Encoded version must be a positive safe integer: ${version}`);
+  }
+  return encoded;
 }
 
 function gasLimit(config: SourceDaoBootstrapConfig): bigint {
@@ -342,18 +352,32 @@ function requireNonEmptyString(value: string | undefined, field: string): string
 }
 
 function parseBigIntString(value: string, field: string): bigint {
-  try {
-    return BigInt(value);
-  } catch {
-    throw new Error(`Invalid bigint string for ${field}: ${value}`);
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error(`${field} must be a canonical unsigned decimal string, have ${value}`);
   }
+  const parsed = BigInt(value);
+  if (parsed > MAX_UINT256) {
+    throw new Error(`${field} exceeds uint256`);
+  }
+  return parsed;
 }
 
 function ensureAddressList(values: string[], field: string): string[] {
   if (values.length === 0) {
     throw new Error(`${field} must not be empty`);
   }
-  return values.map((value, index) => ethers.getAddress(requireNonEmptyString(value, `${field}[${index}]`)));
+  const normalized = values.map((value, index) =>
+    ensureNonZeroAddress(value, `${field}[${index}]`),
+  );
+  const seen = new Set<string>();
+  for (const [index, address] of normalized.entries()) {
+    const key = address.toLowerCase();
+    if (seen.has(key)) {
+      throw new Error(`${field}[${index}] duplicates address ${address}`);
+    }
+    seen.add(key);
+  }
+  return normalized;
 }
 
 function ensureBigIntList(values: string[], field: string): bigint[] {
@@ -363,13 +387,48 @@ function ensureBigIntList(values: string[], field: string): bigint[] {
   return values.map((value, index) => parseBigIntString(requireNonEmptyString(value, `${field}[${index}]`), `${field}[${index}]`));
 }
 
+function ensureNonZeroAddress(value: string, field: string): string {
+  const address = ethers.getAddress(requireNonEmptyString(value, field));
+  if (sameAddress(address, ZERO_ADDRESS)) {
+    throw new Error(`${field} must not be the zero address`);
+  }
+  return address;
+}
+
+function ensureSafeInteger(value: number, field: string, minimum: number): number {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`${field} must be a safe integer >= ${minimum}, have ${String(value)}`);
+  }
+  return value;
+}
+
+function requireSection<T>(value: T | undefined, field: string): T {
+  if (value === undefined || value === null) {
+    throw new Error(`${field} is required for full bootstrap`);
+  }
+  return value;
+}
+
+function ensureDistinctAddresses(entries: Array<[string, string]>) {
+  const seen = new Map<string, string>();
+  for (const [field, address] of entries) {
+    const key = address.toLowerCase();
+    const previous = seen.get(key);
+    if (previous) {
+      throw new Error(`${field} conflicts with ${previous}: ${address}`);
+    }
+    seen.set(key, field);
+  }
+}
+
 type ResolvedBootstrapConfig = {
+  schemaVersion: number;
   chainId: number;
   rpcUrl: string;
   artifactsDir?: string;
   daoAddress: string;
   dividendAddress: string;
-  bootstrapAdminPrivateKey: string;
+  bootstrapAdminAddress: string;
   cycleMinLength: number;
   transactionGasLimit?: number;
   committee: {
@@ -405,104 +464,142 @@ type ResolvedBootstrapConfig = {
 };
 
 function resolveBootstrapConfig(config: SourceDaoBootstrapConfig): ResolvedBootstrapConfig {
-  const warnings: string[] = [];
+  const chainId = ensureSafeInteger(config.chainId, "chainId", 1);
+  const rpcUrl = requireNonEmptyString(config.rpcUrl, "rpcUrl");
+  const daoAddress = ensureNonZeroAddress(config.daoAddress, "daoAddress");
+  const dividendAddress = ensureNonZeroAddress(config.dividendAddress, "dividendAddress");
+  const bootstrapAdminAddress = ensureNonZeroAddress(
+    config.bootstrapAdminAddress,
+    "bootstrapAdminAddress",
+  );
+  ensureDistinctAddresses([
+    ["daoAddress", daoAddress],
+    ["dividendAddress", dividendAddress],
+    ["bootstrapAdminAddress", bootstrapAdminAddress],
+  ]);
+  const cycleMinLength = ensureSafeInteger(config.cycleMinLength, "cycleMinLength", 1);
+  if (config.transactionGasLimit !== undefined) {
+    ensureSafeInteger(config.transactionGasLimit, "transactionGasLimit", 1);
+  }
 
-  const committee = config.committee
-    ? {
-        initialMembers: ensureAddressList(config.committee.initialMembers ?? [], "committee.initialMembers"),
-        initProposalId: config.committee.initProposalId ?? 7,
-        initDevRatio: config.committee.initDevRatio ?? 400,
-        mainProjectName: requireNonEmptyString(config.committee.mainProjectName, "committee.mainProjectName"),
-        finalVersion: requireNonEmptyString(config.committee.finalVersion, "committee.finalVersion"),
-        finalDevRatio: config.committee.finalDevRatio ?? 120,
-      }
-    : (() => {
-        warnings.push("committee config missing; using legacy defaults");
-        return {
-          initialMembers: DEFAULT_COMMITTEE_MEMBERS,
-          initProposalId: 7,
-          initDevRatio: 400,
-          mainProjectName: "Buckyos",
-          finalVersion: "1.0.0",
-          finalDevRatio: 120,
-        };
-      })();
+  const committeeConfig = requireSection(config.committee, "committee");
+  const committee = {
+    initialMembers: ensureAddressList(
+      requireSection(committeeConfig.initialMembers, "committee.initialMembers"),
+      "committee.initialMembers",
+    ),
+    initProposalId: ensureSafeInteger(
+      requireSection(committeeConfig.initProposalId, "committee.initProposalId"),
+      "committee.initProposalId",
+      1,
+    ),
+    initDevRatio: ensureSafeInteger(
+      requireSection(committeeConfig.initDevRatio, "committee.initDevRatio"),
+      "committee.initDevRatio",
+      101,
+    ),
+    mainProjectName: requireNonEmptyString(
+      committeeConfig.mainProjectName,
+      "committee.mainProjectName",
+    ),
+    finalVersion: requireNonEmptyString(
+      committeeConfig.finalVersion,
+      "committee.finalVersion",
+    ),
+    finalDevRatio: ensureSafeInteger(
+      requireSection(committeeConfig.finalDevRatio, "committee.finalDevRatio"),
+      "committee.finalDevRatio",
+      101,
+    ),
+  };
+  ethers.encodeBytes32String(committee.mainProjectName);
+  convertVersion(committee.finalVersion);
 
-  const devToken = config.devToken
-    ? {
-        name: requireNonEmptyString(config.devToken.name, "devToken.name"),
-        symbol: requireNonEmptyString(config.devToken.symbol, "devToken.symbol"),
-        totalSupply: requireNonEmptyString(config.devToken.totalSupply, "devToken.totalSupply"),
-        initAddresses: ensureAddressList(config.devToken.initAddresses ?? [], "devToken.initAddresses"),
-        initAmounts: (config.devToken.initAmounts ?? []).map((value, index) =>
-          requireNonEmptyString(value, `devToken.initAmounts[${index}]`),
-        ),
-      }
-    : (() => {
-        warnings.push("devToken config missing; using legacy defaults");
-        return {
-          name: "BuckyOS Develop DAO Token",
-          symbol: "BDDT",
-          totalSupply: ethers.parseEther("2100000000").toString(),
-          initAddresses: DEFAULT_DEV_TOKEN_ADDRESSES,
-          initAmounts: DEFAULT_DEV_TOKEN_AMOUNTS,
-        };
-      })();
-
-  const normalToken = config.normalToken
-    ? {
-        name: requireNonEmptyString(config.normalToken.name, "normalToken.name"),
-        symbol: requireNonEmptyString(config.normalToken.symbol, "normalToken.symbol"),
-      }
-    : (() => {
-        warnings.push("normalToken config missing; using legacy defaults");
-        return { name: "BuckyOS DAO Token", symbol: "BDT" };
-      })();
-
-  const tokenLockup = config.tokenLockup
-    ? {
-        unlockProjectName: requireNonEmptyString(
-          config.tokenLockup.unlockProjectName,
-          "tokenLockup.unlockProjectName",
-        ),
-        unlockVersion: requireNonEmptyString(config.tokenLockup.unlockVersion, "tokenLockup.unlockVersion"),
-      }
-    : (() => {
-        warnings.push("tokenLockup config missing; using legacy defaults");
-        return { unlockProjectName: "Buckyos", unlockVersion: "1.0.0" };
-      })();
-
-  const project = config.project
-    ? {
-        initProjectIdCounter: config.project.initProjectIdCounter ?? 4,
-      }
-    : (() => {
-        warnings.push("project config missing; using legacy defaults");
-        return { initProjectIdCounter: 4 };
-      })();
-
-  const acquired = config.acquired
-    ? {
-        initInvestmentCount: config.acquired.initInvestmentCount ?? 4,
-      }
-    : (() => {
-        warnings.push("acquired config missing; using legacy defaults");
-        return { initInvestmentCount: 4 };
-      })();
+  const devTokenConfig = requireSection(config.devToken, "devToken");
+  const devToken = {
+    name: requireNonEmptyString(devTokenConfig.name, "devToken.name"),
+    symbol: requireNonEmptyString(devTokenConfig.symbol, "devToken.symbol"),
+    totalSupply: requireNonEmptyString(devTokenConfig.totalSupply, "devToken.totalSupply"),
+    initAddresses: ensureAddressList(
+      requireSection(devTokenConfig.initAddresses, "devToken.initAddresses"),
+      "devToken.initAddresses",
+    ),
+    initAmounts: requireSection(devTokenConfig.initAmounts, "devToken.initAmounts").map(
+      (value, index) => requireNonEmptyString(value, `devToken.initAmounts[${index}]`),
+    ),
+  };
 
   if (devToken.initAddresses.length !== devToken.initAmounts.length) {
     throw new Error("devToken.initAddresses and devToken.initAmounts length mismatch");
   }
+  const totalSupply = parseBigIntString(devToken.totalSupply, "devToken.totalSupply");
+  if (totalSupply === 0n) {
+    throw new Error("devToken.totalSupply must be positive");
+  }
+  const initialSupply = sumBigInts(
+    devToken.initAmounts.map((value, index) =>
+      parseBigIntString(value, `devToken.initAmounts[${index}]`),
+    ),
+  );
+  if (initialSupply > totalSupply) {
+    throw new Error(
+      `devToken initial allocation ${initialSupply} exceeds totalSupply ${totalSupply}`,
+    );
+  }
+
+  const normalTokenConfig = requireSection(config.normalToken, "normalToken");
+  const normalToken = {
+    name: requireNonEmptyString(normalTokenConfig.name, "normalToken.name"),
+    symbol: requireNonEmptyString(normalTokenConfig.symbol, "normalToken.symbol"),
+  };
+
+  const tokenLockupConfig = requireSection(config.tokenLockup, "tokenLockup");
+  const tokenLockup = {
+    unlockProjectName: requireNonEmptyString(
+      tokenLockupConfig.unlockProjectName,
+      "tokenLockup.unlockProjectName",
+    ),
+    unlockVersion: requireNonEmptyString(
+      tokenLockupConfig.unlockVersion,
+      "tokenLockup.unlockVersion",
+    ),
+  };
+  ethers.encodeBytes32String(tokenLockup.unlockProjectName);
+  convertVersion(tokenLockup.unlockVersion);
+
+  const projectConfig = requireSection(config.project, "project");
+  const project = {
+    initProjectIdCounter: ensureSafeInteger(
+      requireSection(projectConfig.initProjectIdCounter, "project.initProjectIdCounter"),
+      "project.initProjectIdCounter",
+      0,
+    ),
+  };
+
+  const acquiredConfig = requireSection(config.acquired, "acquired");
+  const acquired = {
+    initInvestmentCount: ensureSafeInteger(
+      requireSection(acquiredConfig.initInvestmentCount, "acquired.initInvestmentCount"),
+      "acquired.initInvestmentCount",
+      0,
+    ),
+  };
 
   return {
     ...config,
+    chainId,
+    rpcUrl,
+    daoAddress,
+    dividendAddress,
+    bootstrapAdminAddress,
+    cycleMinLength,
     committee,
     devToken,
     normalToken,
     tokenLockup,
     project,
     acquired,
-    warnings,
+    warnings: [],
   };
 }
 
@@ -637,6 +734,7 @@ async function validateCommitteeModule(
   artifactsDir: string,
   expected: {
     members: string[];
+    initProposalId: bigint;
     initDevRatio: bigint;
     mainProjectName: string;
     finalVersion: bigint;
@@ -667,6 +765,15 @@ async function validateCommitteeModule(
   );
   if (!firstMemberActive) {
     throw new Error(`Committee.isMember(${members[0]}) returned false`);
+  }
+
+  const proposalCursor = await assertCallable("Committee.proposalCursor", () =>
+    committee.proposalCursor() as Promise<bigint>,
+  );
+  if (mode === "deployed") {
+    assertBigIntEqual("Committee.proposalCursor", proposalCursor, expected.initProposalId);
+  } else {
+    assertBigIntAtLeast("Committee.proposalCursor", proposalCursor, expected.initProposalId);
   }
 
   assertHexEqual(
@@ -886,7 +993,10 @@ async function sendAndWait(
   if (!receipt || receipt.status !== 1) {
     throw new Error(`${label} failed`);
   }
-  return tx.hash;
+  return {
+    txHash: tx.hash,
+    blockNumber: receipt.blockNumber,
+  };
 }
 
 async function assertDaoModuleRegistered(dao: ethers.Contract, moduleAddress: string, label: string) {
@@ -916,13 +1026,18 @@ async function wireDaoModule(
   const currentAddress = (await assertCallable(`DAO.${getterName}`, async () => getter())) as string;
   if (sameAddress(currentAddress, ZERO_ADDRESS)) {
     await assertCallable(`DAO.${setterName}.staticCall`, async () => setter.staticCall(moduleAddress));
-    const txHash = await sendAndWait(`Dao.${setterName}`, async () =>
+    const result = await sendAndWait(`Dao.${setterName}`, async () =>
       setter(moduleAddress, { gasLimit: gasLimit(config) }) as Promise<ethers.ContractTransactionResponse>,
     );
     const readbackAddress = (await assertCallable(`DAO.${getterName}`, async () => getter())) as string;
     assertAddressEqual(`DAO.${getterName}`, readbackAddress, moduleAddress);
     await assertDaoModuleRegistered(dao, moduleAddress, label);
-    return { name: `Dao.${setterName}`, status: "completed", tx_hash: txHash };
+    return {
+      name: `Dao.${setterName}`,
+      status: "completed",
+      tx_hash: result.txHash,
+      block_number: result.blockNumber,
+    };
   }
 
   assertAddressEqual(`DAO.${getterName}`, currentAddress, moduleAddress);
@@ -936,11 +1051,13 @@ async function wireDaoModule(
 }
 
 async function deployUupsProxy(
+  label: string,
   wallet: ethers.Wallet,
   artifactsDir: string,
   relativeArtifactPath: string,
   initArgs: unknown[],
   config: SourceDaoBootstrapConfig,
+  operations: BootstrapOperation[],
 ) {
   const artifact = await loadArtifact(artifactsDir, relativeArtifactPath);
   const proxyArtifact = await loadArtifact(
@@ -956,7 +1073,21 @@ async function deployUupsProxy(
   const implementation = await implementationFactory.deploy({ gasLimit: gasLimit(config) });
   await implementation.waitForDeployment();
   const implementationAddress = await implementation.getAddress();
-  const implementationTxHash = implementation.deploymentTransaction()?.hash ?? "";
+  const implementationTx = implementation.deploymentTransaction();
+  if (!implementationTx) {
+    throw new Error(`${label} implementation deployment has no transaction`);
+  }
+  const implementationReceipt = await implementationTx.wait();
+  if (!implementationReceipt || implementationReceipt.status !== 1) {
+    throw new Error(`${label} implementation deployment failed`);
+  }
+  const implementationTxHash = implementationTx.hash;
+  operations.push({
+    name: `${label}.deployImplementation`,
+    status: "completed",
+    tx_hash: implementationTxHash,
+    block_number: implementationReceipt.blockNumber,
+  });
 
   const iface = new ethers.Interface(artifact.abi as ethers.InterfaceAbi);
   const initData = iface.encodeFunctionData("initialize", initArgs);
@@ -971,13 +1102,29 @@ async function deployUupsProxy(
   });
   await proxy.waitForDeployment();
   const proxyAddress = await proxy.getAddress();
-  const proxyTxHash = proxy.deploymentTransaction()?.hash ?? "";
+  const proxyTx = proxy.deploymentTransaction();
+  if (!proxyTx) {
+    throw new Error(`${label} proxy deployment has no transaction`);
+  }
+  const proxyReceipt = await proxyTx.wait();
+  if (!proxyReceipt || proxyReceipt.status !== 1) {
+    throw new Error(`${label} proxy deployment failed`);
+  }
+  const proxyTxHash = proxyTx.hash;
+  operations.push({
+    name: `${label}.deployProxy`,
+    status: "completed",
+    tx_hash: proxyTxHash,
+    block_number: proxyReceipt.blockNumber,
+  });
 
   return {
     proxyAddress,
     implementationAddress,
     proxyTxHash,
+    proxyBlockNumber: proxyReceipt.blockNumber,
     implementationTxHash,
+    implementationBlockNumber: implementationReceipt.blockNumber,
   };
 }
 
@@ -986,6 +1133,7 @@ async function ensureDaoAndDividend(
   wallet: ethers.Wallet,
   provider: ethers.JsonRpcProvider,
   artifactsDir: string,
+  operations: BootstrapOperation[],
 ) {
   const daoArtifact = await loadArtifact(artifactsDir, "contracts/Dao.sol/SourceDao.json");
   const dividendArtifact = await loadArtifact(
@@ -1003,14 +1151,18 @@ async function ensureDaoAndDividend(
   await ensureCode(provider, config.daoAddress, "DAO");
   await ensureCode(provider, config.dividendAddress, "Dividend");
 
-  const operations: BootstrapOperation[] = [];
   const daoBootstrapAdmin = (await dao.bootstrapAdmin()) as string;
   if (sameAddress(daoBootstrapAdmin, ZERO_ADDRESS)) {
     await dao.initialize.staticCall();
-    const txHash = await sendAndWait("Dao.initialize", async () =>
+    const result = await sendAndWait("Dao.initialize", async () =>
       dao.initialize({ gasLimit: gasLimit(config) }),
     );
-    operations.push({ name: "Dao.initialize", status: "completed", tx_hash: txHash });
+    operations.push({
+      name: "Dao.initialize",
+      status: "completed",
+      tx_hash: result.txHash,
+      block_number: result.blockNumber,
+    });
   } else if (!sameAddress(daoBootstrapAdmin, wallet.address)) {
     throw new Error(`dao bootstrap admin mismatch: have ${daoBootstrapAdmin}, expected ${wallet.address}`);
   } else {
@@ -1026,10 +1178,15 @@ async function ensureDaoAndDividend(
   const cycleMinLength = BigInt(await dividend.cycleMinLength());
   if (cycleMinLength === 0n) {
     await dividend.initialize.staticCall(config.cycleMinLength, config.daoAddress);
-    const txHash = await sendAndWait("Dividend.initialize", async () =>
+    const result = await sendAndWait("Dividend.initialize", async () =>
       dividend.initialize(config.cycleMinLength, config.daoAddress, { gasLimit: gasLimit(config) }),
     );
-    operations.push({ name: "Dividend.initialize", status: "completed", tx_hash: txHash });
+    operations.push({
+      name: "Dividend.initialize",
+      status: "completed",
+      tx_hash: result.txHash,
+      block_number: result.blockNumber,
+    });
   } else if (cycleMinLength !== BigInt(config.cycleMinLength)) {
     throw new Error(
       `dividend cycleMinLength mismatch: have ${cycleMinLength}, expected ${config.cycleMinLength}`,
@@ -1055,7 +1212,7 @@ async function ensureDaoAndDividend(
     ),
   );
 
-  return { dao, operations };
+  return dao;
 }
 
 function moduleRecordFromExisting(address: string): ModuleRecord {
@@ -1066,15 +1223,20 @@ function moduleRecordFromDeployment(details: {
   proxyAddress: string;
   implementationAddress: string;
   proxyTxHash: string;
+  proxyBlockNumber: number;
   implementationTxHash: string;
+  implementationBlockNumber: number;
 }): ModuleRecord {
   return {
     address: details.proxyAddress,
     source: "deployed",
     implementation_address: details.implementationAddress,
     proxy_tx_hash: details.proxyTxHash,
+    proxy_block_number: details.proxyBlockNumber,
     implementation_tx_hash: details.implementationTxHash,
+    implementation_block_number: details.implementationBlockNumber,
     wiring_tx_hash: undefined,
+    wiring_block_number: undefined,
   };
 }
 
@@ -1097,10 +1259,25 @@ async function ensureModule(
 
 async function main() {
   const options = parseCliOptions(process.argv.slice(2));
-  const sourceConfig = await loadJsonFile<SourceDaoBootstrapConfig>(options.configPath);
+  const sourceConfig = await loadJsonFile<unknown>(options.configPath);
+  assertPublicBootstrapConfig(sourceConfig);
   const config = resolveBootstrapConfig(sourceConfig);
   const artifactsDir = normalizeArtifactsDir(options.configPath, config.artifactsDir);
   const rpcUrl = options.rpcUrl || config.rpcUrl;
+  const modules = createEmptyModules();
+  const operations: BootstrapOperation[] = [];
+  const context: BootstrapRuntimeContext = {
+    options,
+    config,
+    artifactsDir,
+    rpcUrl,
+    walletAddress: config.bootstrapAdminAddress,
+    operations,
+    modules,
+    currentStep: "Preflight",
+  };
+  latestRuntimeContext = context;
+  await updateProgress(context, "SourceDAO full bootstrap preflight started", "Preflight");
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const network = await provider.getNetwork();
@@ -1109,21 +1286,23 @@ async function main() {
     throw new Error(`unexpected chainId ${chainId}, expected ${config.chainId}`);
   }
 
-  const wallet = new ethers.Wallet(config.bootstrapAdminPrivateKey, provider);
-  const modules = createEmptyModules();
-  const { dao, operations } = await ensureDaoAndDividend(config, wallet, provider, artifactsDir);
-  const context: BootstrapRuntimeContext = {
-    options,
-    config,
-    artifactsDir,
-    rpcUrl,
-    walletAddress: wallet.address,
-    operations,
-    modules,
-    currentStep: null,
-  };
-  latestRuntimeContext = context;
-  await updateProgress(context, "SourceDAO full bootstrap started", "Preflight");
+  const configuredPrivateKey = process.env.SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY?.trim();
+  if (!configuredPrivateKey) {
+    throw new Error("SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY is required");
+  }
+  const wallet = new ethers.Wallet(
+    configuredPrivateKey.startsWith("0x") ? configuredPrivateKey : `0x${configuredPrivateKey}`,
+    provider,
+  );
+  if (!sameAddress(wallet.address, config.bootstrapAdminAddress)) {
+    throw new Error(
+      `bootstrap signer mismatch: derived ${wallet.address}, expected ${config.bootstrapAdminAddress}`,
+    );
+  }
+  context.walletAddress = wallet.address;
+  await updateProgress(context, "Checking or initializing DAO and Dividend", "DaoAndDividend");
+  const dao = await ensureDaoAndDividend(config, wallet, provider, artifactsDir, operations);
+  await updateProgress(context, "DAO and Dividend are ready", null);
 
   printHeader("SourceDAO bootstrap config");
   console.log(`RPC URL            ${rpcUrl}`);
@@ -1153,6 +1332,7 @@ async function main() {
   const validateCommittee = (address: string, mode: ModuleValidationMode) =>
     validateCommitteeModule(address, mode, wallet, provider, artifactsDir, {
       members: committeeMembers,
+      initProposalId: BigInt(committeeInitProposalId),
       initDevRatio: BigInt(committeeInitDevRatio),
       mainProjectName: committeeMainProjectBytes,
       finalVersion: BigInt(committeeFinalVersion),
@@ -1199,6 +1379,7 @@ async function main() {
     currentCommittee,
     async () => {
       const deployed = await deployUupsProxy(
+        "Committee",
         wallet,
         artifactsDir,
         "contracts/Committee.sol/SourceDaoCommittee.json",
@@ -1212,6 +1393,7 @@ async function main() {
           config.daoAddress,
         ],
         config,
+        operations,
       );
       const record = moduleRecordFromDeployment(deployed);
       modules.committee = record;
@@ -1227,6 +1409,7 @@ async function main() {
       );
       operations.push(wiring);
       record.wiring_tx_hash = wiring.tx_hash;
+      record.wiring_block_number = wiring.block_number;
       return record;
     },
     provider,
@@ -1241,6 +1424,7 @@ async function main() {
     currentDevToken,
     async () => {
       const deployed = await deployUupsProxy(
+        "DevToken",
         wallet,
         artifactsDir,
         "contracts/DevToken.sol/DevToken.json",
@@ -1253,6 +1437,7 @@ async function main() {
           config.daoAddress,
         ],
         config,
+        operations,
       );
       const record = moduleRecordFromDeployment(deployed);
       modules.dev_token = record;
@@ -1268,6 +1453,7 @@ async function main() {
       );
       operations.push(wiring);
       record.wiring_tx_hash = wiring.tx_hash;
+      record.wiring_block_number = wiring.block_number;
       return record;
     },
     provider,
@@ -1282,11 +1468,13 @@ async function main() {
     currentNormalToken,
     async () => {
       const deployed = await deployUupsProxy(
+        "NormalToken",
         wallet,
         artifactsDir,
         "contracts/NormalToken.sol/NormalToken.json",
         [config.normalToken.name, config.normalToken.symbol, config.daoAddress],
         config,
+        operations,
       );
       const record = moduleRecordFromDeployment(deployed);
       modules.normal_token = record;
@@ -1302,6 +1490,7 @@ async function main() {
       );
       operations.push(wiring);
       record.wiring_tx_hash = wiring.tx_hash;
+      record.wiring_block_number = wiring.block_number;
       return record;
     },
     provider,
@@ -1316,6 +1505,7 @@ async function main() {
     currentLockup,
     async () => {
       const deployed = await deployUupsProxy(
+        "TokenLockup",
         wallet,
         artifactsDir,
         "contracts/TokenLockup.sol/SourceTokenLockup.json",
@@ -1325,6 +1515,7 @@ async function main() {
           config.daoAddress,
         ],
         config,
+        operations,
       );
       const record = moduleRecordFromDeployment(deployed);
       modules.token_lockup = record;
@@ -1340,6 +1531,7 @@ async function main() {
       );
       operations.push(wiring);
       record.wiring_tx_hash = wiring.tx_hash;
+      record.wiring_block_number = wiring.block_number;
       return record;
     },
     provider,
@@ -1354,11 +1546,13 @@ async function main() {
     currentProject,
     async () => {
       const deployed = await deployUupsProxy(
+        "Project",
         wallet,
         artifactsDir,
         "contracts/Project.sol/ProjectManagement.json",
         [projectInitProjectIdCounter, config.daoAddress],
         config,
+        operations,
       );
       const record = moduleRecordFromDeployment(deployed);
       modules.project = record;
@@ -1374,6 +1568,7 @@ async function main() {
       );
       operations.push(wiring);
       record.wiring_tx_hash = wiring.tx_hash;
+      record.wiring_block_number = wiring.block_number;
       return record;
     },
     provider,
@@ -1388,11 +1583,13 @@ async function main() {
     currentAcquired,
     async () => {
       const deployed = await deployUupsProxy(
+        "Acquired",
         wallet,
         artifactsDir,
         "contracts/Acquired.sol/Acquired.json",
         [acquiredInitInvestmentCount, config.daoAddress],
         config,
+        operations,
       );
       const record = moduleRecordFromDeployment(deployed);
       modules.acquired = record;
@@ -1408,6 +1605,7 @@ async function main() {
       );
       operations.push(wiring);
       record.wiring_tx_hash = wiring.tx_hash;
+      record.wiring_block_number = wiring.block_number;
       return record;
     },
     provider,
@@ -1475,6 +1673,11 @@ main().catch(async (error) => {
   const errorText = error instanceof Error ? error.stack || error.message : String(error);
   if (latestRuntimeContext) {
     try {
+      latestRuntimeContext.operations.push({
+        name: latestRuntimeContext.currentStep ?? "Bootstrap",
+        status: "error",
+        error: formatUnknownError(error),
+      });
       await writeBootstrapStateSnapshot(
         latestRuntimeContext,
         "error",

@@ -9,12 +9,13 @@ type CliOptions = {
 };
 
 type USDBLocalConfig = {
+    schemaVersion: number;
     chainId: number;
     rpcUrl: string;
     artifactsDir?: string;
     daoAddress: string;
     dividendAddress: string;
-    bootstrapAdminPrivateKey: string;
+    bootstrapAdminAddress: string;
     cycleMinLength: number;
     nativeDepositWei: string;
     transactionGasLimit?: number;
@@ -37,6 +38,8 @@ const DEFAULT_ARTIFACTS_DIR = path.resolve(
 );
 const DEFAULT_TRANSACTION_GAS_LIMIT = 8_000_000n;
 const DEFAULT_NATIVE_TRANSFER_GAS_LIMIT = 200_000n;
+const BOOTSTRAP_PRIVATE_KEY_ENV = "SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY";
+const SOURCE_DAO_BOOTSTRAP_SCHEMA_VERSION = 1;
 
 function printHeader(title: string) {
     console.log(`\n=== ${title} ===`);
@@ -76,6 +79,27 @@ async function loadJsonFile<T>(filePath: string): Promise<T> {
     return JSON.parse(blob) as T;
 }
 
+function assertPublicBootstrapConfig(config: unknown): asserts config is USDBLocalConfig {
+    if (config === null || typeof config !== "object") {
+        throw new Error("SourceDAO bootstrap config must be a JSON object");
+    }
+    if ("bootstrapAdminPrivateKey" in config) {
+        throw new Error(
+            `bootstrapAdminPrivateKey is forbidden in config; inject ${BOOTSTRAP_PRIVATE_KEY_ENV} at runtime`,
+        );
+    }
+    if (!("bootstrapAdminAddress" in config)) {
+        throw new Error("bootstrapAdminAddress is required in config");
+    }
+    const schemaVersion = (config as Record<string, unknown>).schemaVersion;
+    if (schemaVersion !== SOURCE_DAO_BOOTSTRAP_SCHEMA_VERSION) {
+        throw new Error(
+            `unsupported SourceDAO bootstrap schemaVersion ${String(schemaVersion)}, ` +
+            `expected ${SOURCE_DAO_BOOTSTRAP_SCHEMA_VERSION}`,
+        );
+    }
+}
+
 async function loadArtifact(artifactsDir: string, relativePath: string): Promise<HardhatArtifact> {
     return loadJsonFile<HardhatArtifact>(path.join(artifactsDir, relativePath));
 }
@@ -87,7 +111,7 @@ function normalizeArtifactsDir(configPath: string, artifactsDir?: string) {
     if (path.isAbsolute(artifactsDir)) {
         return artifactsDir;
     }
-    return path.resolve(path.dirname(configPath), "..", "..", artifactsDir);
+    return path.resolve(path.dirname(configPath), artifactsDir);
 }
 
 async function ensureCode(provider: ethers.JsonRpcProvider, address: string, label: string) {
@@ -95,6 +119,14 @@ async function ensureCode(provider: ethers.JsonRpcProvider, address: string, lab
     if (code === "0x") {
         throw new Error(`${label} at ${address} has no deployed code`);
     }
+}
+
+function loadBootstrapPrivateKey() {
+    const configured = process.env[BOOTSTRAP_PRIVATE_KEY_ENV]?.trim();
+    if (!configured) {
+        throw new Error(`${BOOTSTRAP_PRIVATE_KEY_ENV} is required`);
+    }
+    return configured.startsWith("0x") ? configured : `0x${configured}`;
 }
 
 async function sendAndWait(
@@ -111,7 +143,9 @@ async function sendAndWait(
 
 async function main() {
     const options = parseCliOptions(process.argv.slice(2));
-    const config = await loadJsonFile<USDBLocalConfig>(options.configPath);
+    const sourceConfig = await loadJsonFile<unknown>(options.configPath);
+    assertPublicBootstrapConfig(sourceConfig);
+    const config = sourceConfig;
     const artifactsDir = normalizeArtifactsDir(options.configPath, config.artifactsDir);
     const rpcUrl = options.rpcUrl || config.rpcUrl;
 
@@ -122,7 +156,13 @@ async function main() {
         throw new Error(`unexpected chainId ${chainId}, expected ${config.chainId}`);
     }
 
-    const wallet = new ethers.Wallet(config.bootstrapAdminPrivateKey, provider);
+    const expectedBootstrapAdmin = ethers.getAddress(config.bootstrapAdminAddress);
+    const wallet = new ethers.Wallet(loadBootstrapPrivateKey(), provider);
+    if (wallet.address !== expectedBootstrapAdmin) {
+        throw new Error(
+            `bootstrap signer mismatch: derived ${wallet.address}, expected ${expectedBootstrapAdmin}`,
+        );
+    }
     const daoArtifact = await loadArtifact(artifactsDir, "contracts/Dao.sol/SourceDao.json");
     const dividendArtifact = await loadArtifact(artifactsDir, "contracts/Dividend.sol/DividendContract.json");
 

@@ -66,7 +66,8 @@
 ```bash
 npm run build:usdb
 npm run test:usdb:audit
-npx tsx scripts/usdb_bootstrap_smoke.ts \
+SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY="${SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY:?required}" \
+  npx tsx scripts/usdb_bootstrap_smoke.ts \
   --config tools/config/sourcedao-local.json \
   --rpc-url http://127.0.0.1:8545
 ```
@@ -78,16 +79,22 @@ npx tsx scripts/usdb_bootstrap_smoke.ts \
 
 配置字段包括：
 
+- `schemaVersion`（当前必须为 `1`）
 - `chainId`
 - `rpcUrl`
 - `artifactsDir`
 - `daoAddress`
 - `dividendAddress`
-- `bootstrapAdminPrivateKey`
+- `bootstrapAdminAddress`
 - `cycleMinLength`
 - `nativeDepositWei`
 - `transactionGasLimit`
 - `nativeTransferGasLimit`
+
+`SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY` 只作为运行时 secret 注入。脚本会校验该私钥派生出的地址与
+`bootstrapAdminAddress` 完全一致；配置文件、release manifest 和 canonical genesis 中不得包含私钥。
+`artifactsDir` 与 full bootstrap/validator 一致，按配置文件所在目录解析；默认 local config
+因此使用 `../../artifacts-usdb`。
 
 ### `usdb_bootstrap_full.ts`
 
@@ -113,7 +120,8 @@ npx tsx scripts/usdb_bootstrap_smoke.ts \
 ```bash
 npm run build:usdb
 npm run test:usdb:audit
-npx tsx scripts/usdb_bootstrap_full.ts \
+SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY="${SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY:?required}" \
+  npx tsx scripts/usdb_bootstrap_full.ts \
   --config /path/to/sourcedao-bootstrap-full.json \
   --rpc-url http://127.0.0.1:8545 \
   --state-file .local-dev/usdb-bootstrap-state.json
@@ -125,14 +133,19 @@ npx tsx scripts/usdb_bootstrap_full.ts \
 - `SOURCE_DAO_USDB_RPC_URL`
 - `SOURCE_DAO_USDB_STATE_FILE`
 - `SOURCE_DAO_REPO_DIR`
+- `SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY`
 
 注意：
 
 - DAO 模块地址槽位是一次性设置的。生产环境必须先用测试链或 fork 验证配置。
+- full bootstrap config 当前固定为 `schemaVersion = 1`，committee、token、lockup、project 和
+  acquired 参数都必须显式提供；旧字段和缺失模块不做兼容或默认值回填。
 - `daoAddress` 和 `dividendAddress` 不是脚本部署出来的，它们必须已经是 USDB 内置地址并且有 code。
+- `bootstrapAdminAddress` 是公开配置；对应私钥必须通过 `SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY` 在运行时注入。
 - `artifactsDir` 在 full bootstrap 中按配置文件所在目录解析；如果配置文件放在 `tools/config/`，可以省略该字段使用默认 `artifacts-usdb`，或写成相对该配置文件的正确路径，例如 `../../artifacts-usdb`。
-- 缺失的 `committee/devToken/normalToken/tokenLockup/project/acquired` 配置会回落到脚本内 legacy defaults，但生产配置应显式写全。
 - `--state-file` 会持续写入进度快照，适合 UI 或运维面板展示 bootstrap 状态。
+- `operations` 对每笔成功的初始化、implementation/proxy deployment 和 DAO wiring 交易记录
+  `tx_hash` 与 `block_number`；冲突和 runtime secret 错误会写入 `status = error` 状态。
 
 ### `usdb_validate_bootstrap.ts`
 
@@ -142,10 +155,10 @@ npx tsx scripts/usdb_bootstrap_full.ts \
 
 - 检查 `chainId`。
 - 检查 DAO 和所有 DAO wiring 模块地址非零且有 code。
-- 校验 `DAO.bootstrapAdmin`，如果配置里有 `bootstrapAdminAddress` 或 `bootstrapAdminPrivateKey`，会比对预期地址。
+- 校验 `DAO.bootstrapAdmin` 与配置中的 `bootstrapAdminAddress` 一致。
 - 检查 `dao.isDAOContract(moduleAddress) == true`。
 - 读取每个模块的 `version()`。
-- 校验 Committee、Token、Lockup、Project、Dividend、Acquired 的关键初始化不变量。
+- 校验 Committee（包括 `proposalCursor()`）、Token、Lockup、Project、Dividend、Acquired 的关键初始化不变量。
 - 可选读取 `usdb_bootstrap_full.ts --state-file` 生成的状态文件，比对最终 wiring 地址。
 
 推荐命令：

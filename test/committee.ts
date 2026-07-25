@@ -251,6 +251,14 @@ describe("Committee", function () {
         expect(await committee.isMember(outsider.address)).to.equal(false);
     });
 
+    it("exposes the initialized proposal cursor and advances it after proposal creation", async function () {
+        const { committee, members, candidate } = await networkHelpers.loadFixture(deployCommitteeFixture);
+
+        expect(await committee.proposalCursor()).to.equal(1n);
+        await (await committee.connect(members[0]).prepareAddMember(candidate.address)).wait();
+        expect(await committee.proposalCursor()).to.equal(2n);
+    });
+
     it("accepts an add-member proposal once a committee majority supports it", async function () {
         const { committee, members, candidate, outsider } = await networkHelpers.loadFixture(deployCommitteeFixture);
         const proposalId = 1n;

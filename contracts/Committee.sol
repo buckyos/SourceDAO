@@ -83,6 +83,11 @@ contract SourceDaoCommittee is ISourceDaoCommittee, SourceDaoContractUpgradeable
         return committees;
     }
 
+    /// @notice Returns the proposal id that will be assigned to the next proposal.
+    function proposalCursor() external view returns (uint) {
+        return curProposalId;
+    }
+
     /// @dev Creates a proposal and binds ordinary proposals to the current committee snapshot version.
     function _propose(
         address from,

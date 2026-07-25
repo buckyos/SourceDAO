@@ -226,11 +226,12 @@ Hardhat 本地节点不应再被视为 USDB 兼容性的最终验证目标。
     - `rpcUrl`
     - `daoAddress`
     - `dividendAddress`
-    - `bootstrapAdminPrivateKey`
+    - `bootstrapAdminAddress`
     - `cycleMinLength`
     - `nativeDepositWei`
 - `npm run test:usdb:smoke`
   - 通过 [scripts/usdb_bootstrap_smoke.ts](/home/bucky/work/SourceDAO/scripts/usdb_bootstrap_smoke.ts) 执行最小 geth smoke
+  - bootstrap 私钥通过运行时环境变量 `SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY` 注入，并校验其派生地址与 manifest 中的 `bootstrapAdminAddress` 一致
   - 主要覆盖：
     - 检查 DAO / Dividend 地址上已有 code
     - `Dao.initialize()`

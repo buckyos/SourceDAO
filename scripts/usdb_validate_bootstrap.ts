@@ -14,13 +14,13 @@ type CliOptions = {
 type ModuleValidationMode = "relaxed" | "strict";
 
 type SourceDaoBootstrapConfig = {
+  schemaVersion: number;
   chainId: number;
   rpcUrl: string;
   artifactsDir?: string;
   daoAddress: string;
   dividendAddress: string;
-  bootstrapAdminPrivateKey?: string;
-  bootstrapAdminAddress?: string;
+  bootstrapAdminAddress: string;
   cycleMinLength: number;
   outputPath?: string;
   expectedModules?: Partial<ExpectedModules>;
@@ -66,18 +66,19 @@ type ExpectedModules = {
 };
 
 type ResolvedBootstrapConfig = {
+  schemaVersion: number;
   chainId: number;
   rpcUrl: string;
   artifactsDir?: string;
   daoAddress: string;
   dividendAddress: string;
-  bootstrapAdminPrivateKey?: string;
-  bootstrapAdminAddress?: string;
+  bootstrapAdminAddress: string;
   cycleMinLength: number;
   outputPath?: string;
   expectedModules?: Partial<ExpectedModules>;
   committee: {
     initialMembers: string[];
+    initProposalId: number;
     initDevRatio: number;
     mainProjectName: string;
     finalVersion: string;
@@ -144,38 +145,8 @@ const DEFAULT_ARTIFACTS_DIR = path.resolve(
   "../artifacts-usdb",
 );
 const ZERO_ADDRESS = ethers.ZeroAddress;
-
-const DEFAULT_COMMITTEE_MEMBERS = [
-  "0xad82A5fb394a525835A3a6DC34C1843e19160CFA",
-  "0x2514d2FEAAC3bFD8361333d1341dC8823595f744",
-  "0x2DFD1FCFC9601E7De871b0BbcBCbB6Cad6901697",
-];
-
-const DEFAULT_DEV_TOKEN_ADDRESSES = [
-  "0x2DFD1FCFC9601E7De871b0BbcBCbB6Cad6901697",
-  "0xad82A5fb394a525835A3a6DC34C1843e19160CFA",
-  "0x0Ef9534aE246d24e1C79BC1fE8c8718C11a7fF09",
-  "0x2514d2FEAAC3bFD8361333d1341dC8823595f744",
-  "0x0F56a6f7662B38506f7Ad0ad0cc952b79b8e90e7",
-  "0x71165cD9579b495276De7b0389bB2Cd5352DaFE6",
-  "0x865d123D1CFC7F95B48495A854173408032b9358",
-  "0x19b54B60908241C301d5c95EDbd4C80081dF95B5",
-  "0xC7ced856D14720547533E1E32D7FEfb9877E84E5",
-  "0xdc7dD66eafdBf4B2e40CbC7bEb93f732f8F86518",
-];
-
-const DEFAULT_DEV_TOKEN_AMOUNTS = [
-  "109876068779349609949184721",
-  "6035901558616593430477310",
-  "6830778957104289571042895",
-  "2580803954604539546045395",
-  "4155646470352964703529647",
-  "35000000000000000000000",
-  "1950866948305169483051694",
-  "4466415393460653934606539",
-  "4945967938206179382061793",
-  "6122550000000000000000000",
-];
+const SOURCE_DAO_BOOTSTRAP_SCHEMA_VERSION = 1;
+const MAX_UINT256 = (1n << 256n) - 1n;
 
 function printHeader(title: string) {
   console.log(`\n=== ${title} ===`);
@@ -242,6 +213,25 @@ async function loadJsonFile<T>(filePath: string): Promise<T> {
   return JSON.parse(blob) as T;
 }
 
+function assertPublicBootstrapConfig(config: unknown): asserts config is SourceDaoBootstrapConfig {
+  if (config === null || typeof config !== "object") {
+    throw new Error("SourceDAO bootstrap config must be a JSON object");
+  }
+  if ("bootstrapAdminPrivateKey" in config) {
+    throw new Error("bootstrapAdminPrivateKey is forbidden in config");
+  }
+  if (!("bootstrapAdminAddress" in config)) {
+    throw new Error("bootstrapAdminAddress is required in config");
+  }
+  const schemaVersion = (config as Record<string, unknown>).schemaVersion;
+  if (schemaVersion !== SOURCE_DAO_BOOTSTRAP_SCHEMA_VERSION) {
+    throw new Error(
+      `unsupported SourceDAO bootstrap schemaVersion ${String(schemaVersion)}, ` +
+      `expected ${SOURCE_DAO_BOOTSTRAP_SCHEMA_VERSION}`,
+    );
+  }
+}
+
 async function loadArtifact(artifactsDir: string, relativePath: string): Promise<HardhatArtifact> {
   return loadJsonFile<HardhatArtifact>(path.join(artifactsDir, relativePath));
 }
@@ -260,95 +250,195 @@ function requireNonEmptyString(value: string | undefined, field: string): string
 
 function ensureAddressList(values: string[], field: string): string[] {
   if (values.length === 0) throw new Error(`${field} must not be empty`);
-  return values.map((value, index) => ethers.getAddress(requireNonEmptyString(value, `${field}[${index}]`)));
+  const normalized = values.map((value, index) =>
+    ensureNonZeroAddress(value, `${field}[${index}]`),
+  );
+  const seen = new Set<string>();
+  for (const [index, address] of normalized.entries()) {
+    const key = address.toLowerCase();
+    if (seen.has(key)) throw new Error(`${field}[${index}] duplicates address ${address}`);
+    seen.add(key);
+  }
+  return normalized;
 }
 
 function parseBigIntString(value: string, field: string): bigint {
-  try {
-    return BigInt(value);
-  } catch {
-    throw new Error(`Invalid bigint string for ${field}: ${value}`);
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error(`${field} must be a canonical unsigned decimal string, have ${value}`);
   }
+  const parsed = BigInt(value);
+  if (parsed > MAX_UINT256) throw new Error(`${field} exceeds uint256`);
+  return parsed;
 }
 
 function convertVersion(version: string): number {
-  const versions = version.split(".");
-  if (versions.length < 3) {
+  const match = /^([0-9]+)\.([0-9]+)\.([0-9]+)$/.exec(version);
+  if (!match) {
     throw new Error(`Invalid version format: ${version}. Expected format is major.minor.patch`);
   }
-  const major = Number.parseInt(versions[0], 10);
-  const minor = Number.parseInt(versions[1], 10);
-  const patch = Number.parseInt(versions[2], 10);
-  return major * 10_000_000_000 + minor * 100_000 + patch;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  if (
+    !Number.isSafeInteger(major) ||
+    !Number.isSafeInteger(minor) ||
+    !Number.isSafeInteger(patch) ||
+    minor >= 100_000 ||
+    patch >= 100_000
+  ) {
+    throw new Error(`Invalid version range: ${version}`);
+  }
+  const encoded = major * 10_000_000_000 + minor * 100_000 + patch;
+  if (!Number.isSafeInteger(encoded) || encoded <= 0) {
+    throw new Error(`Encoded version must be a positive safe integer: ${version}`);
+  }
+  return encoded;
+}
+
+function ensureNonZeroAddress(value: string, field: string): string {
+  const address = ethers.getAddress(requireNonEmptyString(value, field));
+  if (sameAddress(address, ZERO_ADDRESS)) throw new Error(`${field} must not be the zero address`);
+  return address;
+}
+
+function ensureSafeInteger(value: number, field: string, minimum: number): number {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`${field} must be a safe integer >= ${minimum}, have ${String(value)}`);
+  }
+  return value;
+}
+
+function requireSection<T>(value: T | undefined, field: string): T {
+  if (value === undefined || value === null) {
+    throw new Error(`${field} is required for full bootstrap validation`);
+  }
+  return value;
 }
 
 function resolveBootstrapConfig(config: SourceDaoBootstrapConfig): ResolvedBootstrapConfig {
-  const committee = config.committee
-    ? {
-        initialMembers: ensureAddressList(config.committee.initialMembers ?? [], "committee.initialMembers"),
-        initDevRatio: config.committee.initDevRatio ?? 400,
-        mainProjectName: requireNonEmptyString(config.committee.mainProjectName, "committee.mainProjectName"),
-        finalVersion: requireNonEmptyString(config.committee.finalVersion, "committee.finalVersion"),
-        finalDevRatio: config.committee.finalDevRatio ?? 120,
-      }
-    : {
-        initialMembers: DEFAULT_COMMITTEE_MEMBERS,
-        initDevRatio: 400,
-        mainProjectName: "Buckyos",
-        finalVersion: "1.0.0",
-        finalDevRatio: 120,
-      };
+  const committeeConfig = requireSection(config.committee, "committee");
+  const committee = {
+    initialMembers: ensureAddressList(
+      requireSection(committeeConfig.initialMembers, "committee.initialMembers"),
+      "committee.initialMembers",
+    ),
+    initProposalId: ensureSafeInteger(
+      requireSection(committeeConfig.initProposalId, "committee.initProposalId"),
+      "committee.initProposalId",
+      1,
+    ),
+    initDevRatio: ensureSafeInteger(
+      requireSection(committeeConfig.initDevRatio, "committee.initDevRatio"),
+      "committee.initDevRatio",
+      101,
+    ),
+    mainProjectName: requireNonEmptyString(
+      committeeConfig.mainProjectName,
+      "committee.mainProjectName",
+    ),
+    finalVersion: requireNonEmptyString(committeeConfig.finalVersion, "committee.finalVersion"),
+    finalDevRatio: ensureSafeInteger(
+      requireSection(committeeConfig.finalDevRatio, "committee.finalDevRatio"),
+      "committee.finalDevRatio",
+      101,
+    ),
+  };
+  ethers.encodeBytes32String(committee.mainProjectName);
+  convertVersion(committee.finalVersion);
 
-  const devToken = config.devToken
-    ? {
-        name: requireNonEmptyString(config.devToken.name, "devToken.name"),
-        symbol: requireNonEmptyString(config.devToken.symbol, "devToken.symbol"),
-        totalSupply: requireNonEmptyString(config.devToken.totalSupply, "devToken.totalSupply"),
-        initAddresses: ensureAddressList(config.devToken.initAddresses ?? [], "devToken.initAddresses"),
-        initAmounts: (config.devToken.initAmounts ?? []).map((value, index) =>
-          requireNonEmptyString(value, `devToken.initAmounts[${index}]`),
-        ),
-      }
-    : {
-        name: "BuckyOS Develop DAO Token",
-        symbol: "BDDT",
-        totalSupply: ethers.parseEther("2100000000").toString(),
-        initAddresses: DEFAULT_DEV_TOKEN_ADDRESSES,
-        initAmounts: DEFAULT_DEV_TOKEN_AMOUNTS,
-      };
-
+  const devTokenConfig = requireSection(config.devToken, "devToken");
+  const devToken = {
+    name: requireNonEmptyString(devTokenConfig.name, "devToken.name"),
+    symbol: requireNonEmptyString(devTokenConfig.symbol, "devToken.symbol"),
+    totalSupply: requireNonEmptyString(devTokenConfig.totalSupply, "devToken.totalSupply"),
+    initAddresses: ensureAddressList(
+      requireSection(devTokenConfig.initAddresses, "devToken.initAddresses"),
+      "devToken.initAddresses",
+    ),
+    initAmounts: requireSection(devTokenConfig.initAmounts, "devToken.initAmounts").map(
+      (value, index) => requireNonEmptyString(value, `devToken.initAmounts[${index}]`),
+    ),
+  };
   if (devToken.initAddresses.length !== devToken.initAmounts.length) {
     throw new Error("devToken.initAddresses and devToken.initAmounts length mismatch");
+  }
+  const totalSupply = parseBigIntString(devToken.totalSupply, "devToken.totalSupply");
+  if (totalSupply === 0n) throw new Error("devToken.totalSupply must be positive");
+  const initialSupply = sumBigInts(devToken.initAmounts);
+  if (initialSupply > totalSupply) {
+    throw new Error(
+      `devToken initial allocation ${initialSupply} exceeds totalSupply ${totalSupply}`,
+    );
+  }
+
+  const normalTokenConfig = requireSection(config.normalToken, "normalToken");
+  const normalToken = {
+    name: requireNonEmptyString(normalTokenConfig.name, "normalToken.name"),
+    symbol: requireNonEmptyString(normalTokenConfig.symbol, "normalToken.symbol"),
+  };
+  const tokenLockupConfig = requireSection(config.tokenLockup, "tokenLockup");
+  const tokenLockup = {
+    unlockProjectName: requireNonEmptyString(
+      tokenLockupConfig.unlockProjectName,
+      "tokenLockup.unlockProjectName",
+    ),
+    unlockVersion: requireNonEmptyString(
+      tokenLockupConfig.unlockVersion,
+      "tokenLockup.unlockVersion",
+    ),
+  };
+  ethers.encodeBytes32String(tokenLockup.unlockProjectName);
+  convertVersion(tokenLockup.unlockVersion);
+
+  const projectConfig = requireSection(config.project, "project");
+  const project = {
+    initProjectIdCounter: ensureSafeInteger(
+      requireSection(projectConfig.initProjectIdCounter, "project.initProjectIdCounter"),
+      "project.initProjectIdCounter",
+      0,
+    ),
+  };
+  const acquiredConfig = requireSection(config.acquired, "acquired");
+  const acquired = {
+    initInvestmentCount: ensureSafeInteger(
+      requireSection(acquiredConfig.initInvestmentCount, "acquired.initInvestmentCount"),
+      "acquired.initInvestmentCount",
+      0,
+    ),
+  };
+
+  const chainId = ensureSafeInteger(config.chainId, "chainId", 1);
+  const rpcUrl = requireNonEmptyString(config.rpcUrl, "rpcUrl");
+  const daoAddress = ensureNonZeroAddress(config.daoAddress, "daoAddress");
+  const dividendAddress = ensureNonZeroAddress(config.dividendAddress, "dividendAddress");
+  const bootstrapAdminAddress = ensureNonZeroAddress(
+    config.bootstrapAdminAddress,
+    "bootstrapAdminAddress",
+  );
+  const uniqueSystemAddresses = new Set([
+    daoAddress.toLowerCase(),
+    dividendAddress.toLowerCase(),
+    bootstrapAdminAddress.toLowerCase(),
+  ]);
+  if (uniqueSystemAddresses.size !== 3) {
+    throw new Error("daoAddress, dividendAddress, and bootstrapAdminAddress must be distinct");
   }
 
   return {
     ...config,
-    daoAddress: ethers.getAddress(config.daoAddress),
-    dividendAddress: ethers.getAddress(config.dividendAddress),
-    bootstrapAdminAddress: config.bootstrapAdminAddress
-      ? ethers.getAddress(config.bootstrapAdminAddress)
-      : undefined,
+    chainId,
+    rpcUrl,
+    daoAddress,
+    dividendAddress,
+    bootstrapAdminAddress,
+    cycleMinLength: ensureSafeInteger(config.cycleMinLength, "cycleMinLength", 1),
     expectedModules: normalizeExpectedModules(config.expectedModules),
     committee,
     devToken,
-    normalToken: config.normalToken
-      ? {
-          name: requireNonEmptyString(config.normalToken.name, "normalToken.name"),
-          symbol: requireNonEmptyString(config.normalToken.symbol, "normalToken.symbol"),
-        }
-      : { name: "BuckyOS DAO Token", symbol: "BDT" },
-    tokenLockup: config.tokenLockup
-      ? {
-          unlockProjectName: requireNonEmptyString(config.tokenLockup.unlockProjectName, "tokenLockup.unlockProjectName"),
-          unlockVersion: requireNonEmptyString(config.tokenLockup.unlockVersion, "tokenLockup.unlockVersion"),
-        }
-      : { unlockProjectName: "Buckyos", unlockVersion: "1.0.0" },
-    project: config.project
-      ? { initProjectIdCounter: config.project.initProjectIdCounter ?? 4 }
-      : { initProjectIdCounter: 4 },
-    acquired: config.acquired
-      ? { initInvestmentCount: config.acquired.initInvestmentCount ?? 4 }
-      : { initInvestmentCount: 4 },
+    normalToken,
+    tokenLockup,
+    project,
+    acquired,
   };
 }
 
@@ -483,17 +573,6 @@ async function assertDaoModuleRegistered(dao: ethers.Contract, moduleAddress: st
   }
 }
 
-function deriveExpectedBootstrapAdmin(config: ResolvedBootstrapConfig): string | null {
-  if (config.bootstrapAdminAddress) return config.bootstrapAdminAddress;
-  if (config.bootstrapAdminPrivateKey) {
-    const privateKey = config.bootstrapAdminPrivateKey.startsWith("0x")
-      ? config.bootstrapAdminPrivateKey
-      : `0x${config.bootstrapAdminPrivateKey}`;
-    return new ethers.Wallet(privateKey).address;
-  }
-  return null;
-}
-
 async function validateCommittee(
   address: string,
   mode: ModuleValidationMode,
@@ -511,6 +590,22 @@ async function validateCommittee(
     committee.isMember(members[0]) as Promise<boolean>,
   );
   if (!firstMemberActive) throw new Error(`Committee.isMember(${members[0]}) returned false`);
+  const proposalCursor = await assertCallable("Committee.proposalCursor", () =>
+    committee.proposalCursor() as Promise<bigint>,
+  );
+  if (mode === "strict") {
+    assertBigIntEqual(
+      "Committee.proposalCursor",
+      proposalCursor,
+      BigInt(config.committee.initProposalId),
+    );
+  } else {
+    assertBigIntAtLeast(
+      "Committee.proposalCursor",
+      proposalCursor,
+      BigInt(config.committee.initProposalId),
+    );
+  }
   assertHexEqual(
     "Committee.mainProjectName",
     await assertCallable("Committee.mainProjectName", () => committee.mainProjectName() as Promise<string>),
@@ -684,7 +779,8 @@ async function writeOutput(outputPath: string | undefined, summary: ValidationSu
 
 async function main() {
   const options = parseCliOptions(process.argv.slice(2));
-  const sourceConfig = await loadJsonFile<SourceDaoBootstrapConfig>(options.configPath);
+  const sourceConfig = await loadJsonFile<unknown>(options.configPath);
+  assertPublicBootstrapConfig(sourceConfig);
   const config = resolveBootstrapConfig(sourceConfig);
   const artifactsDir = normalizeArtifactsDir(options.configPath, config.artifactsDir);
   const rpcUrl = options.rpcUrl || config.rpcUrl;
@@ -720,10 +816,7 @@ async function main() {
   if (sameAddress(bootstrapAdmin, ZERO_ADDRESS)) {
     throw new Error("DAO.bootstrapAdmin is still zero; bootstrap is not initialized");
   }
-  const expectedBootstrapAdmin = deriveExpectedBootstrapAdmin(config);
-  if (expectedBootstrapAdmin) {
-    assertAddressEqual("DAO.bootstrapAdmin", bootstrapAdmin, expectedBootstrapAdmin);
-  }
+  assertAddressEqual("DAO.bootstrapAdmin", bootstrapAdmin, config.bootstrapAdminAddress);
   console.log(`DAO.version        ${daoVersion}`);
   console.log(`Bootstrap admin    ${bootstrapAdmin}`);
 
