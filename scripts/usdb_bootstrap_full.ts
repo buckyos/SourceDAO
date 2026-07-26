@@ -1212,7 +1212,7 @@ async function ensureDaoAndDividend(
     ),
   );
 
-  return dao;
+  return { dao, dividend };
 }
 
 function moduleRecordFromExisting(address: string): ModuleRecord {
@@ -1301,7 +1301,13 @@ async function main() {
   }
   context.walletAddress = wallet.address;
   await updateProgress(context, "Checking or initializing DAO and Dividend", "DaoAndDividend");
-  const dao = await ensureDaoAndDividend(config, wallet, provider, artifactsDir, operations);
+  const { dao, dividend } = await ensureDaoAndDividend(
+    config,
+    wallet,
+    provider,
+    artifactsDir,
+    operations,
+  );
   await updateProgress(context, "DAO and Dividend are ready", null);
 
   printHeader("SourceDAO bootstrap config");
@@ -1648,6 +1654,31 @@ async function main() {
   await assertDaoModuleRegistered(dao, finalLockup, "TokenLockup");
   await assertDaoModuleRegistered(dao, finalDividend, "Dividend");
   await assertDaoModuleRegistered(dao, finalAcquired, "Acquired");
+
+  if (!(await dao.bootstrapReadyForDividend(config.dividendAddress))) {
+    throw new Error("DAO did not confirm Dividend bootstrap readiness");
+  }
+  if (!(await dividend.bootstrapFinalized())) {
+    await dividend.finalizeBootstrap.staticCall();
+    const result = await sendAndWait("Dividend.finalizeBootstrap", async () =>
+      dividend.finalizeBootstrap({ gasLimit: gasLimit(config) }),
+    );
+    operations.push({
+      name: "Dividend.finalizeBootstrap",
+      status: "completed",
+      tx_hash: result.txHash,
+      block_number: result.blockNumber,
+    });
+  } else {
+    operations.push({
+      name: "Dividend.finalizeBootstrap",
+      status: "skipped",
+      details: "bootstrap readiness marker already finalized",
+    });
+  }
+  if (!(await dividend.bootstrapFinalized())) {
+    throw new Error("Dividend bootstrap readiness marker was not finalized");
+  }
 
   printHeader("Bootstrap summary");
   console.log(`Committee          ${finalCommittee}`);

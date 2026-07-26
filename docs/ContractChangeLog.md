@@ -49,6 +49,52 @@
 
 ---
 
+## 2026-07-26 USDB Dividend 共识 Readiness 与账本同步验证
+
+### 范围
+
+- 合约：`SourceDao`、`DividendContract`
+- 脚本：`usdb_bootstrap_full.ts`、`usdb_validate_bootstrap.ts`、
+  `usdb_fee_split_probe.ts`
+- 测试：`test/dao.ts`、`test/dividend.ts`
+
+### 背景
+
+USDB fee policy v1 在固定高度后把 40% 实际交易手续费直接 credit 到 Dividend native
+balance。validator 不能信任本地 bootstrap 文件或运维 RPC，必须从 state root 判断 full
+bootstrap 是否完成。同时，共识直接改余额不会调用 Solidity `receive()`，因此 Dividend
+内部 native-token ledger 需要显式同步。
+
+### 具体改动
+
+1. `SourceDao.bootstrapReadyForDividend(expectedDividend)` 只读确认：
+   - bootstrap admin 非零。
+   - expected Dividend 非零且与 DAO wiring 一致。
+   - Committee、DevToken、NormalToken、TokenLockup、Project、Dividend、Acquired 全部已配置。
+2. `DividendContract` 使用
+   `keccak256("sourcedao.dividend.bootstrap-finalized:v1")` unstructured slot 保存一向 marker。
+3. `Dividend.finalizeBootstrap()` 只允许当前 DAO bootstrap admin 调用，要求上述 readiness
+   为 true，并拒绝重复 finalization。
+4. full bootstrap 在所有模块 wiring 完成后写 marker；strict validator 强制读取并验证 marker。
+5. fee probe 交叉核对 sender fee、miner emission + 60% fee、Dividend 40% fee，并调用
+   `updateTokenBalance(0)` 验证同步前 pending 全部入账。
+
+### 兼容性影响
+
+这不是此前已移除的 DAO/proxy migration finalization 方案。新 marker 位于 Dividend
+collision-resistant unstructured slot，只服务 USDB direct-predeploy 的共识 readiness。
+它不会自动修改 OP Mainnet 等既有部署，也不撤销或冻结 DAO bootstrap admin；public release
+仍需单独确定 admin handoff/custody。
+
+### 验证方式
+
+- required module 缺失、调用者错误和重复 finalization 均拒绝。
+- full wiring 后 marker 只写一次，strict validation 可重放。
+- consensus-style native credit 后 ledger sync 守恒。
+- geth live E2E 在 fee gate 前后、restart 和 fresh joiner 上验证相同 code/marker/state root。
+
+---
+
 ## 2026-03-19 Fuzz / Invariant 随机回归测试补充记录
 
 ### 范围

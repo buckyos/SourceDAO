@@ -746,6 +746,13 @@ async function validateDividend(
   );
   await assertCallable("Dividend.getCurrentCycleIndex", () => dividend.getCurrentCycleIndex() as Promise<bigint>);
   await assertCallable("Dividend.getCurrentCycle", () => dividend.getCurrentCycle() as Promise<unknown>);
+  const bootstrapFinalized = await assertCallable(
+    "Dividend.bootstrapFinalized",
+    () => dividend.bootstrapFinalized() as Promise<boolean>,
+  );
+  if (!bootstrapFinalized) {
+    throw new Error("Dividend bootstrap readiness marker is not finalized");
+  }
   return version;
 }
 

@@ -45,6 +45,7 @@ async function deployDividendFixture() {
         owner,
         beneficiary,
         outsider,
+        dao,
         devToken,
         normalToken,
         dividend,
@@ -126,6 +127,41 @@ async function deployMiswiredRegisteredDividendFixture() {
 }
 
 describe("dividend", function () {
+    it("freezes a consensus-readable bootstrap readiness marker", async function () {
+        const { dao, dividend, owner, outsider } = await networkHelpers.loadFixture(deployDividendFixture);
+
+        expect(await dividend.bootstrapFinalized()).to.equal(false);
+        await expect(dividend.finalizeBootstrap()).to.be.revertedWith("bootstrap not ready");
+        await expect(dividend.connect(outsider).finalizeBootstrap()).to.be.revertedWith("only bootstrap admin");
+
+        const moduleFactory = await ethers.getContractFactory("NativeReceiverMock");
+        const modules = [];
+        for (let i = 0; i < 4; i++) {
+            const module = await moduleFactory.deploy();
+            await module.waitForDeployment();
+            modules.push(await module.getAddress());
+        }
+        await (await dao.setCommitteeAddress(modules[0])).wait();
+        await (await dao.setProjectAddress(modules[1])).wait();
+        await (await dao.setTokenLockupAddress(modules[2])).wait();
+        await (await dao.setAcquiredAddress(modules[3])).wait();
+
+        expect(await dao.bootstrapReadyForDividend(await dividend.getAddress())).to.equal(true);
+        await expect(dividend.connect(owner).finalizeBootstrap())
+            .to.emit(dividend, "BootstrapFinalized")
+            .withArgs(owner.address);
+        expect(await dividend.bootstrapFinalized()).to.equal(true);
+
+        const slot = ethers.keccak256(ethers.toUtf8Bytes("sourcedao.dividend.bootstrap-finalized:v1"));
+        const raw = await ethers.provider.send("eth_getStorageAt", [
+            await dividend.getAddress(),
+            slot,
+            "latest"
+        ]);
+        expect(BigInt(raw)).to.equal(1n);
+        await expect(dividend.finalizeBootstrap()).to.be.revertedWith("bootstrap finalized");
+    });
+
     it("rejects a zero cycle length during initialization", async function () {
         const dao = await deployUUPSProxy(ethers, "SourceDao");
 
@@ -432,6 +468,24 @@ describe("dividend", function () {
         expect(await dividend.getDepositTokenBalance(await rewardToken.getAddress())).to.equal(0n);
         expect(await dividend.getDepositTokenBalance(ethers.ZeroAddress)).to.equal(0n);
         expect(await ethers.provider.getBalance(await dividend.getAddress())).to.equal(0n);
+    });
+
+    it("syncs consensus-style native balance credits without invoking receive", async function () {
+        const { dividend } = await networkHelpers.loadFixture(deployDividendFixture);
+        const dividendAddress = await dividend.getAddress();
+
+        expect(await dividend.getDepositTokenBalance(ethers.ZeroAddress)).to.equal(0n);
+        await networkHelpers.setBalance(dividendAddress, 25n);
+        expect(await ethers.provider.getBalance(dividendAddress)).to.equal(25n);
+        expect(await dividend.getDepositTokenBalance(ethers.ZeroAddress)).to.equal(0n);
+
+        await (await dividend.updateTokenBalance(ethers.ZeroAddress)).wait();
+        expect(await dividend.getDepositTokenBalance(ethers.ZeroAddress)).to.equal(25n);
+
+        await networkHelpers.setBalance(dividendAddress, 40n);
+        await (await dividend.updateTokenBalance(ethers.ZeroAddress)).wait();
+        expect(await dividend.getDepositTokenBalance(ethers.ZeroAddress)).to.equal(40n);
+        expect(await ethers.provider.getBalance(dividendAddress)).to.equal(40n);
     });
 
     it("lets contract recipients withdraw native dividends when their receive logic needs more than transfer gas", async function () {

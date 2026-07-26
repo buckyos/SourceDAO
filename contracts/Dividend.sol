@@ -11,8 +11,18 @@ import "hardhat/console.sol";
 import "./Interface.sol";
 import "./SourceDaoUpgradeable.sol";
 
+interface ISourceDaoBootstrap {
+    function bootstrapAdmin() external view returns (address);
+    function bootstrapReadyForDividend(address expectedDividend) external view returns (bool);
+}
+
 contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
+
+    bytes32 private constant BOOTSTRAP_FINALIZED_SLOT =
+        keccak256("sourcedao.dividend.bootstrap-finalized:v1");
+
+    event BootstrapFinalized(address indexed bootstrapAdmin);
 
     function _sendNative(address to, uint256 amount) internal {
         (bool success, ) = payable(to).call{value: amount}("");
@@ -60,6 +70,26 @@ contract DividendContract is ISourceDAODividend, SourceDaoContractUpgradeable, R
         cycleMinLength = _cycleMinLength;
 
         cycles[0].startBlocktime = block.timestamp;
+    }
+
+    function bootstrapFinalized() public view returns (bool finalized) {
+        bytes32 slot = BOOTSTRAP_FINALIZED_SLOT;
+        assembly {
+            finalized := eq(sload(slot), 1)
+        }
+    }
+
+    function finalizeBootstrap() external {
+        ISourceDaoBootstrap dao = ISourceDaoBootstrap(mainContractAddress);
+        require(msg.sender == dao.bootstrapAdmin(), "only bootstrap admin");
+        require(dao.bootstrapReadyForDividend(address(this)), "bootstrap not ready");
+        require(!bootstrapFinalized(), "bootstrap finalized");
+
+        bytes32 slot = BOOTSTRAP_FINALIZED_SLOT;
+        assembly {
+            sstore(slot, 1)
+        }
+        emit BootstrapFinalized(msg.sender);
     }
 
     /**

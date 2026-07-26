@@ -103,6 +103,8 @@ describe("dao", function () {
         expect(await fixture.dao.lockup()).to.equal(fixture.lockupAddress);
         expect(await fixture.dao.dividend()).to.equal(fixture.dividendAddress);
         expect(await fixture.dao.acquired()).to.equal(fixture.acquiredAddress);
+        expect(await fixture.dao.bootstrapReadyForDividend(fixture.dividendAddress)).to.equal(true);
+        expect(await fixture.dao.bootstrapReadyForDividend(fixture.alternateModuleAddress)).to.equal(false);
     });
 
     it("locks each configured module slot after the first successful set", async function () {

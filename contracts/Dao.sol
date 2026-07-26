@@ -41,6 +41,14 @@ contract SourceDao is ISourceDao, SourceDaoContractUpgradeable {
             _acquired != address(0);
     }
 
+    function bootstrapReadyForDividend(address expectedDividend) external view returns (bool) {
+        return
+            bootstrapAdmin != address(0) &&
+            expectedDividend != address(0) &&
+            _tokenDividend == expectedDividend &&
+            _allModulesConfigured();
+    }
+
     function version() external pure virtual override returns (string memory) {
         return "2.0.0";
     }

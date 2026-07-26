@@ -36,6 +36,7 @@
 | USDB 内置合约 smoke | `npm run test:usdb:smoke` | 初始化/检查内置 DAO + Dividend，并做 native deposit smoke。 |
 | USDB bootstrap 复检 | `npm run validate:bootstrap -- --config <file>` | 只读复检已部署 DAO、Dividend 和各模块 wiring。 |
 | USDB bootstrap smoke | `npm run bootstrap:smoke -- --config <file>` | `validate:bootstrap` 的只读 smoke 别名。 |
+| USDB fee/ledger 探针 | `npx tsx scripts/usdb_fee_split_probe.ts ...` | 跨 fee gate 校验 emission、60/40 分账和 Dividend ledger sync。 |
 | 本地链 | `npm run node:local` | 启动 Hardhat localhost。 |
 | 本地前端合约部署 | `npm run deploy:frontend-local` | 部署完整本地合约栈，打印前端 `.env.local` 内容。 |
 | 本地前端合约部署并写 env | `npm run deploy:frontend-local:write` | 写入 `../buckydaowww/src/.env.local`。 |
@@ -114,6 +115,8 @@ SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY="${SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY:?required}"
 - 每个 `Dao.set*Address` 都会先 `staticCall`，再发送交易，之后用 DAO getter readback。
 - 写入后确认 `dao.isDAOContract(moduleAddress) == true`。
 - 结束前再次检查所有 final wiring。
+- 所有必需模块完成后调用一次 `Dividend.finalizeBootstrap()`；该一向 marker 是
+  USDB validator 启用 fee policy v1 的共识 readiness。
 
 推荐命令。先复制配置样例，并删除 `artifactsDir` 使用默认 `artifacts-usdb`，或把它改成绝对路径/相对配置文件的正确路径：
 
@@ -146,6 +149,7 @@ SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY="${SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY:?required}"
 - `--state-file` 会持续写入进度快照，适合 UI 或运维面板展示 bootstrap 状态。
 - `operations` 对每笔成功的初始化、implementation/proxy deployment 和 DAO wiring 交易记录
   `tx_hash` 与 `block_number`；冲突和 runtime secret 错误会写入 `status = error` 状态。
+- 已 finalized 的相同配置重放会校验 marker 和 wiring 后全部 skip，不会重复发送 finalization。
 
 ### `usdb_validate_bootstrap.ts`
 
@@ -159,6 +163,7 @@ SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY="${SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY:?required}"
 - 检查 `dao.isDAOContract(moduleAddress) == true`。
 - 读取每个模块的 `version()`。
 - 校验 Committee（包括 `proposalCursor()`）、Token、Lockup、Project、Dividend、Acquired 的关键初始化不变量。
+- strict mode 要求 `Dividend.bootstrapFinalized() == true`；readiness 缺失时复检失败。
 - 可选读取 `usdb_bootstrap_full.ts --state-file` 生成的状态文件，比对最终 wiring 地址。
 
 推荐命令：
@@ -183,6 +188,28 @@ npm run validate:bootstrap -- \
 - `--state-file` / `SOURCE_DAO_USDB_STATE_FILE`
 - `--output` / `SOURCE_DAO_BOOTSTRAP_VALIDATE_OUTPUT`
 - `--strict` / `SOURCE_DAO_BOOTSTRAP_VALIDATE_STRICT=1`
+
+### `usdb_fee_split_probe.ts`
+
+用途：在真实 geth 状态转换上交叉核对 UIP-0011 fee gate 和 Dividend 原生币账本。
+
+```bash
+SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY="${SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY:?required}" \
+  npx tsx scripts/usdb_fee_split_probe.ts \
+    --rpc-url http://127.0.0.1:18545 \
+    --dividend-address 0x0000000000000000000000000000000000001002 \
+    --reward-recipient 0x1111111111111111111111111111111111111111 \
+    --fee-split-block 256 \
+    --output /tmp/usdb-fee-split-probe.json
+```
+
+探针等待 gate 后发送单笔普通交易，并要求该区块没有其他交易干扰。它独立核对：
+
+- sender 余额减少值等于退款后的实际手续费。
+- reward recipient 增量等于 reserved issued-supply 增量加 60% miner fee。
+- Dividend native balance 增量等于 40% DAO fee。
+- `updateTokenBalance(0)` 吸收同步前全部 pending native balance。
+- ledger-sync 交易自身产生的新 40% fee 保留为下一轮 pending，不被错误吞并。
 
 默认是 relaxed 模式：允许治理运行后 Committee 成员、dev ratio、项目计数、token 发行状态等已经变化，只校验它们仍满足安全下限和基础一致性。`--strict` 用于刚 bootstrap 完成后的精确复检，会额外比对初始 Committee 成员、DevToken 初始释放量、NormalToken 初始供应量、Project 初始计数等。
 
