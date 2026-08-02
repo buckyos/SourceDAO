@@ -166,6 +166,7 @@ async function observeFeeTransaction(
   sender: string,
   rewardRecipient: string,
   dividendAddress: string,
+  feeSplitEnabled: boolean,
 ): Promise<FeeObservation> {
   const receipt = await provider.getTransactionReceipt(txHash);
   if (!receipt) {
@@ -191,7 +192,9 @@ async function observeFeeTransaction(
     throw new Error(`missing effective gas price for ${txHash}`);
   }
   const totalFee = receipt.gasUsed * effectiveGasPrice;
-  const daoFee = (totalFee * DAO_FEE_BPS) / BPS_DENOMINATOR;
+  const daoFee = feeSplitEnabled
+    ? (totalFee * DAO_FEE_BPS) / BPS_DENOMINATOR
+    : 0n;
   const minerFee = totalFee - daoFee;
   const parentBlock = receipt.blockNumber - 1;
   const [
@@ -224,7 +227,11 @@ async function observeFeeTransaction(
     throw new Error("reward recipient delta does not equal emission plus miner fee");
   }
   if (dividendBalanceAfter - dividendBalanceBefore !== daoFee) {
-    throw new Error("Dividend balance delta does not equal DAO fee");
+    throw new Error(
+      feeSplitEnabled
+        ? "Dividend balance delta does not equal DAO fee"
+        : "Dividend received transaction fees before fee-split activation",
+    );
   }
   return {
     txHash,
@@ -264,6 +271,36 @@ async function main(): Promise<void> {
     throw new Error("fee probe sender must be distinct from reward recipients");
   }
 
+  const preGateHead = await provider.getBlockNumber();
+  if (preGateHead + 1 >= options.feeSplitBlock) {
+    throw new Error(
+      `fee probe requires room before activation: head=${preGateHead}, ` +
+        `feeSplitBlock=${options.feeSplitBlock}`,
+    );
+  }
+  const preGateTransaction = await wallet.sendTransaction({
+    to: "0x0000000000000000000000000000000000002000",
+    value: 0,
+  });
+  const preGateReceipt = await preGateTransaction.wait();
+  if (!preGateReceipt) {
+    throw new Error("missing pre-gate fee probe receipt");
+  }
+  if (preGateReceipt.blockNumber >= options.feeSplitBlock) {
+    throw new Error(
+      `pre-gate transaction landed at ${preGateReceipt.blockNumber}, ` +
+        `not before ${options.feeSplitBlock}`,
+    );
+  }
+  const preGate = await observeFeeTransaction(
+    provider,
+    preGateTransaction.hash,
+    wallet.address,
+    options.rewardRecipient,
+    options.dividendAddress,
+    false,
+  );
+
   await waitForHeight(provider, options.feeSplitBlock, options.timeoutMs);
   const probeTransaction = await wallet.sendTransaction({
     to: "0x0000000000000000000000000000000000002001",
@@ -276,7 +313,14 @@ async function main(): Promise<void> {
     wallet.address,
     options.rewardRecipient,
     options.dividendAddress,
+    true,
   );
+  if (probe.blockNumber < options.feeSplitBlock) {
+    throw new Error(
+      `post-gate transaction landed at ${probe.blockNumber}, ` +
+        `before ${options.feeSplitBlock}`,
+    );
+  }
 
   const dividend = new Contract(options.dividendAddress, DIVIDEND_ABI, wallet);
   const syncTransaction = await dividend.updateTokenBalance(ZeroAddress);
@@ -304,6 +348,7 @@ async function main(): Promise<void> {
     wallet.address,
     options.rewardRecipient,
     options.dividendAddress,
+    true,
   );
   const ledgerAfter = BigInt(
     await dividend.getDepositTokenBalance(ZeroAddress, {
@@ -328,6 +373,7 @@ async function main(): Promise<void> {
     rewardRecipient: getAddress(options.rewardRecipient),
     dividendAddress: getAddress(options.dividendAddress),
     sender: getAddress(wallet.address),
+    preGate: serializeObservation(preGate),
     probe: serializeObservation(probe),
     ledgerSync: {
       ...serializeObservation(sync),
