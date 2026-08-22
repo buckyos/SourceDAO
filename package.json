@@ -1,6 +1,11 @@
 {
   "name": "sourcedao",
   "version": "1.0.0",
+  "packageManager": "npm@11.6.2",
+  "engines": {
+    "node": "24.12.0",
+    "npm": "11.6.2"
+  },
   "type": "module",
   "description": "",
   "main": "index.js",
@@ -10,6 +15,7 @@
     "test": "tests"
   },
   "scripts": {
+    "verify:toolchain": "node scripts/verify_ci_toolchain.mjs",
     "clean": "hardhat clean",
     "build": "hardhat build",
     "clean:usdb": "rm -rf artifacts-usdb cache-usdb",
@@ -17,6 +23,7 @@
     "test": "hardhat test",
     "test:usdb:audit": "node scripts/audit_usdb_bytecode.mjs",
     "test:usdb:compile-and-audit": "npm run build:usdb && npm run test:usdb:audit",
+    "test:usdb:fast": "npm run verify:toolchain && npm test && npm run build:usdb && npm run test:usdb:audit",
     "test:usdb:smoke": "tsx scripts/usdb_bootstrap_smoke.ts",
     "validate:bootstrap": "tsx scripts/usdb_validate_bootstrap.ts",
     "bootstrap:smoke": "tsx scripts/usdb_validate_bootstrap.ts",
