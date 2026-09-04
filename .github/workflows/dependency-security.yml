@@ -1,0 +1,92 @@
+name: Dependency Security (Report Only)
+
+on:
+  pull_request:
+    paths:
+      - .github/dependabot.yml
+      - .github/workflows/dependency-security.yml
+      - package-lock.json
+      - package.json
+  push:
+    branches:
+      - main
+    paths:
+      - .github/dependabot.yml
+      - .github/workflows/dependency-security.yml
+      - package-lock.json
+      - package.json
+  schedule:
+    - cron: "37 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  npm_audit:
+    name: npm vulnerability baseline (report-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out SourceDAO
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pinned Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          check-latest: false
+          cache: npm
+
+      - name: Set up pinned npm
+        run: npm install --global npm@11.6.2
+
+      - name: Generate report-only baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          report_dir="${RUNNER_TEMP}/dependency-security-npm"
+          mkdir -p "$report_dir"
+          run_audit() {
+            local scope="$1"
+            shift
+            local report_path="${report_dir}/${scope}.json"
+            set +e
+            npm audit --package-lock-only --json "$@" >"$report_path"
+            local audit_status=$?
+            set -e
+            if ! jq -e '.metadata.vulnerabilities' "$report_path" >/dev/null; then
+              cat "$report_path" >&2
+              echo "npm audit did not produce a valid $scope report" >&2
+              exit 1
+            fi
+            local total critical high moderate low
+            total="$(jq -r '.metadata.vulnerabilities.total // 0' "$report_path")"
+            critical="$(jq -r '.metadata.vulnerabilities.critical // 0' "$report_path")"
+            high="$(jq -r '.metadata.vulnerabilities.high // 0' "$report_path")"
+            moderate="$(jq -r '.metadata.vulnerabilities.moderate // 0' "$report_path")"
+            low="$(jq -r '.metadata.vulnerabilities.low // 0' "$report_path")"
+            echo "- **$scope**: total=$total, critical=$critical, high=$high, moderate=$moderate, low=$low, scanner_exit=$audit_status" \
+              >>"$GITHUB_STEP_SUMMARY"
+          }
+          {
+            echo "## npm dependency security: SourceDAO"
+            echo
+            echo "The full result is release-relevant because Hardhat and bootstrap tooling are part of the contract build chain."
+            echo
+          } >>"$GITHUB_STEP_SUMMARY"
+          run_audit full
+          run_audit runtime --omit=dev
+
+      - name: Upload npm dependency security reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: dependency-security-npm-sourcedao-${{ github.sha }}
+          path: ${{ runner.temp }}/dependency-security-npm
+          if-no-files-found: error
+          retention-days: 30
