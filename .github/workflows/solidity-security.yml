@@ -1,0 +1,116 @@
+name: Solidity Security (Report Only)
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/solidity-security.yml
+      - contracts/**
+      - hardhat.config.ts
+      - package-lock.json
+      - package.json
+      - scripts/generate_usdb_contract_golden.mjs
+      - security/usdb-contract-golden.json
+      - slither.config.json
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/solidity-security.yml
+      - contracts/**
+      - hardhat.config.ts
+      - package-lock.json
+      - package.json
+      - scripts/generate_usdb_contract_golden.mjs
+      - security/usdb-contract-golden.json
+      - slither.config.json
+  schedule:
+    - cron: "19 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: solidity-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  slither:
+    name: Slither baseline (report-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out SourceDAO
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pinned Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          check-latest: false
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project and scanner dependencies
+        run: |
+          npm ci
+          python -m pip install --disable-pip-version-check --no-cache-dir slither-analyzer==0.11.6
+
+      - name: Build deterministic USDB artifacts
+        run: npm run build:usdb
+
+      - name: Verify contract golden
+        run: npm run test:usdb:golden
+
+      - name: Run Slither
+        run: |
+          mkdir -p .security-reports
+          slither . \
+            --config-file slither.config.json \
+            --compile-force-framework hardhat \
+            --hardhat-ignore-compile \
+            --hardhat-artifacts-directory artifacts-usdb \
+            --hardhat-cache-directory cache-usdb \
+            --json .security-reports/slither.json \
+            --sarif .security-reports/slither.sarif
+
+      - name: Validate and summarize Slither report
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=.security-reports/slither.json
+          jq -e '.success == true and (.results.detectors | type == "array")' "$report" >/dev/null
+          {
+            echo "## Slither security baseline"
+            echo
+            echo "Findings are report-only during the initial baseline phase. Scanner or report failures still fail this job."
+            echo
+            echo "| Impact | Count |"
+            echo "| --- | ---: |"
+            for impact in High Medium Low Informational Optimization; do
+              count="$(jq --arg impact "$impact" '[.results.detectors[] | select(.impact == $impact)] | length' "$report")"
+              echo "| $impact | $count |"
+            done
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Slither SARIF
+        if: ${{ always() && hashFiles('.security-reports/slither.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          sarif_file: .security-reports/slither.sarif
+          category: sourcedao-slither
+
+      - name: Upload Slither reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: solidity-security-sourcedao-${{ github.sha }}
+          path: .security-reports
+          if-no-files-found: error
+          retention-days: 30

@@ -14,6 +14,7 @@ cache
 artifacts
 cache-usdb
 artifacts-usdb
+.security-reports/
 
 /abi/
 tools/config/local.json

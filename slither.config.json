@@ -1,0 +1,6 @@
+{
+  "disable_color": true,
+  "exclude_dependencies": true,
+  "fail_on": "none",
+  "filter_paths": "(contracts/mocks/|old_contracts/|legacy_tests/|test/|test-hh3/)"
+}
