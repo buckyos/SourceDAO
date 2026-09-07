@@ -90,5 +90,30 @@ test("Source import recovers deployment allocations after conversion and preserv
     assert.equal(await readFile(report, "utf8"), reportBytes);
     result = await runScript("usdb_import_bootstrap_source.ts", [...args, "--unknown"]).result;
     assert.equal(result.code, 1); assert.match(result.output, /Unknown argument/);
+
+    // The shared path needs no target config, RPC flag, block flag or individual output paths.
+    const checkpoint = await chain.provider.getBlock(height);
+    await writeFile(sourcePath, JSON.stringify({ ...source, rpcUrl: chain.url, blockNumber: height, blockHash: checkpoint!.hash }));
+    const sharedDir = path.join(chain.root, "shared"), sharedArgs = ["--source-config", sourcePath, "--output-dir", sharedDir];
+    result = await runScript("usdb_import_bootstrap_source.ts", sharedArgs, {}, chain.root).result;
+    assert.equal(result.code, 0, result.output);
+    const sharedPath = path.join(sharedDir, "sourcedao-bootstrap-imported.json"), sharedReportPath = path.join(sharedDir, "sourcedao-bootstrap-source.json");
+    const shared = JSON.parse(await readFile(sharedPath, "utf8")), sharedReportBytes = await readFile(sharedReportPath, "utf8");
+    assert.equal(shared.schemaVersion, "sourcedao-bootstrap-import:v1");
+    assert.equal("chainId" in shared, false); assert.equal("bootstrapAdminAddress" in shared, false);
+    assert.equal(shared.devToken.totalSupply, ethers.parseEther("100").toString());
+    assert.equal(sharedReportBytes.includes(chain.url), false);
+    assert.equal(sharedReportBytes.includes("baseConfigSha256"), false);
+    result = await runScript("usdb_import_bootstrap_source.ts", sharedArgs).result;
+    assert.equal(result.code, 0, result.output); assert.match(result.output, /no new RPC audit/);
+    assert.equal(await readFile(sharedReportPath, "utf8"), sharedReportBytes);
+    result = await runScript("usdb_import_bootstrap_source.ts", [...sharedArgs, "--block", String(height + 1)]).result;
+    assert.equal(result.code, 1); assert.match(result.output, /requires --block-hash/);
+    result = await runScript("usdb_import_bootstrap_source.ts", [...sharedArgs, "--output", output]).result;
+    assert.equal(result.code, 1); assert.match(result.output, /not both/);
+    await assert.rejects(readBootstrapSource(chain.provider, { ...source, blockHash: `0x${"aa".repeat(32)}` }, height), /checkpoint hash mismatch/);
+    shared.devToken.totalSupply = "1"; await writeFile(sharedPath, JSON.stringify(shared));
+    result = await runScript("usdb_import_bootstrap_source.ts", sharedArgs).result;
+    assert.equal(result.code, 1); assert.match(result.output, /differs from pinned source/);
   } finally { await chain.close(); }
 });

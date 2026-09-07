@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "chainId": 10,
+  "daoAddress": "0x2fc3186176B80EA829A7952b874F36f7cb8bd184",
+  "modules": {
+    "devToken": "0x23d20B200D0a77138b3B354453F047fBdec68561",
+    "normalToken": "0xb3C6876712142bC9161D6D357163E1A3a70179cC",
+    "committee": "0x30e066C857B7eBbAB4649a29A01D43962D70e44D",
+    "lockup": "0x13EE4A506974a54E9eAA905C892Aa91664AaCcbA",
+    "dividend": "0xcBe0797b6206A955e12CD23706b370F8D1CEA34E",
+    "project": "0xf2C90A9dB663759668A52a94f616725D84744b67",
+    "acquired": "0xB8e25db92d440E5133A9DECDdCf57E587A93e660"
+  },
+  "deploymentTransactions": {
+    "devToken": "0xf948fb6513f4ff6a00afe74670192de66078ab1a13ea6577f60b35043b3091fd",
+    "normalToken": "0x03b970f46d0633d7b10e7d6a7d0c5764cca01e2b481a733954b2ad7f55725b19"
+  },
+  "rpcUrl": "https://mainnet.optimism.io",
+  "blockNumber": 156576688,
+  "blockHash": "0x0c328c37a16921cd83e24aac59687b236e177cff1628695ae110db76ddafb909"
+}

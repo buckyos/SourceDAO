@@ -1,3 +1,6 @@
+import { mkdir, readFile } from "node:fs/promises";
+import { loadBootstrapBundle } from "./lib/bootstrap_release.js";
+import { assertSelectedNetwork, ceremonyPaths, defaultBundleDirectory, DEFAULT_RPC_URL, selectedNetwork } from "./lib/bootstrap_paths.js";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
@@ -6,6 +9,8 @@ import { ReviewedArtifacts } from "./lib/bootstrap_validation.js";
 import { atomicJson, readJson, configDigest, lockState } from "./lib/bootstrap_io.js";
 
 type CliOptions = {
+  bundleDir?: string;
+  network?: string;
   configPath: string;
   rpcUrl?: string;
   stateFilePath?: string;
@@ -130,10 +135,6 @@ type BootstrapState = {
   modules: BootstrapModules;
 };
 
-const DEFAULT_CONFIG_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../tools/config/sourcedao-bootstrap-full.example.json",
-);
 const DEFAULT_ARTIFACTS_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../artifacts-usdb",
@@ -242,13 +243,30 @@ async function updateProgress(
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
-  let configPath = process.env.SOURCE_DAO_USDB_CONFIG?.trim() || DEFAULT_CONFIG_PATH;
+  let bundleDir: string | undefined;
+  let configPath = process.env.SOURCE_DAO_USDB_CONFIG?.trim() || "";
+  let network: string | undefined;
   let rpcUrl = process.env.SOURCE_DAO_USDB_RPC_URL?.trim() || undefined;
   let stateFilePath = process.env.SOURCE_DAO_USDB_STATE_FILE?.trim() || undefined;
   let repoDir = process.env.SOURCE_DAO_REPO_DIR?.trim() || undefined;
 
+  const seen = new Set<string>();
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (seen.has(arg)) throw new Error(`Duplicate argument: ${arg}`);
+    seen.add(arg);
+    if (arg === "--network") {
+      const value = argv[++index];
+      if (!value || value.startsWith("--")) throw new Error("--network requires a profile name");
+      network = selectedNetwork(value); continue;
+    }
+    if (arg === "--bundle-dir") {
+      if (bundleDir) throw new Error("Duplicate --bundle-dir");
+      const value = argv[++index];
+      if (!value || value.startsWith("--")) throw new Error("--bundle-dir requires a directory");
+      bundleDir = path.resolve(value);
+      continue;
+    }
     if (arg === "--config") {
       const next = argv[index + 1];
       if (!next || next.startsWith("--")) throw new Error("--config requires a file path");
@@ -279,14 +297,17 @@ function parseCliOptions(argv: string[]): CliOptions {
     }
     if (arg === "--help") {
       console.log(
-        "Usage: tsx scripts/usdb_bootstrap_full.ts --config <file> [--rpc-url <url>] [--state-file <file>] [--repo-dir <dir>]",
+        "Usage: bootstrap [--network <profile>] [--bundle-dir <directory> | --config <file>] [--rpc-url <url>] [--state-file <file>] [--repo-dir <dir>]\nDefaults: selected frozen bundle; RPC http://127.0.0.1:8545; private state ~/.usdb/sourcedao-bootstrap/<chain>/<genesis>/<config>/state.json",
       );
       process.exit(0);
     }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  return { configPath, rpcUrl, stateFilePath, repoDir };
+  if (bundleDir && (argv.includes("--config") || process.env.SOURCE_DAO_USDB_CONFIG?.trim())) throw new Error("Use --bundle-dir or --config, not both");
+  if (!bundleDir && !configPath) { network = selectedNetwork(network); bundleDir = defaultBundleDirectory(network); }
+  if (configPath && network) throw new Error("--network requires bundle mode");
+  return { bundleDir, network, configPath, rpcUrl, stateFilePath, repoDir };
 }
 
 async function loadJsonFile<T>(filePath: string): Promise<T> {
@@ -1225,9 +1246,12 @@ async function ensureModule(
 
 async function main() {
   const options = parseCliOptions(process.argv.slice(2));
-  const sourceConfig = await loadJsonFile<unknown>(options.configPath);
+  const bundle = options.bundleDir ? await loadBootstrapBundle(options.bundleDir) : undefined;
+  if (bundle) assertSelectedNetwork(bundle.network, options.network);
+  if (bundle) options.configPath = bundle.configPath;
+  const sourceConfig: unknown = bundle?.config ?? await loadJsonFile<unknown>(options.configPath);
   assertPublicBootstrapConfig(sourceConfig);
-  const config = resolveBootstrapConfig({ ...sourceConfig, rpcUrl: options.rpcUrl || sourceConfig.rpcUrl });
+  const config = resolveBootstrapConfig({ ...sourceConfig, rpcUrl: options.rpcUrl || sourceConfig.rpcUrl || DEFAULT_RPC_URL });
   const artifactsDir = normalizeArtifactsDir(options.configPath, config.artifactsDir);
   const rpcUrl = options.rpcUrl || config.rpcUrl;
   const modules = createEmptyModules();
@@ -1242,7 +1266,6 @@ async function main() {
     modules,
     currentStep: "Preflight",
   };
-  if (!options.stateFilePath) throw new Error("--state-file is required for durable bootstrap recovery");
 
   const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { cacheTimeout: -1 });
   activeProvider = provider;
@@ -1253,7 +1276,9 @@ async function main() {
     throw new Error(`unexpected chainId ${chainId}, expected ${config.chainId}`);
   }
 
-  const configuredPrivateKey = process.env.SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY?.trim();
+  const keyFile = process.env.SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY_FILE?.trim();
+  if (keyFile && process.env.SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY?.trim()) throw new Error("Choose one bootstrap key source: file or environment");
+  const configuredPrivateKey = keyFile ? (await readFile(keyFile, "utf8")).trim() : process.env.SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY?.trim();
   if (!configuredPrivateKey) {
     throw new Error("SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY is required");
   }
@@ -1267,9 +1292,16 @@ async function main() {
     );
   }
   const reviewed = await new ReviewedArtifacts().load(artifactsDir);
+  if (bundle && reviewed.digest !== bundle.goldenDigest) throw new Error("Tool artifacts differ from frozen golden");
   reviewedArtifacts = reviewed;
   const genesis = await provider.getBlock(0);
   if (!genesis?.hash) throw new Error("Cannot read genesis identity");
+  if (bundle && genesis.hash !== bundle.genesisHash) throw new Error("Connected genesis differs from frozen bundle");
+  if (!options.stateFilePath) {
+    options.stateFilePath = ceremonyPaths(sourceConfig, genesis.hash).state;
+    await mkdir(path.dirname(options.stateFilePath), { recursive: true, mode: 0o700 });
+  }
+  console.log(`Bootstrap recovery state: ${options.stateFilePath}`);
   journal = await BootstrapJournal.load(`${options.stateFilePath}.transactions.json`, wallet, {
     chain_id: chainId, genesis_hash: genesis.hash, config_sha256: configDigest(sourceConfig),
     golden_sha256: reviewed.digest, signer: wallet.address.toLowerCase(),
@@ -1283,6 +1315,7 @@ async function main() {
   // Preflight failures must not truncate a previously completed state file.
   try {
     const old = await readJson<BootstrapState>(options.stateFilePath);
+    if ("record_schema" in old) throw new Error("Public bootstrap records are verification inputs; use the original private state and journal to resume");
     if (!journal.data.transactions.length || old.chain_id !== chainId || !sameAddress(old.dao_address, config.daoAddress)) {
       throw new Error("Existing bootstrap state has no matching transaction journal; refusing to overwrite deployment evidence");
     }

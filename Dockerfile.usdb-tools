@@ -1,0 +1,25 @@
+FROM node:24.12.0-bookworm AS build
+WORKDIR /opt/sourcedao
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY hardhat.config.ts tsconfig.json ./
+COPY contracts ./contracts
+COPY scripts ./scripts
+COPY security/usdb-contract-golden.json ./security/usdb-contract-golden.json
+COPY security/sources/optimism/sourcedao-opmain-import-source.json ./security/sources/optimism/sourcedao-opmain-import-source.json
+RUN npm run build:usdb && npm run test:usdb:audit && npm run test:usdb:golden && npm run test:usdb:tools:typecheck
+
+FROM node:24.12.0-bookworm
+WORKDIR /opt/sourcedao
+COPY --from=build /opt/sourcedao/package.json ./package.json
+COPY --from=build /opt/sourcedao/node_modules ./node_modules
+COPY --from=build /opt/sourcedao/scripts ./scripts
+COPY --from=build /opt/sourcedao/artifacts-usdb ./artifacts-usdb
+COPY --from=build /opt/sourcedao/security/usdb-contract-golden.json ./security/usdb-contract-golden.json
+COPY --from=build /opt/sourcedao/security/sources/optimism/sourcedao-opmain-import-source.json ./security/sources/optimism/sourcedao-opmain-import-source.json
+ENV SOURCE_DAO_BUNDLE_DIR=/release \
+    SOURCE_DAO_BOOTSTRAP_PRIVATE_DIR=/private \
+    SOURCE_DAO_BOOTSTRAP_PUBLIC_DIR=/public
+USER node
+ENTRYPOINT ["node", "--import", "tsx", "scripts/usdb_bootstrap_tools.ts"]
+CMD ["--help"]

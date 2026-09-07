@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "sourcedao-bootstrap-inputs:v1",
+  "networkBundleId": "usdb-testnet-v0",
+  "chainId": 202608250,
+  "genesisHash": "0x12a1baed070d1521d791b73956a8b5cf1613fc9504636f215390c1f839992a23",
+  "baseConfigSha256": "6da5d30e1125f6329a80e0a1d94ccc69b157a4bcf1cc5d27d5360f75a890c775",
+  "imported": {
+    "path": "../../sources/optimism/imports/156576688/sourcedao-bootstrap-imported.json",
+    "sha256": "66bebdb717b57442b97f8169db9166a2d91630054be205a40ae38553061faee6"
+  },
+  "report": {
+    "path": "../../sources/optimism/imports/156576688/sourcedao-bootstrap-source.json",
+    "sha256": "723da81f9cc6d07b71e792b3d70ababfaea232f56b76b1a039b8a4e5f07b9b2a"
+  }
+}

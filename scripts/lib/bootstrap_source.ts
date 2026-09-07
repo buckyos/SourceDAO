@@ -7,6 +7,38 @@ export interface BootstrapSource {
   daoAddress: string;
   modules: Record<string, string>;
   deploymentTransactions: { devToken: string; normalToken: string };
+  rpcUrl?: string;
+  blockNumber?: number;
+  blockHash?: string;
+}
+
+/** Transport settings never enter the public source evidence or its identity. */
+export function sourceIdentity(source: BootstrapSource): BootstrapSource {
+  const { schemaVersion, chainId, daoAddress, modules, deploymentTransactions } = source;
+  return { schemaVersion, chainId, daoAddress, modules, deploymentTransactions };
+}
+
+/** The shared import contains no destination chain, administrator, names or governance policy. */
+export function sharedSourceImport(report: any) {
+  return {
+    schemaVersion: "sourcedao-bootstrap-import:v1",
+    sourceIdentitySha256: report.sourceIdentitySha256,
+    checkpoint: report.checkpoint,
+    committee: { initialMembers: report.committeeMembers },
+    devToken: { totalSupply: report.tokens.devToken.totalSupply,
+      initAddresses: report.tokens.devToken.allocations.map((item: any) => item.address),
+      initAmounts: report.tokens.devToken.allocations.map((item: any) => item.amount) },
+  };
+}
+
+/** Apply only the four reviewed source fields to a destination template. */
+export function applySourceImport(base: any, imported: ReturnType<typeof sharedSourceImport>) {
+  requireCondition(base?.schemaVersion === 1 && base.devToken && base.normalToken && base.committee, "Invalid base bootstrap config");
+  requireCondition(!("bootstrapAdminPrivateKey" in base), "Private keys are forbidden in public config");
+  const config = structuredClone(base);
+  config.committee.initialMembers = [...imported.committee.initialMembers];
+  Object.assign(config.devToken, structuredClone(imported.devToken));
+  return config;
 }
 
 const moduleNames = ["devToken", "normalToken", "committee", "lockup", "dividend", "project", "acquired"];
@@ -50,14 +82,13 @@ export function originalMints(address: string, logs: readonly { address: string;
 }
 
 /** Read one source checkpoint and independently checked original token deployments. No signer is used. */
-export async function readBootstrapSource(provider: ethers.JsonRpcProvider, source: BootstrapSource, height: number, base: any) {
+export async function readBootstrapSource(provider: ethers.JsonRpcProvider, source: BootstrapSource, height: number, base?: any) {
   validateSource(source);
   requireCondition(Number.isSafeInteger(height) && height > 0, "Source block must be an explicit positive integer");
-  requireCondition(base?.schemaVersion === 1 && base.devToken && base.normalToken && base.committee, "Invalid base bootstrap config");
-  requireCondition(!("bootstrapAdminPrivateKey" in base), "Private keys are forbidden in public config");
   requireCondition(BigInt(await provider.send("eth_chainId", [])) === BigInt(source.chainId), "Source chain ID mismatch");
   const checkpoint = await provider.getBlock(height);
   requireCondition(checkpoint?.hash, `Source checkpoint is unavailable: ${height}`);
+  if (source.blockHash) requireCondition(checkpoint.hash.toLowerCase() === source.blockHash.toLowerCase(), "Source checkpoint hash mismatch");
   const pinned = new Map<number, string>([[height, checkpoint.hash]]);
   const calls: any[] = [];
   const code: any[] = [];
@@ -140,18 +171,21 @@ export async function readBootstrapSource(provider: ethers.JsonRpcProvider, sour
     requireCondition(current?.hash === hash, `Source block changed during import: ${number}`);
   }
   requireCondition(BigInt(await provider.send("eth_chainId", [])) === BigInt(source.chainId), "Source chain changed during import");
-  const config = structuredClone(base);
-  config.committee.initialMembers = members;
-  config.devToken.totalSupply = devToken.totalSupply;
-  config.devToken.initAddresses = devToken.allocations.map(item => item.address);
-  config.devToken.initAmounts = devToken.allocations.map(item => item.amount);
   const fields = ["committee.initialMembers", "devToken.totalSupply", "devToken.initAddresses", "devToken.initAmounts"];
-  const report = {
-    schemaVersion: "sourcedao-bootstrap-source:v1", policy: { committee: "members-at-checkpoint", tokenAllocation: "original-deployment-mints", copiedFields: fields },
-    source, sourceIdentitySha256: sha256(canonicalJson(source)),
+  const report: any = {
+    schemaVersion: "sourcedao-bootstrap-source:v2", policy: { committee: "members-at-checkpoint", tokenAllocation: "original-deployment-mints", copiedFields: fields },
+    source: sourceIdentity(source), sourceIdentitySha256: sha256(canonicalJson(sourceIdentity(source))),
     checkpoint: { number: height, hash: checkpoint.hash, stateRoot: checkpoint.stateRoot },
     committeeMembers: members, tokens: { devToken, normalToken },
-    baseConfigSha256: configDigest(base), configSha256: configDigest(config), observations: { calls, code },
+    observations: { calls, code },
   };
+  const imported = sharedSourceImport(report);
+  const config = base === undefined ? imported : applySourceImport(base, imported);
+  if (base === undefined) report.importedSha256 = configDigest(imported);
+  else {
+    // Keep the explicit legacy --config workflow readable during migration.
+    report.schemaVersion = "sourcedao-bootstrap-source:v1";
+    report.baseConfigSha256 = configDigest(base); report.configSha256 = configDigest(config);
+  }
   return { config, report };
 }

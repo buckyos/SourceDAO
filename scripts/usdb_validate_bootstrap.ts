@@ -1,11 +1,16 @@
+import { loadBootstrapBundle } from "./lib/bootstrap_release.js";
+import { assertSelectedNetwork, ceremonyPaths, defaultBundleDirectory, DEFAULT_RPC_URL, selectedNetwork } from "./lib/bootstrap_paths.js";
 import { mkdir } from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CheckpointProvider, ReviewedArtifacts, type Evidence } from "./lib/bootstrap_validation.js";
 import { ethers } from "ethers";
-import { atomicJson, readJson, configDigest } from "./lib/bootstrap_io.js";
+import { atomicJson, createJson, readJson, configDigest, canonicalJson } from "./lib/bootstrap_io.js";
+import { assertPublicState } from "./lib/bootstrap_public_state.js";
 
 type CliOptions = {
+  bundleDir?: string;
+  network?: string;
   configPath: string;
   rpcUrl?: string;
   stateFilePath?: string;
@@ -132,8 +137,6 @@ type ValidationSummary = {
   status: "ok";
   generatedAt: string;
   chainId: number;
-  rpcUrl: string;
-  artifactsDir: string;
   mode: ModuleValidationMode;
   daoAddress: string;
   bootstrapAdmin: string;
@@ -159,6 +162,8 @@ function printHeader(title: string) {
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
+  let bundleDir: string | undefined;
+  let network: string | undefined;
   let configPath = process.env.SOURCE_DAO_USDB_CONFIG?.trim() || "";
   let rpcUrl = process.env.SOURCE_DAO_USDB_RPC_URL?.trim() || undefined;
   let stateFilePath = process.env.SOURCE_DAO_USDB_STATE_FILE?.trim() || undefined;
@@ -166,8 +171,23 @@ function parseCliOptions(argv: string[]): CliOptions {
   let block = "latest";
   let strict = process.env.SOURCE_DAO_BOOTSTRAP_VALIDATE_STRICT === "1";
 
+  const seen = new Set<string>();
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (seen.has(arg)) throw new Error(`Duplicate argument: ${arg}`);
+    seen.add(arg);
+    if (arg === "--network") {
+      const value = argv[++index];
+      if (!value || value.startsWith("--")) throw new Error("--network requires a profile name");
+      network = selectedNetwork(value); continue;
+    }
+    if (arg === "--bundle-dir") {
+      if (bundleDir) throw new Error("Duplicate --bundle-dir");
+      const value = argv[++index];
+      if (!value || value.startsWith("--")) throw new Error("--bundle-dir requires a directory");
+      bundleDir = path.resolve(value);
+      continue;
+    }
     if (arg === "--config") {
       const next = argv[index + 1];
       if (!next || next.startsWith("--")) throw new Error("--config requires a file path");
@@ -207,18 +227,17 @@ function parseCliOptions(argv: string[]): CliOptions {
     }
     if (arg === "--help") {
       console.log(
-        "Usage: tsx scripts/usdb_validate_bootstrap.ts --config <file> [--rpc-url <url>] [--state-file <file>] [--output <file>] [--strict] [--block <height|latest>]",
+        "Usage: validate [--network <profile>] [--bundle-dir <directory> | --config <file>] [--rpc-url <url>] [--state-file <file>] [--output <file>] [--strict] [--block <height|latest>]\nBundle defaults: localhost RPC, exported public state, strict checks, public validation output.",
       );
       process.exit(0);
     }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  if (!configPath) {
-    throw new Error("Missing --config <file> or SOURCE_DAO_USDB_CONFIG");
-  }
-
-  return { configPath, rpcUrl, stateFilePath, outputPath, strict, block };
+  if (bundleDir && (argv.includes("--config") || process.env.SOURCE_DAO_USDB_CONFIG?.trim())) throw new Error("Use --bundle-dir or --config, not both");
+  if (!bundleDir && !configPath) { network = selectedNetwork(network); bundleDir = defaultBundleDirectory(network); }
+  if (configPath && network) throw new Error("--network requires bundle mode");
+  return { bundleDir, network, configPath, rpcUrl, stateFilePath, outputPath, strict: strict || Boolean(bundleDir), block };
 }
 
 async function loadJsonFile<T>(filePath: string): Promise<T> {
@@ -804,18 +823,41 @@ async function validateAcquired(
   return version;
 }
 
-async function writeOutput(outputPath: string | undefined, summary: ValidationSummary) {
+async function writeOutput(outputPath: string | undefined, summary: ValidationSummary, immutable = false) {
   if (!outputPath) return;
   await mkdir(path.dirname(outputPath), { recursive: true });
-  await atomicJson(outputPath, summary);
+  if (immutable) {
+    try { await createJson(outputPath, summary); } catch (error: any) {
+      if (error.code !== "EEXIST") throw error;
+      const previous = await readJson(outputPath);
+      if (canonicalJson({ ...summary, generatedAt: previous.generatedAt }) !== canonicalJson(previous)) throw new Error("Existing default validation differs; choose an explicit --output for a new checkpoint");
+    }
+  } else await atomicJson(outputPath, summary);
   console.log(`Wrote bootstrap validation summary: ${outputPath}`);
 }
 
 async function main() {
   const options = parseCliOptions(process.argv.slice(2));
-  const sourceConfig = await loadJsonFile<unknown>(options.configPath);
+  const bundle = options.bundleDir ? await loadBootstrapBundle(options.bundleDir) : undefined;
+  const immutableOutput = Boolean(bundle && !options.outputPath);
+  if (bundle) {
+    assertSelectedNetwork(bundle.network, options.network);
+    const paths = ceremonyPaths(bundle.config, bundle.genesisHash);
+    options.stateFilePath ??= paths.publicState;
+    options.outputPath ??= paths.validation;
+  }
+  if (immutableOutput && !process.argv.includes("--block")) {
+    try {
+      const previous = await readJson(options.outputPath!);
+      const height = previous.evidence?.checkpoint?.number;
+      if (!Number.isSafeInteger(height) || height < 0) throw new Error("Existing default validation has no valid checkpoint");
+      options.block = String(height);
+    } catch (error: any) { if (error.code !== "ENOENT") throw error; }
+  }
+  if (bundle) options.configPath = bundle.configPath;
+  const sourceConfig: unknown = bundle?.config ?? await loadJsonFile<unknown>(options.configPath);
   assertPublicBootstrapConfig(sourceConfig);
-  const config = resolveBootstrapConfig({ ...sourceConfig, rpcUrl: options.rpcUrl || sourceConfig.rpcUrl });
+  const config = resolveBootstrapConfig({ ...sourceConfig, rpcUrl: options.rpcUrl || sourceConfig.rpcUrl || DEFAULT_RPC_URL });
   const artifactsDir = normalizeArtifactsDir(options.configPath, config.artifactsDir);
   const rpcUrl = options.rpcUrl || config.rpcUrl;
   const outputPath = options.outputPath ?? config.outputPath;
@@ -828,9 +870,11 @@ async function main() {
   const genesis = await observer.send("eth_getBlockByNumber", ["0x0", false]);
   observer.destroy();
   if (!block?.hash || !block.stateRoot || !genesis?.hash) throw new Error("Cannot read validation checkpoint or genesis");
+  if (bundle && genesis.hash !== bundle.genesisHash) throw new Error("Connected genesis differs from frozen bundle");
   const height = Number(BigInt(block.number));
   if (!Number.isSafeInteger(height)) throw new Error("Checkpoint height exceeds safe integer range");
   const reviewed = await new ReviewedArtifacts().load(artifactsDir);
+  if (bundle && reviewed.digest !== bundle.goldenDigest) throw new Error("Tool artifacts differ from frozen golden");
   const evidence: Evidence = {
     schema_version: "sourcedao-bootstrap-validation:v2",
     checkpoint: { number: height, hash: block.hash, state_root: block.stateRoot },
@@ -849,6 +893,7 @@ async function main() {
   const expectedFromState = await loadExpectedModulesFromState(options.stateFilePath);
   if (options.stateFilePath) {
     const state = await readJson(options.stateFilePath);
+    if (state.record_schema !== undefined) assertPublicState(state, sourceConfig);
     if (state.status !== "completed" || state.chain_id !== config.chainId || state.ceremony_identity?.config_sha256 !== evidence.config_sha256 ||
         state.ceremony_identity?.genesis_hash !== evidence.genesis_hash || state.ceremony_identity?.golden_sha256 !== evidence.golden_sha256) {
       throw new Error("Bootstrap state identity does not match the validation ceremony");
@@ -896,8 +941,6 @@ async function main() {
     status: "ok",
     generatedAt: new Date().toISOString(),
     chainId,
-    rpcUrl,
-    artifactsDir,
     mode,
     daoAddress: config.daoAddress,
     bootstrapAdmin,
@@ -954,7 +997,7 @@ async function main() {
   provider.destroy();
   printHeader("Bootstrap validation summary");
   console.log("SourceDAO bootstrap validation succeeded.");
-  await writeOutput(outputPath, summary);
+  await writeOutput(outputPath, summary, immutableOutput);
 }
 
 main().catch((error) => {

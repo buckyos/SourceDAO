@@ -14,9 +14,9 @@ export async function freePort(): Promise<number> {
   await new Promise<void>(resolve => server.close(() => resolve()));
   return port;
 }
-export function runScript(script: string, args: string[], env: NodeJS.ProcessEnv = {}) {
-  const child = spawn(process.execPath, ["--import", "tsx", `scripts/${script}`, ...args], {
-    cwd: path.resolve(import.meta.dirname, "../.."), env: { ...process.env, SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY: TEST_KEY, ...env }, stdio: ["ignore", "pipe", "pipe"],
+export function runScript(script: string, args: string[], env: NodeJS.ProcessEnv = {}, cwd = path.resolve(import.meta.dirname, "../..")) {
+  const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), path.resolve(import.meta.dirname, "../../scripts", script), ...args], {
+    cwd, env: { ...process.env, SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY: TEST_KEY, ...env }, stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
   child.stdout.on("data", data => { output += data; }); child.stderr.on("data", data => { output += data; });

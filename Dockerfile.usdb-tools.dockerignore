@@ -1,0 +1,15 @@
+**
+!package.json
+!package-lock.json
+!hardhat.config.ts
+!tsconfig.json
+!contracts/
+!contracts/**
+!scripts/
+!scripts/**
+!security/
+!security/usdb-contract-golden.json
+!security/sources/
+!security/sources/optimism/
+!security/sources/optimism/sourcedao-opmain-import-source.json
+!Dockerfile.usdb-tools

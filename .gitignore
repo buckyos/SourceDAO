@@ -19,3 +19,8 @@ artifacts-usdb
 /abi/
 tools/config/local.json
 .local-dev/
+
+# Raw recovery evidence stays outside Git; export a whitelisted public state instead.
+*.transactions.json
+*.json.lock
+security/**/state.json

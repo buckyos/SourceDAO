@@ -8,8 +8,13 @@ const json = JSONbig({ strict: true, useNativeBigInt: true, constructorAction: "
 /** Reject duplicate keys instead of signing a parser-dependent configuration. */
 export async function readJson<T = any>(filename: string): Promise<T> {
   const contents = await readFile(filename, "utf8");
+  return parseJson<T>(contents, filename);
+}
+
+/** Parse the exact bytes whose release digest was checked. */
+export function parseJson<T = any>(contents: string, label = "JSON"): T {
   try { return json.parse(contents) as T; } catch (error: any) {
-    throw new Error(`Invalid JSON in ${filename}: ${error.message ?? String(error)}`);
+    throw new Error(`Invalid JSON in ${label}: ${error.message ?? String(error)}`);
   }
 }
 
