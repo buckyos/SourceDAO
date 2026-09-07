@@ -6,6 +6,14 @@
 
 ## 默认工作流与目录
 
+已安装 USDB release 的目标节点使用 `usdb-node sourcedao check / bootstrap / status / export / validate`，
+无需 clone 本仓库或安装 Node。签名入口为
+`usdb-node sourcedao bootstrap --key-file /secure/bootstrap-admin.key`，之后
+`usdb-node sourcedao status --watch`；成功后执行 `export`、`validate`。
+私有恢复文件与公开记录放在 `node.env` 同级的 `sourcedao/private`、`sourcedao/public`，
+实际路径由 `status` 输出。完整流程见 USDB 的 `doc/publish/usdb-node-sourcedao-operations.md`。
+以下 npm 命令用于发布前准备及需要显式参数的维护操作。
+
 在 SourceDAO 仓库使用 Node 24.12.0。默认目标网络为 `usdb-testnet-v0`；其他网络通过
 `--network <名称>` 或一次设置 `SOURCE_DAO_NETWORK` 选择。该名称必须与 bundle 身份一致，
 工具不会根据 RPC 返回结果自动切换网络。内置路径相对于工具仓库或安装目录解析，与当前工作目录无关；
@@ -37,7 +45,8 @@ security/
     └── sourcedao-bootstrap-validation.json
 ```
 
-以上都是公开文件，可由 Git 管理。原始 state 与交易 journal 默认保存在仓库外的
+以上均不含私钥。配置与来源记录可由 Git 管理，freeze apply 后以 USDB network bundle 为权威副本；
+重复生成的 frozen-network-bundle 预览和 apply 回滚备份不用提交。原始 state 与交易 journal 默认保存在仓库外的
 `~/.usdb/sourcedao-bootstrap/<chainId>/<genesisHash>/<configDigest>/`，不随 Git 或镜像发布。
 准备和冻结只处理本地文件；只有 `bootstrap` 需要私钥并发送交易。
 
@@ -139,6 +148,9 @@ golden 包含 8 个 SourceDAO 合约、ERC1967Proxy，以及实现合约中 immu
 
 ## 执行与恢复
 
+本节说明维护者直接调用 npm 脚本时的配置方式。使用 `usdb-node sourcedao` 的已安装节点由命令
+自动选择 bundle、RPC 和目录，无需设置下面的 `SOURCE_DAO_RELEASE_DIR` 等变量。
+
 开发环境不指定路径时使用选定网络的 `security/candidate/<network>/frozen-network-bundle`。
 安装环境一次设置 `SOURCE_DAO_RELEASE_DIR` 指向已验证的当前 node-kit 根目录，工具使用其
 `docker/networks/<network>`；也可通过 `SOURCE_DAO_BUNDLE_DIR` 固定到某一 bundle。
@@ -195,7 +207,9 @@ docker build -f Dockerfile.usdb-tools -t sourcedao-bootstrap-tools:candidate .
 ```
 
 构建过程执行 USDB 构建、opcode audit、golden 对照和工具类型检查。正式运维时使用发布流程记录的
-镜像 digest，不使用可变的 `latest` 标签。本次提供构建目标，没有自动上传镜像或改变现有 CI 的发布权限。
+镜像 digest，不使用可变的 `latest` 标签。SourceDAO main push 的 Fast workflow 通过合约检查后，
+调用 `usdb-tools-image.yml` 发布工具镜像及 provenance；release manifest v8 绑定该镜像的 digest 和
+SourceDAO revision。以下直接 Docker 示例供维护者使用，已安装节点优先使用 `usdb-node sourcedao`。
 `TOOLS_IMAGE`、`BUNDLE_DIR` 和 `PRIVATE_DIR` 由该次运维环境指定，两个目录使用绝对路径：
 
 ```bash
@@ -217,7 +231,9 @@ docker run --rm --network host --user "$(id -u):$(id -g)" \
 
 ## 导出公开部署记录
 
-部署完成后，先导出公开记录，再执行严格验证和 acceptance：
+export 用于把私有恢复材料转换为可公开、可复核的部署记录。部署完成后，先导出公开记录，再执行
+严格验证和 acceptance；它不发送交易、不重新部署，也不会激活分红。受管节点执行
+`usdb-node sourcedao export`，使用本仓库工具时执行：
 
 ```bash
 npm run export:bootstrap:state
@@ -231,6 +247,14 @@ RPC URL、路径、任意错误文本、附加运行信息和已签名交易字�
 相同输入重复导出保持相同字节；已有输出内容不同则失败。原私有 state 和 journal 不被修改。
 公开记录只能用于验证，bootstrap 会拒绝把它当作恢复 state。
 
+导出成功表示本地 state、journal 与冻结输入通过了一致性检查；由于不访问 RPC，它不会重新查询
+回执或发现链上的重组。state 未完成、journal 缺失／不匹配时应先核对原 bootstrap 任务和备份，
+不能手工补一个 `completed` 字段来绕过。私有目录需有创建锁的写权限；受管方式还需要 Docker
+及已缓存或可拉取的 release 工具镜像。命令只写本地公开文件，不会自动提交 Git 或上传 release。
+
+受管命令默认等待导出任务完成，SSH 中断后用 `usdb-node sourcedao status --watch` 继续观察。
+`status` 给出的 `public_state` 是实际输出路径；路径被打印并不意味着文件已经生成。
+
 | 文件 | 管理方式 |
 | --- | --- |
 | 最终配置、导入来源、冻结记录、golden | 公开 Git 与 release |
@@ -239,6 +263,10 @@ RPC URL、路径、任意错误文本、附加运行信息和已签名交易字�
 | 管理员私钥 | 独立密钥管理，不进入 Git、镜像或恢复记录 |
 
 ## 固定并验证检查点
+
+validate 用于核对链上实际代码和初始化结果是否与冻结配置、golden、public state 一致。
+它不加载私钥、不发送交易，也不修改委员会、代币分配或分红开关。受管节点在 export 成功后执行
+`usdb-node sourcedao validate`；本仓库入口为：
 
 ```bash
 npm run validate:bootstrap
@@ -253,6 +281,12 @@ npm run validate:bootstrap
 DAO 绑定，Project/Acquired 计数器，锁仓状态，以及初始化完成标记。比对 UUPS 运行时代码时，
 只对经过审核的、保存实现合约自身地址的 immutable 位置填入实际地址。
 
+首次 strict 验证应紧接 bootstrap/export、在代币转移、兑换、治理或锁仓等业务操作前进行。
+若首次读取的最新状态已经因正常业务发生变化，初始余额等基线检查也可能失败，应核对时间线，
+而不是改动冻结参数或直接认定部署损坏。成功报告为 `status: "ok"`、`mode: "strict"`，检查点位于
+`evidence.checkpoint`；受管入口的终端 `SUCCEEDED` 仅表示最近一个任务成功，完整证据在
+`status` 输出的 `validation` 文件中。
+
 bundle 模式默认启用 strict，并使用导出的公开 state。首次默认输出不存在时，在开始选定一次 `latest` 检查点；
 默认报告已存在时复用其检查点，重新验证且保留相同字节，不随链增长覆盖报告。要生成其他检查点的报告，
 显式指定 `--block H --output /path/to/new-validation.json`。显式输出保留原有覆盖语义，勿指向已发布的验收原件。
@@ -260,6 +294,15 @@ bundle 模式默认启用 strict，并使用导出的公开 state。首次默认
 在重启后的节点或新加入节点上重现报告时，添加 `--block H`。节点必须能够读取该高度的历史状态；
 遇到历史状态已被剪枝的错误，工具不会改为读取最新状态。显式开发 `--config` 的宽松验证模式用于后续运维检查，
 不能用于创建初始化验收文件。
+
+因此重复默认 validate 是对原验收检查点的复验，不是持续检查 DAO 最新业务状态的监控。
+配置／代码不匹配、重组、历史状态不可用或已有报告内容不同都会失败；保留旧文件和日志，先核对
+release、节点与历史状态，再决定是否需要维护者生成新检查点报告。当前 `usdb-node sourcedao validate`
+不提供 `--block`／`--output` 覆盖参数。
+
+validate 依赖所连接 RPC 的状态，不自行等待 PoW 确认深度，也不独立核验所有初始化交易历史。
+`check`／`status` 中 Dividend 的 `finalized=true` 只是合约完成标记，不代表区块不可重组。
+正式发布仍应完成下一节的 geth acceptance 和独立重放；该步骤尚未封装为受管子命令。
 
 ## 创建验收文件与独立重放
 

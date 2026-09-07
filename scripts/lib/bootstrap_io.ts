@@ -78,7 +78,8 @@ export async function lockState(filename: string): Promise<() => Promise<void>> 
     if (error.code === "EEXIST") throw new Error(`Bootstrap lock exists: ${lock}; verify its owner has stopped before removing it`);
     throw error;
   }
-  await file.writeFile(JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }));
+  await file.writeFile(JSON.stringify({ pid: process.pid, created_at: new Date().toISOString(),
+    ...(process.env.SOURCE_DAO_MANAGED_TASK_ID ? { managed_task_id: process.env.SOURCE_DAO_MANAGED_TASK_ID } : {}) }));
   await file.sync();
   await file.close();
   return () => unlink(lock);

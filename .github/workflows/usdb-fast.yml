@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: usdb-fast-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   sourcedao_fast:
@@ -35,3 +35,14 @@ jobs:
 
       - name: Run SourceDAO fast gate
         run: npm run test:usdb:fast
+
+  publish_tools_image:
+    name: Publish SourceDAO bootstrap tools
+    needs: sourcedao_fast
+    if: github.repository == 'buckyos/SourceDAO' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/usdb-tools-image.yml

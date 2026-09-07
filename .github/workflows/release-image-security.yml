@@ -1,0 +1,259 @@
+name: Release Image Security
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: Stable artifact prefix for the image scan evidence
+        required: true
+        type: string
+      enforcement:
+        description: Either strict or report-only
+        required: true
+        type: string
+      image_reference:
+        description: Immutable GHCR image reference including sha256 digest
+        required: true
+        type: string
+      source_revision:
+        description: Source commit used to build the image
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  scan:
+    name: Scan final image digest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.source_revision }}
+
+      - name: Validate scan identity and policy
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          ENFORCEMENT: ${{ inputs.enforcement }}
+          IMAGE_REFERENCE: ${{ inputs.image_reference }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]] || {
+            echo "invalid image scan artifact name: $ARTIFACT_NAME" >&2
+            exit 1
+          }
+          [[ "$IMAGE_REFERENCE" =~ ^ghcr\.io/buckyos/[a-z0-9-]+@sha256:[0-9a-f]{64}$ ]] || {
+            echo "image scan requires an immutable buckyos GHCR digest reference" >&2
+            exit 1
+          }
+          [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "image scan requires a full source revision" >&2
+            exit 1
+          }
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_REVISION" ]] || {
+            echo "image scan checkout does not match the source revision" >&2
+            exit 1
+          }
+          case "$ENFORCEMENT" in
+            strict|report-only) ;;
+            *)
+              echo "invalid image scan enforcement mode: $ENFORCEMENT" >&2
+              exit 1
+              ;;
+          esac
+          mkdir -p image-security
+
+      - name: Log in to GHCR for digest scan
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate complete Trivy JSON report
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ inputs.image_reference }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          format: json
+          output: image-security/trivy-image.json
+          exit-code: "0"
+          timeout: 15m
+          version: v0.74.0
+
+      - name: Generate High and Critical Trivy SARIF report
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ inputs.image_reference }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
+          ignore-unfixed: false
+          format: sarif
+          output: image-security/trivy-image.sarif
+          exit-code: "0"
+          timeout: 15m
+          version: v0.74.0
+          skip-setup-trivy: true
+
+      - name: Validate and bind scan evidence
+        id: evidence
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          ENFORCEMENT: ${{ inputs.enforcement }}
+          IMAGE_REFERENCE: ${{ inputs.image_reference }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          set -euo pipefail
+          report="image-security/trivy-image.json"
+          sarif="image-security/trivy-image.sarif"
+          jq -e '
+            (.SchemaVersion | type == "number") and
+            ((.Results // []) | type == "array")
+          ' "$report" >/dev/null
+          jq -e '
+            .version == "2.1.0" and
+            (.runs | type == "array")
+          ' "$sarif" >/dev/null
+
+          count_severity() {
+            local severity="$1"
+            jq --arg severity "$severity" '
+              [.Results[]?.Vulnerabilities[]? |
+                select(.Severity == $severity)] | length
+            ' "$report"
+          }
+
+          critical_count="$(count_severity CRITICAL)"
+          high_count="$(count_severity HIGH)"
+          medium_count="$(count_severity MEDIUM)"
+          low_count="$(count_severity LOW)"
+          unknown_count="$(count_severity UNKNOWN)"
+          report_sha256="$(sha256sum "$report" | cut -d ' ' -f 1)"
+          sarif_sha256="$(sha256sum "$sarif" | cut -d ' ' -f 1)"
+          scanner_version="$(trivy --version | sed -n '1p')"
+          image_digest="${IMAGE_REFERENCE##*@}"
+          generated_at_utc="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          jq -n \
+            --arg schema_version "usdb-image-vulnerability-report:v1" \
+            --arg image_reference "$IMAGE_REFERENCE" \
+            --arg image_digest "$image_digest" \
+            --arg source_repository "$GITHUB_REPOSITORY" \
+            --arg source_revision "$SOURCE_REVISION" \
+            --arg source_ref "$GITHUB_REF" \
+            --arg scanner_version "$scanner_version" \
+            --arg enforcement "$ENFORCEMENT" \
+            --arg generated_at_utc "$generated_at_utc" \
+            --arg report_sha256 "$report_sha256" \
+            --arg sarif_sha256 "$sarif_sha256" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --arg workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson critical "$critical_count" \
+            --argjson high "$high_count" \
+            --argjson medium "$medium_count" \
+            --argjson low "$low_count" \
+            --argjson unknown "$unknown_count" \
+            '{
+              schema_version: $schema_version,
+              image: {
+                reference: $image_reference,
+                digest: $image_digest
+              },
+              source: {
+                repository: $source_repository,
+                revision: $source_revision,
+                ref: $source_ref
+              },
+              scanner: {
+                name: "Trivy",
+                version: $scanner_version
+              },
+              policy: {
+                enforcement: $enforcement,
+                blocking_severities: ["CRITICAL", "HIGH"],
+                ignore_unfixed: false
+              },
+              findings: {
+                critical: $critical,
+                high: $high,
+                medium: $medium,
+                low: $low,
+                unknown: $unknown
+              },
+              reports: {
+                json_sha256: $report_sha256,
+                sarif_sha256: $sarif_sha256
+              },
+              workflow: {
+                run_id: $workflow_run_id,
+                run_attempt: $workflow_run_attempt
+              },
+              generated_at_utc: $generated_at_utc
+            }' >image-security/metadata.json
+
+          (
+            cd image-security
+            sha256sum metadata.json trivy-image.json trivy-image.sarif >SHA256SUMS
+          )
+          artifact="${ARTIFACT_NAME}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          {
+            echo "artifact=$artifact"
+            echo "critical_count=$critical_count"
+            echo "high_count=$high_count"
+          } >>"$GITHUB_OUTPUT"
+          {
+            echo "### Final image vulnerability scan"
+            echo
+            echo "Image: \`$IMAGE_REFERENCE\`"
+            echo
+            echo "Source revision: \`$SOURCE_REVISION\`"
+            echo
+            echo "Policy: \`$ENFORCEMENT\`"
+            echo
+            echo "Critical: \`$critical_count\`; High: \`$high_count\`; Medium: \`$medium_count\`; Low: \`$low_count\`; Unknown: \`$unknown_count\`"
+            echo
+            echo "Evidence artifact: \`$artifact\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload digest-bound scan evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ steps.evidence.outputs.artifact }}
+          path: image-security/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Enforce High and Critical policy
+        shell: bash
+        env:
+          CRITICAL_COUNT: ${{ steps.evidence.outputs.critical_count }}
+          ENFORCEMENT: ${{ inputs.enforcement }}
+          HIGH_COUNT: ${{ steps.evidence.outputs.high_count }}
+          IMAGE_REFERENCE: ${{ inputs.image_reference }}
+        run: |
+          set -euo pipefail
+          if [[ "$ENFORCEMENT" == "report-only" ]]; then
+            echo "Image findings are report-only for this release lane."
+            exit 0
+          fi
+          if (( CRITICAL_COUNT > 0 || HIGH_COUNT > 0 )); then
+            echo "::error title=Release image vulnerability gate::${IMAGE_REFERENCE} contains ${CRITICAL_COUNT} Critical and ${HIGH_COUNT} High findings"
+            exit 1
+          fi
+          echo "No Critical or High image vulnerabilities were reported."

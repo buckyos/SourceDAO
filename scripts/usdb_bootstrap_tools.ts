@@ -5,12 +5,13 @@ import { assertSelectedNetwork, ceremonyPaths, defaultBundleDirectory, selectedN
 import { loadBootstrapBundle } from "./lib/bootstrap_release.js";
 
 const commands: Record<string, string> = {
+  check: "usdb_check_bootstrap.ts",
   bootstrap: "usdb_bootstrap_full.ts", validate: "usdb_validate_bootstrap.ts",
   "export-state": "usdb_export_bootstrap_state.ts", "import-source": "usdb_import_bootstrap_source.ts",
 };
 const command = process.argv[2];
 if (!command || command === "--help") {
-  console.log("Usage: sourcedao-tools <import-source|prepare|freeze|paths|bootstrap|export-state|validate> [arguments]\nprepare/freeze require the sibling USDB checkout and Python 3.10+.");
+  console.log("Usage: sourcedao-tools <import-source|prepare|freeze|paths|check|bootstrap|export-state|validate> [arguments]\nprepare/freeze require the sibling USDB checkout and Python 3.10+.");
 } else if (command === "paths") {
   try {
     const options: Record<string, string> = {};

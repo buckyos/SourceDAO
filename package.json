@@ -37,7 +37,7 @@
     "stack:local": "bash scripts/local_dev_stack.sh",
     "stack:local:stop": "bash scripts/stop_local_dev_stack.sh",
     "stack:local:reset": "bash scripts/local_dev_stack.sh --reset",
-    "test:usdb:tools:typecheck": "tsc --noEmit --strict --target es2022 --module nodenext --moduleResolution nodenext --esModuleInterop --skipLibCheck scripts/usdb_bootstrap_full.ts scripts/usdb_validate_bootstrap.ts scripts/usdb_import_bootstrap_source.ts scripts/usdb_export_bootstrap_state.ts scripts/usdb_bootstrap_tools.ts",
+    "test:usdb:tools:typecheck": "tsc --noEmit --strict --target es2022 --module nodenext --moduleResolution nodenext --esModuleInterop --skipLibCheck scripts/usdb_bootstrap_full.ts scripts/usdb_validate_bootstrap.ts scripts/usdb_import_bootstrap_source.ts scripts/usdb_export_bootstrap_state.ts scripts/usdb_bootstrap_tools.ts scripts/usdb_check_bootstrap.ts",
     "test:usdb:tools": "npm run test:usdb:tools:typecheck && node --import tsx --test tests/bootstrap_*.test.ts",
     "import:bootstrap:source": "tsx scripts/usdb_import_bootstrap_source.ts",
     "export:bootstrap:state": "tsx scripts/usdb_export_bootstrap_state.ts",

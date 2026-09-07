@@ -20,8 +20,19 @@ test("Frozen bundle execution exports reproducible public evidence while preserv
       SOURCE_DAO_BUNDLE_DIR: bundle.root, SOURCE_DAO_USDB_RPC_URL: chain.url, SOURCE_DAO_NETWORK: "usdb-testnet-v0",
       SOURCE_DAO_BOOTSTRAP_PRIVATE_DIR: privateRoot, SOURCE_DAO_BOOTSTRAP_PUBLIC_DIR: publicRoot };
     const args: string[] = [];
+    const checkArgs = ["check", "--bundle-dir", bundle.root, "--rpc-url", chain.url];
+    const checkEnv = { SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY: "", SOURCE_DAO_BOOTSTRAP_PRIVATE_KEY_FILE: "" };
+    const preflight = await runScript("usdb_bootstrap_tools.ts", checkArgs, checkEnv).result;
+    assert.equal(preflight.code, 0, preflight.output);
+    const preflightReport = JSON.parse(preflight.output);
+    assert.equal(preflightReport.ready_for_bootstrap, true);
+    assert.equal(preflightReport.finalized, false);
+    assert.equal(await chain.provider.getTransactionCount(chain.config.bootstrapAdminAddress), 0);
     let result = await runScript("usdb_bootstrap_tools.ts", ["bootstrap"], env, chain.root).result;
     assert.equal(result.code, 0, result.output);
+    const finalizedCheck = await runScript("usdb_bootstrap_tools.ts", checkArgs, checkEnv).result;
+    assert.equal(finalizedCheck.code, 0, finalizedCheck.output);
+    assert.equal(JSON.parse(finalizedCheck.output).finalized, true);
     let privateState = JSON.parse(await readFile(chain.statePath, "utf8"));
     privateState.rpc_url = "https://private.invalid/?api-key=PRIVATE_SENTINEL";
     privateState.last_error = "PRIVATE_SENTINEL";
