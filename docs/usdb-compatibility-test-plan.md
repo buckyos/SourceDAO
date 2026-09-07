@@ -318,3 +318,16 @@ SourceDAO 当前不应再把 Hardhat 测试看作“对 USDB 的最终兼容证�
 - USDB 链功能接入
 
 这些过程中逐步漂移而不自知。
+
+
+## 12. Bootstrap 工具与 checkpoint 验收（2026-09-06）
+
+新增 `npm run test:usdb:tools` 并接入 fast gate；使用项目固定的 Node 24.12.0。
+操作、恢复限制与 acceptance v2 输入见 [USDB bootstrap 工具说明](./usdb-bootstrap-tools.md)。
+
+- 实际执行两个 artifact 格式的 opcode 扫描，报告非空 runtime 数并要求 9 个生产/proxy artifact 覆盖。
+- 临时链模拟 5 个部署强杀点，验证 fixed nonce / signed bytes 恢复和 22 笔原交易证据保留。
+- 覆盖错误初始持仓、反向绑定、Acquired 计数器、同 version 的错误 runtime、checkpoint 变化与历史重放。
+- paired geth 验收使用本地 reviewed golden，重放固定 H 的状态；restart/joiner 节点保留 archive state。
+
+这些用例验证工具行为与候选链验收，不能替代独立治理漏洞修复或正式参数审查。

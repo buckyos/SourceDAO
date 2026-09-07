@@ -46,6 +46,93 @@
     {
       "abi": [
         {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "implementation",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes",
+              "name": "_data",
+              "type": "bytes"
+            }
+          ],
+          "stateMutability": "payable",
+          "type": "constructor"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "target",
+              "type": "address"
+            }
+          ],
+          "name": "AddressEmptyCode",
+          "type": "error"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "implementation",
+              "type": "address"
+            }
+          ],
+          "name": "ERC1967InvalidImplementation",
+          "type": "error"
+        },
+        {
+          "inputs": [],
+          "name": "ERC1967NonPayable",
+          "type": "error"
+        },
+        {
+          "inputs": [],
+          "name": "FailedInnerCall",
+          "type": "error"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "implementation",
+              "type": "address"
+            }
+          ],
+          "name": "Upgraded",
+          "type": "event"
+        },
+        {
+          "stateMutability": "payable",
+          "type": "fallback"
+        }
+      ],
+      "abi_sha256": "sha256:5c04fa8367234b4fbcb81f6d6ffb5b273c6ba09accd72757d001955479cb5e3f",
+      "artifact_path": "artifacts-usdb/@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol/ERC1967Proxy.json",
+      "artifact_sha256": "sha256:1e5949386f98abf729170c3c2dd0fc24ec6a32690bafe94c85355eddd32896c1",
+      "contract_name": "ERC1967Proxy",
+      "creation_bytecode_sha256": "sha256:50910073040f7d76084d7a36417f9bfa5e95eebd27d89bbd2dba3e55e1f4a6de",
+      "creation_size_bytes": 714,
+      "immutable_references": {},
+      "method_identifiers": {},
+      "method_identifiers_sha256": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "runtime_bytecode_keccak256": "0x830146248b79fe4e69ccabbf32d0d1f8895fe4a65b3209e68f8eef5c794bee93",
+      "runtime_bytecode_sha256": "sha256:66c94c84d629e1e712218c2d800615da65591167bd1d502a3da90e3a92c552bd",
+      "runtime_size_bytes": 132,
+      "source_name": "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol",
+      "storage_layout": {
+        "storage": [],
+        "types": null
+      },
+      "storage_layout_sha256": "sha256:f846b023549275be2e0c1636ca4bec256cd67a0365c39781e76ec879398473a8"
+    },
+    {
+      "abi": [
+        {
           "inputs": [],
           "stateMutability": "nonpayable",
           "type": "constructor"
@@ -614,6 +701,18 @@
       "contract_name": "Acquired",
       "creation_bytecode_sha256": "sha256:a545bba669447247d4466a3e18597bab2e86074cfb47a20db3eace18c4a69b12",
       "creation_size_bytes": 7687,
+      "immutable_references": {
+        "468": [
+          {
+            "length": 32,
+            "start": 4936
+          },
+          {
+            "length": 32,
+            "start": 7276
+          }
+        ]
+      },
       "method_identifiers": {
         "UPGRADE_INTERFACE_VERSION()": "ad3cb1cc",
         "endInvestment(uint256)": "d7dfe254",
@@ -1917,6 +2016,18 @@
       "contract_name": "SourceDaoCommittee",
       "creation_bytecode_sha256": "sha256:01135824637a1cbaad8142c895ee8c196bcccfa66c54b48d3b146d085ec06856",
       "creation_size_bytes": 17197,
+      "immutable_references": {
+        "468": [
+          {
+            "length": 32,
+            "start": 4529
+          },
+          {
+            "length": 32,
+            "start": 16598
+          }
+        ]
+      },
       "method_identifiers": {
         "UPGRADE_INTERFACE_VERSION()": "ad3cb1cc",
         "addCommitteeMember(address,uint256)": "2aa8f76e",
@@ -2755,6 +2866,18 @@
       "contract_name": "SourceDao",
       "creation_bytecode_sha256": "sha256:453b6464737e86eff93f4747f189e3dbe92d1c7ee2f691c1b2a97f453853616b",
       "creation_size_bytes": 4583,
+      "immutable_references": {
+        "468": [
+          {
+            "length": 32,
+            "start": 2075
+          },
+          {
+            "length": 32,
+            "start": 4267
+          }
+        ]
+      },
       "method_identifiers": {
         "UPGRADE_INTERFACE_VERSION()": "ad3cb1cc",
         "acquired()": "4b9fc6d5",
@@ -3480,6 +3603,18 @@
       "contract_name": "DevToken",
       "creation_bytecode_sha256": "sha256:50a7861822e39422e1f72f5ab5426c0979d78e8b744f07405f4bde15f0da5a7c",
       "creation_size_bytes": 8158,
+      "immutable_references": {
+        "468": [
+          {
+            "length": 32,
+            "start": 3448
+          },
+          {
+            "length": 32,
+            "start": 7474
+          }
+        ]
+      },
       "method_identifiers": {
         "UPGRADE_INTERFACE_VERSION()": "ad3cb1cc",
         "allowance(address,address)": "dd62ed3e",
@@ -4358,6 +4493,18 @@
       "contract_name": "DividendContract",
       "creation_bytecode_sha256": "sha256:d20d869fde0bcf9dee2450a11a9309fadfe480909f20e717af5afae145e9d5fb",
       "creation_size_bytes": 12432,
+      "immutable_references": {
+        "468": [
+          {
+            "length": 32,
+            "start": 5757
+          },
+          {
+            "length": 32,
+            "start": 12169
+          }
+        ]
+      },
       "method_identifiers": {
         "UPGRADE_INTERFACE_VERSION()": "ad3cb1cc",
         "bootstrapFinalized()": "26f2c5ae",
@@ -5179,6 +5326,18 @@
       "contract_name": "NormalToken",
       "creation_bytecode_sha256": "sha256:6e699e0e1284eb310dcfec99e18956b5c8330f76598220520a3f910b24d04ac1",
       "creation_size_bytes": 5908,
+      "immutable_references": {
+        "468": [
+          {
+            "length": 32,
+            "start": 1505
+          },
+          {
+            "length": 32,
+            "start": 5398
+          }
+        ]
+      },
       "method_identifiers": {
         "UPGRADE_INTERFACE_VERSION()": "ad3cb1cc",
         "allowance(address,address)": "dd62ed3e",
@@ -5985,6 +6144,18 @@
       "contract_name": "ProjectManagement",
       "creation_bytecode_sha256": "sha256:62cd3ba79638fad2a1bca23e8db56b76c01046c092814ccd6ee1d293b60df955",
       "creation_size_bytes": 12157,
+      "immutable_references": {
+        "468": [
+          {
+            "length": 32,
+            "start": 5331
+          },
+          {
+            "length": 32,
+            "start": 11763
+          }
+        ]
+      },
       "method_identifiers": {
         "UPGRADE_INTERFACE_VERSION()": "ad3cb1cc",
         "acceptProject(uint256,uint8,(address,uint64)[])": "37a5e4bf",
@@ -6755,6 +6926,18 @@
       "contract_name": "SourceTokenLockup",
       "creation_bytecode_sha256": "sha256:e1bf311f6dd64357875a2c372726c5883b28c1ddfd6717ddca5cdb93ef7e2b21",
       "creation_size_bytes": 6034,
+      "immutable_references": {
+        "468": [
+          {
+            "length": 32,
+            "start": 1580
+          },
+          {
+            "length": 32,
+            "start": 4070
+          }
+        ]
+      },
       "method_identifiers": {
         "UPGRADE_INTERFACE_VERSION()": "ad3cb1cc",
         "_totalAssigned()": "2b208bde",

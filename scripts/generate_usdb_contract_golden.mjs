@@ -16,6 +16,7 @@ const defaultOutputPath = path.join(
 );
 
 const productionContracts = [
+  ["@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol", "ERC1967Proxy"],
   ["contracts/Acquired.sol", "Acquired"],
   ["contracts/Committee.sol", "SourceDaoCommittee"],
   ["contracts/Dao.sol", "SourceDao"],
@@ -122,6 +123,27 @@ function findBuildInfo() {
   return { inputPath, outputPath };
 }
 
+function checkedImmutableReferences(compiled, buildOutput) {
+  const references = compiled.evm.deployedBytecode.immutableReferences ?? {};
+  const declarations = new Map();
+  const visit = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (node.nodeType === "VariableDeclaration") declarations.set(String(node.id), node);
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach(visit);
+      else if (value && typeof value === "object") visit(value);
+    }
+  };
+  for (const source of Object.values(buildOutput.output.sources)) visit(source.ast);
+  for (const id of Object.keys(references)) {
+    const declaration = declarations.get(id);
+    if (declaration?.name !== "__self" || declaration.mutability !== "immutable") {
+      throw new Error(`Unsupported implementation immutable ${id}; review runtime normalization before updating the golden`);
+    }
+  }
+  return canonicalize(references);
+}
+
 function buildGolden() {
   const { inputPath, outputPath } = findBuildInfo();
   const buildInput = readJson(inputPath);
@@ -132,7 +154,9 @@ function buildGolden() {
   }
 
   const contracts = productionContracts.map(([sourceName, contractName]) => {
-    const buildSourceName = `project/${sourceName}`;
+    const buildSourceName = sourceName.startsWith("@openzeppelin/")
+      ? `npm/@openzeppelin/contracts@5.0.2/${sourceName.slice("@openzeppelin/contracts/".length)}`
+      : `project/${sourceName}`;
     const compiled = buildOutput?.output?.contracts?.[buildSourceName]?.[contractName];
     if (compiled === undefined) {
       throw new Error(`USDB build-info is missing ${buildSourceName}:${contractName}`);
@@ -172,6 +196,7 @@ function buildGolden() {
       runtime_size_bytes: runtimeBytes.length,
       storage_layout_sha256: sha256Json(storageLayout),
       storage_layout: storageLayout,
+      immutable_references: checkedImmutableReferences(compiled, buildOutput),
     };
   });
 

@@ -1,7 +1,9 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CheckpointProvider, ReviewedArtifacts, type Evidence } from "./lib/bootstrap_validation.js";
 import { ethers } from "ethers";
+import { atomicJson, readJson, configDigest } from "./lib/bootstrap_io.js";
 
 type CliOptions = {
   configPath: string;
@@ -9,6 +11,7 @@ type CliOptions = {
   stateFilePath?: string;
   outputPath?: string;
   strict: boolean;
+  block: string;
 };
 
 type ModuleValidationMode = "relaxed" | "strict";
@@ -125,6 +128,7 @@ type BootstrapState = {
 };
 
 type ValidationSummary = {
+  evidence: Evidence;
   status: "ok";
   generatedAt: string;
   chainId: number;
@@ -148,6 +152,8 @@ const ZERO_ADDRESS = ethers.ZeroAddress;
 const SOURCE_DAO_BOOTSTRAP_SCHEMA_VERSION = 1;
 const MAX_UINT256 = (1n << 256n) - 1n;
 
+let activeProvider: ethers.JsonRpcProvider | undefined;
+
 function printHeader(title: string) {
   console.log(`\n=== ${title} ===`);
 }
@@ -157,6 +163,7 @@ function parseCliOptions(argv: string[]): CliOptions {
   let rpcUrl = process.env.SOURCE_DAO_USDB_RPC_URL?.trim() || undefined;
   let stateFilePath = process.env.SOURCE_DAO_USDB_STATE_FILE?.trim() || undefined;
   let outputPath = process.env.SOURCE_DAO_BOOTSTRAP_VALIDATE_OUTPUT?.trim() || undefined;
+  let block = "latest";
   let strict = process.env.SOURCE_DAO_BOOTSTRAP_VALIDATE_STRICT === "1";
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -189,28 +196,33 @@ function parseCliOptions(argv: string[]): CliOptions {
       index += 1;
       continue;
     }
+    if (arg === "--block") {
+      block = argv[++index];
+      if (!block || (block !== "latest" && !/^(0x[0-9a-fA-F]+|[0-9]+)$/.test(block))) throw new Error("--block requires a height or latest");
+      continue;
+    }
     if (arg === "--strict") {
       strict = true;
       continue;
     }
     if (arg === "--help") {
       console.log(
-        "Usage: tsx scripts/usdb_validate_bootstrap.ts --config <file> [--rpc-url <url>] [--state-file <file>] [--output <file>] [--strict]",
+        "Usage: tsx scripts/usdb_validate_bootstrap.ts --config <file> [--rpc-url <url>] [--state-file <file>] [--output <file>] [--strict] [--block <height|latest>]",
       );
       process.exit(0);
     }
+    throw new Error(`Unknown argument: ${arg}`);
   }
 
   if (!configPath) {
     throw new Error("Missing --config <file> or SOURCE_DAO_USDB_CONFIG");
   }
 
-  return { configPath, rpcUrl, stateFilePath, outputPath, strict };
+  return { configPath, rpcUrl, stateFilePath, outputPath, strict, block };
 }
 
 async function loadJsonFile<T>(filePath: string): Promise<T> {
-  const blob = await readFile(filePath, "utf8");
-  return JSON.parse(blob) as T;
+  return readJson<T>(filePath);
 }
 
 function assertPublicBootstrapConfig(config: unknown): asserts config is SourceDaoBootstrapConfig {
@@ -647,6 +659,13 @@ async function validateDevToken(
   if (mode === "strict") {
     assertBigIntEqual("DevToken.totalSupply", totalSupply, parseBigIntString(config.devToken.totalSupply, "devToken.totalSupply"));
     assertBigIntEqual("DevToken.totalReleased", totalReleased, sumBigInts(config.devToken.initAmounts));
+    assertBigIntEqual("DevToken.decimals", await token.decimals(), 18n);
+    for (let i = 0; i < config.devToken.initAddresses.length; i++) {
+      const holder = config.devToken.initAddresses[i];
+      if (sameAddress(holder, address)) throw new Error("DevToken reserve address cannot be an initial holder");
+      assertBigIntEqual(`DevToken.balanceOf(${holder})`, await token.balanceOf(holder), BigInt(config.devToken.initAmounts[i]));
+    }
+    assertBigIntEqual("DevToken.reserve", await token.balanceOf(address), BigInt(config.devToken.totalSupply) - sumBigInts(config.devToken.initAmounts));
   } else {
     assertBigIntAtLeast("DevToken.totalSupply", totalSupply, 1n);
     if (asBigInt(totalReleased, "DevToken.totalReleased") > asBigInt(totalSupply, "DevToken.totalSupply")) {
@@ -669,7 +688,10 @@ async function validateNormalToken(
   assertStringEqual("NormalToken.name", await assertCallable("NormalToken.name", () => token.name() as Promise<string>), config.normalToken.name);
   assertStringEqual("NormalToken.symbol", await assertCallable("NormalToken.symbol", () => token.symbol() as Promise<string>), config.normalToken.symbol);
   const totalSupply = await assertCallable("NormalToken.totalSupply", () => token.totalSupply() as Promise<bigint>);
-  if (mode === "strict") assertBigIntEqual("NormalToken.totalSupply", totalSupply, 0n);
+  if (mode === "strict") {
+    assertBigIntEqual("NormalToken.totalSupply", totalSupply, 0n);
+    assertBigIntEqual("NormalToken.decimals", await token.decimals(), 18n);
+  }
   return version;
 }
 
@@ -697,7 +719,8 @@ async function validateTokenLockup(
     lockup.totalAssigned(ZERO_ADDRESS) as Promise<bigint>,
   );
   if (mode === "strict") assertBigIntEqual("TokenLockup.totalAssigned(address(0))", totalAssigned, 0n);
-  await assertCallable("TokenLockup.totalClaimed", () => lockup.totalClaimed(ZERO_ADDRESS) as Promise<bigint>);
+  const claimed = await assertCallable("TokenLockup.totalClaimed", () => lockup.totalClaimed(ZERO_ADDRESS) as Promise<bigint>);
+  if (mode === "strict") assertBigIntEqual("TokenLockup.totalClaimed", claimed, 0n);
   return version;
 }
 
@@ -715,6 +738,10 @@ async function validateProject(
   const expectedCounter = BigInt(config.project.initProjectIdCounter);
   if (mode === "strict") {
     assertBigIntEqual("Project.projectIdCounter", counter, expectedCounter);
+    assertBigIntEqual("Project.minProjectFinishDuration", await project.minProjectFinishDuration(), 604800n);
+    const initialVersion = await project.latestProjectVersion(ethers.encodeBytes32String(config.committee.mainProjectName));
+    assertBigIntEqual("Project.latestProjectVersion.version", initialVersion.version, 0n);
+    assertBigIntEqual("Project.latestProjectVersion.versionTime", initialVersion.versionTime, 0n);
   } else {
     assertBigIntAtLeast("Project.projectIdCounter", counter, expectedCounter);
   }
@@ -780,7 +807,7 @@ async function validateAcquired(
 async function writeOutput(outputPath: string | undefined, summary: ValidationSummary) {
   if (!outputPath) return;
   await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  await atomicJson(outputPath, summary);
   console.log(`Wrote bootstrap validation summary: ${outputPath}`);
 }
 
@@ -788,13 +815,30 @@ async function main() {
   const options = parseCliOptions(process.argv.slice(2));
   const sourceConfig = await loadJsonFile<unknown>(options.configPath);
   assertPublicBootstrapConfig(sourceConfig);
-  const config = resolveBootstrapConfig(sourceConfig);
+  const config = resolveBootstrapConfig({ ...sourceConfig, rpcUrl: options.rpcUrl || sourceConfig.rpcUrl });
   const artifactsDir = normalizeArtifactsDir(options.configPath, config.artifactsDir);
   const rpcUrl = options.rpcUrl || config.rpcUrl;
   const outputPath = options.outputPath ?? config.outputPath;
   const mode: ModuleValidationMode = options.strict ? "strict" : "relaxed";
 
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const observer = new ethers.JsonRpcProvider(rpcUrl, undefined, { cacheTimeout: -1 });
+  activeProvider = observer;
+  const tag = options.block === "latest" ? "latest" : ethers.toQuantity(BigInt(options.block));
+  const block = await observer.send("eth_getBlockByNumber", [tag, false]);
+  const genesis = await observer.send("eth_getBlockByNumber", ["0x0", false]);
+  observer.destroy();
+  if (!block?.hash || !block.stateRoot || !genesis?.hash) throw new Error("Cannot read validation checkpoint or genesis");
+  const height = Number(BigInt(block.number));
+  if (!Number.isSafeInteger(height)) throw new Error("Checkpoint height exceeds safe integer range");
+  const reviewed = await new ReviewedArtifacts().load(artifactsDir);
+  const evidence: Evidence = {
+    schema_version: "sourcedao-bootstrap-validation:v2",
+    checkpoint: { number: height, hash: block.hash, state_root: block.stateRoot },
+    genesis_hash: genesis.hash, config_sha256: configDigest(sourceConfig), golden_sha256: reviewed.digest,
+    code: [], storage: [], calls: [],
+  };
+  const provider = new CheckpointProvider(rpcUrl, evidence);
+  activeProvider = provider;
   const network = await provider.getNetwork();
   const chainId = Number(network.chainId);
   if (chainId !== config.chainId) {
@@ -803,6 +847,14 @@ async function main() {
 
   const dao = await contractFromArtifact(provider, artifactsDir, "contracts/Dao.sol/SourceDao.json", config.daoAddress);
   const expectedFromState = await loadExpectedModulesFromState(options.stateFilePath);
+  if (options.stateFilePath) {
+    const state = await readJson(options.stateFilePath);
+    if (state.status !== "completed" || state.chain_id !== config.chainId || state.ceremony_identity?.config_sha256 !== evidence.config_sha256 ||
+        state.ceremony_identity?.genesis_hash !== evidence.genesis_hash || state.ceremony_identity?.golden_sha256 !== evidence.golden_sha256) {
+      throw new Error("Bootstrap state identity does not match the validation ceremony");
+    }
+    if (state.operations.some((op: any) => op.status === "error" || op.block_number > height)) throw new Error("Checkpoint precedes successful bootstrap completion");
+  }
   const expectedModules = {
     ...config.expectedModules,
     ...expectedFromState,
@@ -817,6 +869,7 @@ async function main() {
   console.log(`DAO                ${config.daoAddress}`);
 
   printHeader("DAO checks");
+  await reviewed.checkCode(provider, "dao", config.daoAddress);
   await ensureCode(provider, config.daoAddress, "DAO");
   const daoVersion = await readVersion(dao, "DAO");
   const bootstrapAdmin = ethers.getAddress(await assertCallable("DAO.bootstrapAdmin", () => dao.bootstrapAdmin() as Promise<string>));
@@ -839,6 +892,7 @@ async function main() {
 
   const probeAddress = config.committee.initialMembers[0] ?? bootstrapAdmin;
   const summary: ValidationSummary = {
+    evidence,
     status: "ok",
     generatedAt: new Date().toISOString(),
     chainId,
@@ -863,6 +917,10 @@ async function main() {
     if (expectedAddress) {
       assertAddressEqual(`DAO.${key}`, address, expectedAddress);
     }
+    await reviewed.checkCode(provider, key, address);
+    await reviewed.checkStorage(provider, key, address, "mainContractAddress", BigInt(config.daoAddress));
+    if (mode === "strict" && key === "acquired") await reviewed.checkStorage(provider, key, address, "investmentCount", BigInt(config.acquired.initInvestmentCount));
+    if (mode === "strict" && key === "lockup") await reviewed.checkStorage(provider, key, address, "unlockTime", 0n);
     await assertDaoModuleRegistered(dao, address, label);
     const version = await validate(address);
     summary.modules[key] = { address, version, expectedAddress };
@@ -892,6 +950,8 @@ async function main() {
     validateAcquired(address, provider, artifactsDir, config, probeAddress),
   );
 
+  await provider.finish();
+  provider.destroy();
   printHeader("Bootstrap validation summary");
   console.log("SourceDAO bootstrap validation succeeded.");
   await writeOutput(outputPath, summary);
@@ -901,4 +961,4 @@ main().catch((error) => {
   console.error("\nSourceDAO bootstrap validation failed.");
   console.error(error instanceof Error ? error.stack || error.message : String(error));
   process.exitCode = 1;
-});
+}).finally(() => { activeProvider?.destroy(); });

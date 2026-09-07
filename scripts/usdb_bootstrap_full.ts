@@ -1,7 +1,9 @@
-import { readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
+import { BootstrapJournal } from "./lib/bootstrap_journal.js";
+import { ReviewedArtifacts } from "./lib/bootstrap_validation.js";
+import { atomicJson, readJson, configDigest, lockState } from "./lib/bootstrap_io.js";
 
 type CliOptions = {
   configPath: string;
@@ -97,6 +99,7 @@ type BootstrapModules = {
 type ModuleValidationMode = "existing" | "deployed";
 
 type BootstrapState = {
+  ceremony_identity: import("./lib/bootstrap_journal.js").JournalIdentity;
   state_version: string;
   generated_at: string;
   completed_at: string | null;
@@ -149,8 +152,13 @@ type BootstrapRuntimeContext = {
   operations: BootstrapOperation[];
   modules: BootstrapModules;
   currentStep: string | null;
+  preserveCompletedState?: boolean;
 };
 
+let journal: BootstrapJournal;
+let reviewedArtifacts: ReviewedArtifacts;
+let activeProvider: ethers.JsonRpcProvider | undefined;
+let releaseLock: (() => Promise<void>) | undefined;
 let latestRuntimeContext: BootstrapRuntimeContext | null = null;
 
 function printHeader(title: string) {
@@ -182,14 +190,15 @@ async function writeBootstrapStateSnapshot(
   message: string,
   lastError: string | null = null,
 ) {
-  const { options, config, artifactsDir, rpcUrl, walletAddress, operations, modules, currentStep } = context;
-  if (!options.stateFilePath) {
+  const { options, config, artifactsDir, rpcUrl, walletAddress, modules, currentStep } = context;
+  if (!options.stateFilePath || context.preserveCompletedState) {
     return;
   }
 
   const completedAt = status === "completed" ? new Date().toISOString() : null;
   const state: BootstrapState = {
     state_version: "1",
+    ceremony_identity: journal.data.identity,
     generated_at: new Date().toISOString(),
     completed_at: completedAt,
     status,
@@ -206,7 +215,7 @@ async function writeBootstrapStateSnapshot(
     dividend_address: config.dividendAddress,
     bootstrap_admin: walletAddress,
     warnings: config.warnings,
-    operations,
+    operations: journal.operations(),
     final_wiring: {
       committee: moduleAddress(modules, "committee"),
       dev_token: moduleAddress(modules, "dev_token"),
@@ -219,7 +228,7 @@ async function writeBootstrapStateSnapshot(
     modules,
   };
 
-  await writeFile(options.stateFilePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await atomicJson(options.stateFilePath, state);
 }
 
 async function updateProgress(
@@ -274,14 +283,14 @@ function parseCliOptions(argv: string[]): CliOptions {
       );
       process.exit(0);
     }
+    throw new Error(`Unknown argument: ${arg}`);
   }
 
   return { configPath, rpcUrl, stateFilePath, repoDir };
 }
 
 async function loadJsonFile<T>(filePath: string): Promise<T> {
-  const blob = await readFile(filePath, "utf8");
-  return JSON.parse(blob) as T;
+  return readJson<T>(filePath);
 }
 
 function assertPublicBootstrapConfig(config: unknown): asserts config is SourceDaoBootstrapConfig {
@@ -983,20 +992,10 @@ async function validateAcquiredModule(
   );
 }
 
-async function sendAndWait(
-  label: string,
-  action: () => Promise<ethers.TransactionResponse | ethers.ContractTransactionResponse>,
-) {
-  const tx = await action();
-  console.log(`${label}: ${tx.hash}`);
-  const receipt = await tx.wait();
-  if (!receipt || receipt.status !== 1) {
-    throw new Error(`${label} failed`);
-  }
-  return {
-    txHash: tx.hash,
-    blockNumber: receipt.blockNumber,
-  };
+async function sendAndWait(label: string, action: () => Promise<ethers.TransactionRequest>) {
+  const result = await journal.transact(label, await action());
+  console.log(`${label}: ${result.txHash}`);
+  return result;
 }
 
 async function assertDaoModuleRegistered(dao: ethers.Contract, moduleAddress: string, label: string) {
@@ -1027,7 +1026,7 @@ async function wireDaoModule(
   if (sameAddress(currentAddress, ZERO_ADDRESS)) {
     await assertCallable(`DAO.${setterName}.staticCall`, async () => setter.staticCall(moduleAddress));
     const result = await sendAndWait(`Dao.${setterName}`, async () =>
-      setter(moduleAddress, { gasLimit: gasLimit(config) }) as Promise<ethers.ContractTransactionResponse>,
+      setter.populateTransaction(moduleAddress, { gasLimit: gasLimit(config) }),
     );
     const readbackAddress = (await assertCallable(`DAO.${getterName}`, async () => getter())) as string;
     assertAddressEqual(`DAO.${getterName}`, readbackAddress, moduleAddress);
@@ -1070,61 +1069,18 @@ async function deployUupsProxy(
     artifact.bytecode,
     wallet,
   );
-  const implementation = await implementationFactory.deploy({ gasLimit: gasLimit(config) });
-  await implementation.waitForDeployment();
-  const implementationAddress = await implementation.getAddress();
-  const implementationTx = implementation.deploymentTransaction();
-  if (!implementationTx) {
-    throw new Error(`${label} implementation deployment has no transaction`);
-  }
-  const implementationReceipt = await implementationTx.wait();
-  if (!implementationReceipt || implementationReceipt.status !== 1) {
-    throw new Error(`${label} implementation deployment failed`);
-  }
-  const implementationTxHash = implementationTx.hash;
-  operations.push({
-    name: `${label}.deployImplementation`,
-    status: "completed",
-    tx_hash: implementationTxHash,
-    block_number: implementationReceipt.blockNumber,
-  });
-
+  const implementation = await journal.transact(`${label}.deployImplementation`,
+    await implementationFactory.getDeployTransaction({ gasLimit: gasLimit(config) }));
+  const implementationAddress = implementation.address!;
   const iface = new ethers.Interface(artifact.abi as ethers.InterfaceAbi);
   const initData = iface.encodeFunctionData("initialize", initArgs);
-
-  const proxyFactory = new ethers.ContractFactory(
-    proxyArtifact.abi as ethers.InterfaceAbi,
-    proxyArtifact.bytecode,
-    wallet,
-  );
-  const proxy = await proxyFactory.deploy(implementationAddress, initData, {
-    gasLimit: gasLimit(config),
-  });
-  await proxy.waitForDeployment();
-  const proxyAddress = await proxy.getAddress();
-  const proxyTx = proxy.deploymentTransaction();
-  if (!proxyTx) {
-    throw new Error(`${label} proxy deployment has no transaction`);
-  }
-  const proxyReceipt = await proxyTx.wait();
-  if (!proxyReceipt || proxyReceipt.status !== 1) {
-    throw new Error(`${label} proxy deployment failed`);
-  }
-  const proxyTxHash = proxyTx.hash;
-  operations.push({
-    name: `${label}.deployProxy`,
-    status: "completed",
-    tx_hash: proxyTxHash,
-    block_number: proxyReceipt.blockNumber,
-  });
-
+  const proxyFactory = new ethers.ContractFactory(proxyArtifact.abi as ethers.InterfaceAbi, proxyArtifact.bytecode, wallet);
+  const proxy = await journal.transact(`${label}.deployProxy`,
+    await proxyFactory.getDeployTransaction(implementationAddress, initData, { gasLimit: gasLimit(config) }));
   return {
-    proxyAddress,
-    implementationAddress,
-    proxyTxHash,
-    proxyBlockNumber: proxyReceipt.blockNumber,
-    implementationTxHash,
-    implementationBlockNumber: implementationReceipt.blockNumber,
+    proxyAddress: proxy.address!, implementationAddress,
+    proxyTxHash: proxy.txHash, proxyBlockNumber: proxy.blockNumber,
+    implementationTxHash: implementation.txHash, implementationBlockNumber: implementation.blockNumber,
   };
 }
 
@@ -1155,7 +1111,7 @@ async function ensureDaoAndDividend(
   if (sameAddress(daoBootstrapAdmin, ZERO_ADDRESS)) {
     await dao.initialize.staticCall();
     const result = await sendAndWait("Dao.initialize", async () =>
-      dao.initialize({ gasLimit: gasLimit(config) }),
+      dao.initialize.populateTransaction({ gasLimit: gasLimit(config) }),
     );
     operations.push({
       name: "Dao.initialize",
@@ -1179,7 +1135,7 @@ async function ensureDaoAndDividend(
   if (cycleMinLength === 0n) {
     await dividend.initialize.staticCall(config.cycleMinLength, config.daoAddress);
     const result = await sendAndWait("Dividend.initialize", async () =>
-      dividend.initialize(config.cycleMinLength, config.daoAddress, { gasLimit: gasLimit(config) }),
+      dividend.initialize.populateTransaction(config.cycleMinLength, config.daoAddress, { gasLimit: gasLimit(config) }),
     );
     operations.push({
       name: "Dividend.initialize",
@@ -1215,10 +1171,6 @@ async function ensureDaoAndDividend(
   return { dao, dividend };
 }
 
-function moduleRecordFromExisting(address: string): ModuleRecord {
-  return { address, source: "existing" };
-}
-
 function moduleRecordFromDeployment(details: {
   proxyAddress: string;
   implementationAddress: string;
@@ -1247,21 +1199,35 @@ async function ensureModule(
   provider: ethers.JsonRpcProvider,
   validateModule: (address: string, mode: ModuleValidationMode) => Promise<void>,
 ): Promise<ModuleRecord> {
+  const key = ({ Committee: "committee", DevToken: "devToken", NormalToken: "normalToken", TokenLockup: "lockup", Project: "project", Acquired: "acquired" } as Record<string, string>)[label];
+  const check = async (address: string) => {
+    await reviewedArtifacts.checkCode(provider, key, address);
+    await reviewedArtifacts.checkStorage(provider, key, address, "mainContractAddress", BigInt(latestRuntimeContext!.config.daoAddress));
+  };
   if (!sameAddress(currentAddress, ZERO_ADDRESS)) {
-    await ensureCode(provider, currentAddress, label);
+    const proxy = journal.data.transactions.find(entry => entry.name === `${label}.deployProxy`);
+    const implementation = journal.data.transactions.find(entry => entry.name === `${label}.deployImplementation`);
+    if (!proxy?.create_address || !implementation?.create_address || !sameAddress(proxy.create_address, currentAddress)) {
+      throw new Error(`${label}: configured address is not the deployment recorded by this ceremony`);
+    }
+    await check(currentAddress);
     await validateModule(currentAddress, "existing");
     console.log(`${label}: already configured at ${currentAddress}`);
-    return moduleRecordFromExisting(currentAddress);
+    return moduleRecordFromDeployment({ proxyAddress: currentAddress, implementationAddress: implementation.create_address,
+      proxyTxHash: proxy.tx_hash, proxyBlockNumber: proxy.block_number!,
+      implementationTxHash: implementation.tx_hash, implementationBlockNumber: implementation.block_number! });
   }
   printHeader(`Deploy ${label}`);
-  return deploy();
+  const record = await deploy();
+  await check(record.address);
+  return record;
 }
 
 async function main() {
   const options = parseCliOptions(process.argv.slice(2));
   const sourceConfig = await loadJsonFile<unknown>(options.configPath);
   assertPublicBootstrapConfig(sourceConfig);
-  const config = resolveBootstrapConfig(sourceConfig);
+  const config = resolveBootstrapConfig({ ...sourceConfig, rpcUrl: options.rpcUrl || sourceConfig.rpcUrl });
   const artifactsDir = normalizeArtifactsDir(options.configPath, config.artifactsDir);
   const rpcUrl = options.rpcUrl || config.rpcUrl;
   const modules = createEmptyModules();
@@ -1276,10 +1242,11 @@ async function main() {
     modules,
     currentStep: "Preflight",
   };
-  latestRuntimeContext = context;
-  await updateProgress(context, "SourceDAO full bootstrap preflight started", "Preflight");
+  if (!options.stateFilePath) throw new Error("--state-file is required for durable bootstrap recovery");
 
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { cacheTimeout: -1 });
+  activeProvider = provider;
+  provider.pollingInterval = 1000;
   const network = await provider.getNetwork();
   const chainId = Number(network.chainId);
   if (chainId !== config.chainId) {
@@ -1299,6 +1266,34 @@ async function main() {
       `bootstrap signer mismatch: derived ${wallet.address}, expected ${config.bootstrapAdminAddress}`,
     );
   }
+  const reviewed = await new ReviewedArtifacts().load(artifactsDir);
+  reviewedArtifacts = reviewed;
+  const genesis = await provider.getBlock(0);
+  if (!genesis?.hash) throw new Error("Cannot read genesis identity");
+  journal = await BootstrapJournal.load(`${options.stateFilePath}.transactions.json`, wallet, {
+    chain_id: chainId, genesis_hash: genesis.hash, config_sha256: configDigest(sourceConfig),
+    golden_sha256: reviewed.digest, signer: wallet.address.toLowerCase(),
+  });
+  await reviewed.checkCode(provider, "dao", config.daoAddress);
+  await reviewed.checkCode(provider, "dividend", config.dividendAddress);
+  releaseLock = await lockState(options.stateFilePath);
+  // Re-read under the lock: another writer may have finished during preflight.
+  journal = await BootstrapJournal.load(journal.filename, wallet, journal.data.identity);
+  // Read state under the same lock, including whether it is already accepted.
+  // Preflight failures must not truncate a previously completed state file.
+  try {
+    const old = await readJson<BootstrapState>(options.stateFilePath);
+    if (!journal.data.transactions.length || old.chain_id !== chainId || !sameAddress(old.dao_address, config.daoAddress)) {
+      throw new Error("Existing bootstrap state has no matching transaction journal; refusing to overwrite deployment evidence");
+    }
+    Object.assign(modules, old.modules);
+    context.preserveCompletedState = old.status === "completed";
+  } catch (error: any) { if (error.code !== "ENOENT") throw error; }
+  if (!journal.data.transactions.length) {
+    const dao = new ethers.Contract(config.daoAddress, reviewed.artifacts.get("SourceDao").abi, provider);
+    if (!sameAddress(await dao.bootstrapAdmin(), ZERO_ADDRESS)) throw new Error("DAO is already initialized without this journal; preserve its original ceremony evidence");
+  }
+  await journal.recover();
   context.walletAddress = wallet.address;
   await updateProgress(context, "Checking or initializing DAO and Dividend", "DaoAndDividend");
   const { dao, dividend } = await ensureDaoAndDividend(
@@ -1661,7 +1656,7 @@ async function main() {
   if (!(await dividend.bootstrapFinalized())) {
     await dividend.finalizeBootstrap.staticCall();
     const result = await sendAndWait("Dividend.finalizeBootstrap", async () =>
-      dividend.finalizeBootstrap({ gasLimit: gasLimit(config) }),
+      dividend.finalizeBootstrap.populateTransaction({ gasLimit: gasLimit(config) }),
     );
     operations.push({
       name: "Dividend.finalizeBootstrap",
@@ -1724,4 +1719,4 @@ main().catch(async (error) => {
   console.error("\nUSDB full SourceDAO bootstrap failed.");
   console.error(errorText);
   process.exitCode = 1;
-});
+}).finally(async () => { activeProvider?.destroy(); await releaseLock?.(); });
