@@ -24,3 +24,4 @@ tools/config/local.json
 *.transactions.json
 *.json.lock
 security/**/state.json
+security/candidate/usdb-testnet-v0/frozen-network-bundle

@@ -4,7 +4,7 @@
   "daoAddress": "0x0000000000000000000000000000000000001001",
   "dividendAddress": "0x0000000000000000000000000000000000001002",
   "bootstrapAdminAddress": "0x0b5223FD31cDc1536f31b3627e6D7025b52310c9",
-  "cycleMinLength": 60,
+  "cycleMinLength": 604800,
   "transactionGasLimit": 8000000,
   "devToken": {
     "name": "BuckyOS Develop DAO Token",
