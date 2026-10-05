@@ -70,7 +70,7 @@
     "chai": "^5.2.0",
     "deep-equal-in-any-order": "^2.2.0",
     "ethers": "^6.17.0",
-    "hardhat": "^3.9.0",
+    "hardhat": "^3.18.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "tsx": "4.22.4"
